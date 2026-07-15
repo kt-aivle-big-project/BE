@@ -1,3 +1,6 @@
 spring:
   application:
     name: BE
+
+  profiles:
+    default: local
