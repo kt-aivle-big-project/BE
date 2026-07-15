@@ -27,4 +27,29 @@ public class Warehouse {
 
     @Column(name = "user_id", nullable = false)
     private Long userId;
+
+    public static Warehouse create(
+            String name,
+            Integer width,
+            Integer height,
+            Long userId
+    ) {
+        return Warehouse.builder()
+                .name(name)
+                .width(width)
+                .height(height)
+                .userId(userId)
+                .build();
+    }
+
+    public void update(
+            String name,
+            Integer width,
+            Integer height
+    ) {
+        this.name = name;
+        this.width = width;
+        this.height = height;
+    }
+
 }
