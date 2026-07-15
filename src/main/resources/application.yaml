@@ -2,20 +2,5 @@ spring:
   application:
     name: BE
 
-  datasource:
-    url: jdbc:postgresql://localhost:5432/${POSTGRES_DB}
-    username: ${POSTGRES_USER}
-    password: ${POSTGRES_PASSWORD}
-
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
-
-  data:
-    redis:
-      host: localhost
-      port: 6379
-
-server:
-  port: 8080
+  profiles:
+    default: local
