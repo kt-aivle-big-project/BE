@@ -4,3 +4,9 @@ spring:
 
   profiles:
     default: local
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
