@@ -1,6 +1,6 @@
 package com.aivle.be.warehouse.dto;
 
-import com.aivle.be.warehouse.domain.Warehouse;
+import com.aivle.be.warehouse.entity.Warehouse;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -20,7 +20,7 @@ public class WarehouseResponse {
                 .name(warehouse.getName())
                 .width(warehouse.getWidth())
                 .height(warehouse.getHeight())
-                .userId(warehouse.getUserId())
+                .userId(warehouse.getUser().getId())
                 .build();
     }
 }

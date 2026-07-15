@@ -28,4 +28,28 @@ public class WarehouseNode {
     private Double x;
 
     private Double y;
+
+    public static WarehouseNode create(
+            Warehouse warehouse,
+            String zoneId,
+            Double x,
+            Double y
+    ) {
+        WarehouseNode node = new WarehouseNode();
+        node.warehouse = warehouse;
+        node.zoneId = zoneId;
+        node.x = x;
+        node.y = y;
+        return node;
+    }
+
+    public void update(
+            String zoneId,
+            Double x,
+            Double y
+    ) {
+        this.zoneId = zoneId;
+        this.x = x;
+        this.y = y;
+    }
 }

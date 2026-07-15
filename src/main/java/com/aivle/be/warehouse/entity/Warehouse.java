@@ -9,7 +9,6 @@ import lombok.Setter;
 @Entity
 @Table(name = "warehouse_layout")
 @Getter
-@Setter
 @NoArgsConstructor
 public class Warehouse {
 
@@ -27,4 +26,28 @@ public class Warehouse {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
+
+    public static Warehouse create(
+            String name,
+            Integer width,
+            Integer height,
+            User user
+    ) {
+        Warehouse warehouse = new Warehouse();
+        warehouse.name = name;
+        warehouse.width = width;
+        warehouse.height = height;
+        warehouse.user = user;
+        return warehouse;
+    }
+
+    public void update(
+            String name,
+            Integer width,
+            Integer height
+    ) {
+        this.name = name;
+        this.width = width;
+        this.height = height;
+    }
 }

@@ -1,8 +1,10 @@
 package com.aivle.be.warehouse.service;
 
 import java.util.List;
+import com.aivle.be.user.entity.User;
+import com.aivle.be.user.repository.UserRepository;
 import com.aivle.be.warehouse.dto.WarehouseUpdateRequest;
-import com.aivle.be.warehouse.domain.Warehouse;
+import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.dto.WarehouseCreateRequest;
 import com.aivle.be.warehouse.dto.WarehouseResponse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
@@ -16,18 +18,24 @@ import org.springframework.transaction.annotation.Transactional;
 public class WarehouseService {
 
     private final WarehouseRepository warehouseRepository;
+    private final UserRepository userRepository;
 
     public WarehouseResponse createWarehouse(WarehouseCreateRequest request) {
+        User user = userRepository.findById(request.getUserId())
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
         Warehouse warehouse = Warehouse.create(
                 request.getName(),
                 request.getWidth(),
                 request.getHeight(),
-                request.getUserId()
+                user
         );
+
         Warehouse savedWarehouse = warehouseRepository.save(warehouse);
 
         return WarehouseResponse.from(savedWarehouse);
     }
+
     @Transactional(readOnly = true)
     public WarehouseResponse getWarehouse(Long warehouseId) {
         Warehouse warehouse = warehouseRepository.findById(warehouseId)
