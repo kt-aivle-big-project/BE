@@ -1,5 +1,6 @@
 package com.aivle.be.task.controller;
 
+import com.aivle.be.task.controller.request.TaskAssignRequest;
 import com.aivle.be.task.controller.request.TaskCreateRequest;
 import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.service.TaskService;
@@ -17,5 +18,13 @@ public class TaskController {
     @PostMapping
     public ResponseEntity<TaskResponse> createTask(@RequestBody TaskCreateRequest request) {
         return ResponseEntity.ok(taskService.createTask(request));
+    }
+
+    @PatchMapping("/{taskId}/assign")
+    public ResponseEntity<TaskResponse> assignRobot(
+            @PathVariable Long taskId,
+            @RequestBody TaskAssignRequest request
+    ) {
+        return ResponseEntity.ok(taskService.assignRobot(taskId, request));
     }
 }

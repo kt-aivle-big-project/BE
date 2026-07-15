@@ -5,17 +5,20 @@ import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouseitem.entity.WarehouseItem;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 
 import java.time.LocalDateTime;
 
+import static lombok.AccessLevel.PROTECTED;
+
 @Entity
 @Table(name = "task")
-@Getter
-@Setter
-@NoArgsConstructor
+@Getter @Builder
+@AllArgsConstructor
+@NoArgsConstructor(access = PROTECTED)
 public class Task {
 
     @Id
@@ -31,7 +34,7 @@ public class Task {
     @JoinColumn(name = "robot_id")
     private Robot robot;
 
-    // 입출고 작업일 때만 사용 (어떤 재고/LOT에 대한 작업인지)
+    // 입출고 작업일 때만 사용
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "warehouse_item_id")
     private WarehouseItem warehouseItem;
@@ -64,11 +67,45 @@ public class Task {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
-    public enum TaskType {
-        INBOUND, OUTBOUND, MOVE, CHARGE
+    // 생성 전용 팩토리 - Builder를 직접 노출하지 않고, 항상 PENDING/requestedAt=now로 시작하도록 강제
+    public static Task create(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
+                              TaskType taskType, WarehouseItem warehouseItem) {
+        return Task.builder()
+                .warehouse(warehouse)
+                .startNode(startNode)
+                .endNode(endNode)
+                .taskType(taskType)
+                .warehouseItem(warehouseItem)
+                .status(TaskStatus.PENDING)
+                .requestedAt(LocalDateTime.now())
+                .build();
     }
 
-    public enum TaskStatus {
-        PENDING, ASSIGNED, IN_PROGRESS, DONE, FAILED, CANCELLED
+    // 상태 변경은 setter 대신 의미 있는 메서드로 - 검증 로직도 여기 같이 둠
+    public void assignRobot(Robot robot) {
+        if (this.status != TaskStatus.PENDING) {
+            throw new IllegalStateException("이미 처리 중이거나 종료된 작업입니다. 현재 상태: " + this.status);
+        }
+        this.robot = robot;
+        this.status = TaskStatus.ASSIGNED;
+        this.assignedAt = LocalDateTime.now();
+    }
+
+    public void start() {
+        this.status = TaskStatus.IN_PROGRESS;
+        this.startedAt = LocalDateTime.now();
+    }
+
+    public void complete() {
+        this.status = TaskStatus.DONE;
+        this.completedAt = LocalDateTime.now();
+    }
+
+    public void fail() {
+        this.status = TaskStatus.FAILED;
+    }
+
+    public void cancel() {
+        this.status = TaskStatus.CANCELLED;
     }
 }

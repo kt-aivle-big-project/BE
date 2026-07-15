@@ -4,17 +4,21 @@ import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.warehouse.entity.Warehouse;
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 
 import java.time.LocalDateTime;
+
+import static lombok.AccessLevel.PROTECTED;
 
 @Entity
 @Table(name = "event")
 @Getter
-@Setter
-@NoArgsConstructor
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor(access = PROTECTED)
 public class Event {
 
     @Id
@@ -31,7 +35,7 @@ public class Event {
 
     // 이 이벤트가 어떤 작업 도중 발생했는지 (없을 수도 있음)
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "tadocker exec -it warehouse-postgres psql -U warehouse -d warehouse -c \"\\dt\"sk_id")
+    @JoinColumn(name = "task_id")
     private Task task;
 
     @Enumerated(EnumType.STRING)
@@ -44,11 +48,24 @@ public class Event {
     @Column(name = "occurred_at", nullable = false)
     private LocalDateTime occurredAt;
 
-    // 재계산/조치로 해소된 시각. 미해결이면 null
     @Column(name = "resolved_at")
     private LocalDateTime resolvedAt;
 
-    public enum EventType {
-        COLLISION_RISK, PATH_BLOCKED, LOW_BATTERY, TASK_FAILED, REPLAN_TRIGGERED
+    // 생성 전용 팩토리 - occurredAt=now로 항상 시작, resolvedAt은 미해결 상태(null)로 시작
+    public static Event create(Warehouse warehouse, Robot robot, Task task,
+                               EventType eventType, String description) {
+        return Event.builder()
+                .warehouse(warehouse)
+                .robot(robot)
+                .task(task)
+                .eventType(eventType)
+                .description(description)
+                .occurredAt(LocalDateTime.now())
+                .build();
+    }
+
+    // 해소 처리는 setter 대신 메서드로
+    public void resolve() {
+        this.resolvedAt = LocalDateTime.now();
     }
 }
