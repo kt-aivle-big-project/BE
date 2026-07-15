@@ -53,3 +53,6 @@ Thumbs.db
 ### Temporary files ###
 *.tmp
 *.temp
+
+### Temporary Security Config ###
+src/main/java/com/aivle/be/common/config/SecurityConfig.java
