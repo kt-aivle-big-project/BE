@@ -4,15 +4,15 @@ import com.aivle.be.warehouse.entity.Warehouse;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 
 import java.time.LocalDateTime;
 
+import static lombok.AccessLevel.PROTECTED;
+
 @Entity
-@Table(name = "simulation_run")
+@Table(name = "simulation")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = PROTECTED)
 public class Simulation {
 
     @Id
@@ -39,7 +39,6 @@ public class Simulation {
     @Column(name = "task_code")
     private String taskCode;
 
-    // LLM 에이전트 입출력은 길어질 수 있어서 @Lob(TEXT) 처리
     @Lob
     @Column(name = "agent_input")
     private String agentInput;
@@ -50,7 +49,7 @@ public class Simulation {
 
     private Integer tokens;
 
-    private Long latency; // 단위: ms 권장
+    private Long latency;
 
     @Column(name = "tool_call_id")
     private String toolCallId;
@@ -68,4 +67,37 @@ public class Simulation {
 
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
+
+    // 시뮬레이션 시작 시점에 필요한 값만 받음 - executedAt은 생성 시점으로 자동 세팅
+    public Simulation(Warehouse warehouse, Long missionId, Long robotId,
+                      Long startNode, Long endNode, String taskCode) {
+        this.warehouse = warehouse;
+        this.missionId = missionId;
+        this.robotId = robotId;
+        this.startNode = startNode;
+        this.endNode = endNode;
+        this.taskCode = taskCode;
+        this.executedAt = LocalDateTime.now();
+    }
+
+    // AI 에이전트 호출 결과를 나중에 기록
+    public void recordAgentInteraction(String agentInput, String agentOutput,
+                                       Integer tokens, Long latency, String toolCallId) {
+        this.agentInput = agentInput;
+        this.agentOutput = agentOutput;
+        this.tokens = tokens;
+        this.latency = latency;
+        this.toolCallId = toolCallId;
+    }
+
+    // 규칙/정책 판정 결과 기록
+    public void recordPolicyResult(String ruleCode, String policyResult) {
+        this.ruleCode = ruleCode;
+        this.policyResult = policyResult;
+    }
+
+    public void complete(boolean success) {
+        this.success = success;
+        this.completedAt = LocalDateTime.now();
+    }
 }
