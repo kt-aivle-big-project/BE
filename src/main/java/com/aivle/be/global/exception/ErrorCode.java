@@ -4,6 +4,7 @@ import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
 
+    EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "EVENT_001","존재하지 않는 이벤트입니다."),
     TASK_NOT_FOUND(HttpStatus.NOT_FOUND, "TASK_001", "존재하지 않는 작업입니다."),
     ROBOT_NOT_FOUND(HttpStatus.NOT_FOUND, "TASK_002", "존재하지 않는 로봇입니다."),
     TASK_ALREADY_PROCESSED(HttpStatus.CONFLICT, "TASK_003", "이미 처리 중이거나 종료된 작업입니다."),
