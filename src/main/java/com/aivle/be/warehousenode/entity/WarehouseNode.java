@@ -4,13 +4,13 @@ import com.aivle.be.warehouse.entity.Warehouse;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import lombok.AccessLevel;
 import lombok.Setter;
 
 @Entity
 @Table(name = "warehouse_node")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class WarehouseNode {
 
     @Id
