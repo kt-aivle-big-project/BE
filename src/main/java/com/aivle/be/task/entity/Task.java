@@ -1,12 +1,12 @@
 package com.aivle.be.task.entity;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouseitem.entity.WarehouseItem;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -16,8 +16,7 @@ import static lombok.AccessLevel.PROTECTED;
 
 @Entity
 @Table(name = "task")
-@Getter @Builder
-@AllArgsConstructor
+@Getter
 @NoArgsConstructor(access = PROTECTED)
 public class Task {
 
@@ -65,22 +64,20 @@ public class Task {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
-    public static Task create(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
-                              TaskType taskType, WarehouseItem warehouseItem) {
-        return Task.builder()
-                .warehouse(warehouse)
-                .startNode(startNode)
-                .endNode(endNode)
-                .taskType(taskType)
-                .warehouseItem(warehouseItem)
-                .status(TaskStatus.PENDING)
-                .requestedAt(LocalDateTime.now())
-                .build();
+    public Task(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
+                TaskType taskType, WarehouseItem warehouseItem) {
+        this.warehouse = warehouse;
+        this.startNode = startNode;
+        this.endNode = endNode;
+        this.taskType = taskType;
+        this.warehouseItem = warehouseItem;
+        this.status = TaskStatus.PENDING;
+        this.requestedAt = LocalDateTime.now();
     }
 
     public void assignRobot(Robot robot) {
         if (this.status != TaskStatus.PENDING) {
-            throw new IllegalStateException("이미 처리 중이거나 종료된 작업입니다. 현재 상태: " + this.status);
+            throw new BusinessException(ErrorCode.TASK_ALREADY_PROCESSED);
         }
         this.robot = robot;
         this.status = TaskStatus.ASSIGNED;

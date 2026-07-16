@@ -1,6 +1,5 @@
 package com.aivle.be.task.service;
 
-
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.task.controller.request.TaskAssignRequest;
@@ -14,10 +13,13 @@ import com.aivle.be.warehouseitem.entity.WarehouseItem;
 import com.aivle.be.warehouseitem.repository.WarehouseItemRepository;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
-import jakarta.persistence.EntityNotFoundException;
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -38,23 +40,64 @@ public class TaskService {
                 ? warehouseItemRepository.getReferenceById(request.warehouseItemId())
                 : null;
 
-        Task task = Task.create(warehouse, startNode, endNode, request.taskType(), warehouseItem);
+        Task task = new Task(warehouse, startNode, endNode, request.taskType(), warehouseItem);
 
         Task saved = taskRepository.save(task);
         return new TaskResponse(saved);
     }
 
+    public TaskResponse getTask(Long taskId) {
+        return new TaskResponse(findTaskOrThrow(taskId));
+    }
+
+    public List<TaskResponse> getAllTasks() {
+        return taskRepository.findAll().stream()
+                .map(TaskResponse::new)
+                .toList();
+    }
+
     @Transactional
     public TaskResponse assignRobot(Long taskId, TaskAssignRequest request) {
-        Task task = taskRepository.findById(taskId)
-                .orElseThrow(() -> new EntityNotFoundException("Task not found: " + taskId));
+        Task task = findTaskOrThrow(taskId);
 
         Robot robot = robotRepository.findById(request.robotId())
-                .orElseThrow(() -> new EntityNotFoundException("Robot not found: " + request.robotId()));
+                .orElseThrow(() -> new BusinessException(ErrorCode.ROBOT_NOT_FOUND));
 
         // TODO: 로봇이 실제 IDLE 상태인지는 Redis 실시간 상태 붙인 뒤 거기서 확인하도록 교체 예정
         task.assignRobot(robot);
 
         return new TaskResponse(task);
+    }
+
+    @Transactional
+    public TaskResponse startTask(Long taskId) {
+        Task task = findTaskOrThrow(taskId);
+        task.start();
+        return new TaskResponse(task);
+    }
+
+    @Transactional
+    public TaskResponse completeTask(Long taskId) {
+        Task task = findTaskOrThrow(taskId);
+        task.complete();
+        return new TaskResponse(task);
+    }
+
+    @Transactional
+    public TaskResponse failTask(Long taskId) {
+        Task task = findTaskOrThrow(taskId);
+        task.fail();
+        return new TaskResponse(task);
+    }
+
+    @Transactional
+    public void cancelTask(Long taskId) {
+        Task task = findTaskOrThrow(taskId);
+        task.cancel();
+    }
+
+    private Task findTaskOrThrow(Long taskId) {
+        return taskRepository.findById(taskId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.TASK_NOT_FOUND));
     }
 }

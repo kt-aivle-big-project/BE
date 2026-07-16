@@ -4,8 +4,6 @@ import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.warehouse.entity.Warehouse;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -15,8 +13,7 @@ import static lombok.AccessLevel.PROTECTED;
 
 @Entity
 @Table(name = "event")
-@Getter @Builder
-@AllArgsConstructor
+@Getter
 @NoArgsConstructor(access = PROTECTED)
 public class Event {
 
@@ -49,16 +46,21 @@ public class Event {
     @Column(name = "resolved_at")
     private LocalDateTime resolvedAt;
 
-    public static Event create(Warehouse warehouse, Robot robot, Task task,
-                               EventType eventType, String description) {
-        return Event.builder()
-                .warehouse(warehouse)
-                .robot(robot)
-                .task(task)
-                .eventType(eventType)
-                .description(description)
-                .occurredAt(LocalDateTime.now())
-                .build();
+    public Event(
+
+            Warehouse warehouse,
+            Robot robot,
+            Task task,
+            EventType eventType,
+            String description
+    ) {
+
+        this.warehouse = warehouse;
+        this.robot = robot;
+        this.task = task;
+        this.eventType = eventType;
+        this.description = description;
+        this.occurredAt = LocalDateTime.now();
     }
 
     public void resolve() {
