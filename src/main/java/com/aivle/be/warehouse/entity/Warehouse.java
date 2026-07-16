@@ -8,8 +8,7 @@ import lombok.Setter;
 
 @Entity
 @Table(name = "warehouse_layout")
-@Getter
-@Setter
+@Getter @Setter
 @NoArgsConstructor
 public class Warehouse {
 

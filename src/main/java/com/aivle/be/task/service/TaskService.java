@@ -31,7 +31,6 @@ public class TaskService {
 
     @Transactional
     public TaskResponse createTask(TaskCreateRequest request) {
-        // getReferenceById: 실제 SELECT 없이 프록시로 참조만 잡음 (FK만 걸면 되니까 충분)
         Warehouse warehouse = warehouseRepository.getReferenceById(request.warehouseId());
         WarehouseNode startNode = warehouseNodeRepository.getReferenceById(request.startNodeId());
         WarehouseNode endNode = warehouseNodeRepository.getReferenceById(request.endNodeId());
@@ -39,7 +38,6 @@ public class TaskService {
                 ? warehouseItemRepository.getReferenceById(request.warehouseItemId())
                 : null;
 
-        // setter 대신 정적 팩토리 메서드로 생성 - 항상 PENDING 상태로 시작
         Task task = Task.create(warehouse, startNode, endNode, request.taskType(), warehouseItem);
 
         Task saved = taskRepository.save(task);
@@ -55,7 +53,6 @@ public class TaskService {
                 .orElseThrow(() -> new EntityNotFoundException("Robot not found: " + request.robotId()));
 
         // TODO: 로봇이 실제 IDLE 상태인지는 Redis 실시간 상태 붙인 뒤 거기서 확인하도록 교체 예정
-        // 상태 검증(PENDING인지)은 이제 Task 엔티티의 assignRobot() 안에서 처리됨
         task.assignRobot(robot);
 
         return new TaskResponse(task);

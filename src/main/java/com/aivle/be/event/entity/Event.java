@@ -15,8 +15,7 @@ import static lombok.AccessLevel.PROTECTED;
 
 @Entity
 @Table(name = "event")
-@Getter
-@Builder
+@Getter @Builder
 @AllArgsConstructor
 @NoArgsConstructor(access = PROTECTED)
 public class Event {
@@ -33,7 +32,6 @@ public class Event {
     @JoinColumn(name = "robot_id")
     private Robot robot;
 
-    // 이 이벤트가 어떤 작업 도중 발생했는지 (없을 수도 있음)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "task_id")
     private Task task;
@@ -51,7 +49,6 @@ public class Event {
     @Column(name = "resolved_at")
     private LocalDateTime resolvedAt;
 
-    // 생성 전용 팩토리 - occurredAt=now로 항상 시작, resolvedAt은 미해결 상태(null)로 시작
     public static Event create(Warehouse warehouse, Robot robot, Task task,
                                EventType eventType, String description) {
         return Event.builder()
@@ -64,7 +61,6 @@ public class Event {
                 .build();
     }
 
-    // 해소 처리는 setter 대신 메서드로
     public void resolve() {
         this.resolvedAt = LocalDateTime.now();
     }
