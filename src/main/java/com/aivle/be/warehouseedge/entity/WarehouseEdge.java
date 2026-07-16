@@ -2,15 +2,14 @@ package com.aivle.be.warehouseedge.entity;
 
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 
 @Entity
 @Table(name = "warehouse_edge")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class WarehouseEdge {
 
     @Id
@@ -20,7 +19,6 @@ public class WarehouseEdge {
 
     private Double distance;
 
-    // 원본 ERD에 있던 중복 FK("노드id2") 컬럼은 제외했습니다.
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "from_node_id", nullable = false)
     private WarehouseNode fromNode;
@@ -33,7 +31,35 @@ public class WarehouseEdge {
     @Column(name = "direction_type", nullable = false)
     private DirectionType directionType;
 
+    public static WarehouseEdge create(
+            WarehouseNode fromNode,
+            WarehouseNode toNode,
+            Double distance,
+            DirectionType directionType
+    ) {
+        WarehouseEdge edge = new WarehouseEdge();
+        edge.fromNode = fromNode;
+        edge.toNode = toNode;
+        edge.distance = distance;
+        edge.directionType = directionType;
+        return edge;
+    }
+
+    public void update(
+            WarehouseNode fromNode,
+            WarehouseNode toNode,
+            Double distance,
+            DirectionType directionType
+    ) {
+        this.fromNode = fromNode;
+        this.toNode = toNode;
+        this.distance = distance;
+        this.directionType = directionType;
+    }
+
     public enum DirectionType {
-        BOTH, A_TO_B, B_TO_A
+        BOTH,
+        A_TO_B,
+        B_TO_A
     }
 }
