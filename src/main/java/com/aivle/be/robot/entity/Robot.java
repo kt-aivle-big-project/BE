@@ -19,7 +19,6 @@ public class Robot {
     @Column(name = "robot_id")
     private Long id;
 
-    // RobotSpec의 PK(id)를 참조 (robot_code 아님 - RobotSpec도 인조키로 통일됨)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "robot_spec_id", nullable = false)
     private RobotSpec robotSpec;
