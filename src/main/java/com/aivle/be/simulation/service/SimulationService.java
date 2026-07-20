@@ -5,7 +5,9 @@ import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.simulation.controller.request.SimulationAgentInteractionRequest;
 import com.aivle.be.simulation.controller.request.SimulationCompleteRequest;
 import com.aivle.be.simulation.controller.request.SimulationCreateRequest;
+import com.aivle.be.simulation.controller.request.SimulationPathUpdateRequest;
 import com.aivle.be.simulation.controller.request.SimulationPolicyResultRequest;
+import com.aivle.be.simulation.controller.response.PathOverlapResponse;
 import com.aivle.be.simulation.controller.response.SimulationResponse;
 import com.aivle.be.simulation.entity.Simulation;
 import com.aivle.be.simulation.repository.SimulationRepository;
@@ -38,6 +40,10 @@ public class SimulationService {
                 request.endNode(),
                 request.taskCode()
         );
+
+        if (request.pathNodes() != null) {
+            simulation.updatePath(request.pathNodes());
+        }
 
         Simulation saved = simulationRepository.save(simulation);
         return new SimulationResponse(saved);
@@ -75,6 +81,21 @@ public class SimulationService {
         Simulation simulation = findSimulationOrThrow(simulationId);
         simulation.recordPolicyResult(request.ruleCode(), request.policyResult());
         return new SimulationResponse(simulation);
+    }
+
+    @Transactional
+    public SimulationResponse updatePath(Long simulationId, SimulationPathUpdateRequest request) {
+        Simulation simulation = findSimulationOrThrow(simulationId);
+        simulation.updatePath(request.pathNodes());
+        return new SimulationResponse(simulation);
+    }
+
+    // ===== 경로 재계산 필요 여부 판단 =====
+    // 특정 노드(장애물/차단 위치)가 현재 진행중인 시뮬레이션들의 경로에 포함되는지 확인
+    public PathOverlapResponse checkPathOverlap(Long nodeId) {
+        List<Simulation> affected = simulationRepository.findRunningSimulationsContainingNode(nodeId);
+        List<Long> affectedIds = affected.stream().map(Simulation::getId).toList();
+        return new PathOverlapResponse(nodeId, !affectedIds.isEmpty(), affectedIds);
     }
 
     // ===== Update (종료 = 중지) =====

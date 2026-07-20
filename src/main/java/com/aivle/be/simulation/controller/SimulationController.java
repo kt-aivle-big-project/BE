@@ -3,7 +3,9 @@ package com.aivle.be.simulation.controller;
 import com.aivle.be.simulation.controller.request.SimulationAgentInteractionRequest;
 import com.aivle.be.simulation.controller.request.SimulationCompleteRequest;
 import com.aivle.be.simulation.controller.request.SimulationCreateRequest;
+import com.aivle.be.simulation.controller.request.SimulationPathUpdateRequest;
 import com.aivle.be.simulation.controller.request.SimulationPolicyResultRequest;
+import com.aivle.be.simulation.controller.response.PathOverlapResponse;
 import com.aivle.be.simulation.controller.response.SimulationResponse;
 import com.aivle.be.simulation.service.SimulationService;
 import lombok.RequiredArgsConstructor;
@@ -56,5 +58,19 @@ public class SimulationController {
             @RequestBody SimulationCompleteRequest request
     ) {
         return ResponseEntity.ok(simulationService.completeSimulation(simulationId, request));
+    }
+
+    @PatchMapping("/{simulationId}/path")
+    public ResponseEntity<SimulationResponse> updatePath(
+            @PathVariable Long simulationId,
+            @RequestBody SimulationPathUpdateRequest request
+    ) {
+        return ResponseEntity.ok(simulationService.updatePath(simulationId, request));
+    }
+
+    // 장애물/차단 노드가 현재 진행중인 로봇 경로에 영향 있는지 판단
+    @GetMapping("/path-overlap")
+    public ResponseEntity<PathOverlapResponse> checkPathOverlap(@RequestParam Long nodeId) {
+        return ResponseEntity.ok(simulationService.checkPathOverlap(nodeId));
     }
 }
