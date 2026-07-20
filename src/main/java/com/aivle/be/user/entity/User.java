@@ -8,6 +8,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.ColumnDefault;
+
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "users")
@@ -29,9 +32,32 @@ public class User {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
+    @Column(name = "failed_login_attempts", nullable = false)
+    @ColumnDefault("0")
+    private int failedLoginAttempts;
+
+    @Column(name = "locked_until")
+    private LocalDateTime lockedUntil;
+
     public User(String email, String name, String passwordHash) {
         this.email = email;
         this.name = name;
         this.passwordHash = passwordHash;
+    }
+
+    public boolean isLocked(LocalDateTime now) {
+        return lockedUntil != null && lockedUntil.isAfter(now);
+    }
+
+    public void recordLoginFailure(int maxAttempts, LocalDateTime lockedUntil) {
+        failedLoginAttempts++;
+        if (failedLoginAttempts >= maxAttempts) {
+            this.lockedUntil = lockedUntil;
+        }
+    }
+
+    public void resetLoginFailures() {
+        failedLoginAttempts = 0;
+        lockedUntil = null;
     }
 }
