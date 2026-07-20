@@ -4,6 +4,14 @@ import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
 
+    WAREHOUSE_NOT_FOUND(HttpStatus.NOT_FOUND, "WAREHOUSE_001", "존재하지 않는 창고입니다."),
+    ROBOT_STATE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_001", "로봇의 현재 상태를 찾을 수 없습니다."),
+    NODE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_002", "존재하지 않는 창고 노드입니다."),
+    INVALID_ROBOT_LOCATION(HttpStatus.BAD_REQUEST, "ROBOT_STATE_003", "로봇과 현재 노드의 창고가 일치하지 않습니다."),
+    INVALID_ROBOT_STATE_TRANSITION(HttpStatus.CONFLICT, "ROBOT_STATE_004", "허용되지 않는 로봇 상태 변경입니다."),
+    INVALID_ROBOT_TASK(HttpStatus.CONFLICT, "ROBOT_STATE_005", "현재 작업이 해당 로봇에 할당된 작업과 일치하지 않습니다."),
+    STALE_ROBOT_STATE(HttpStatus.CONFLICT, "ROBOT_STATE_006", "기존 상태보다 오래된 상태 정보입니다."),
+
     INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "AUTH_001", "이메일 또는 비밀번호가 올바르지 않습니다."),
     ACCOUNT_LOCKED(HttpStatus.LOCKED, "AUTH_002", "로그인 실패 횟수를 초과하여 계정이 일시 잠겼습니다."),
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_003", "유효하지 않은 인증 토큰입니다."),
