@@ -4,8 +4,11 @@ import com.aivle.be.warehouse.entity.Warehouse;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static lombok.AccessLevel.PROTECTED;
 
@@ -38,6 +41,12 @@ public class Simulation {
 
     @Column(name = "task_code")
     private String taskCode;
+
+    // 로봇이 실제로 거쳐가는 노드 순서 전체. 경로 겹침(재계산 필요 여부) 판단에 사용.
+    // Postgres JSONB로 저장 - 배열 그대로 [1,5,8,12,20] 형태
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "path_nodes", columnDefinition = "jsonb")
+    private List<Long> pathNodes;
 
     @Lob
     @Column(name = "agent_input")
@@ -78,6 +87,11 @@ public class Simulation {
         this.endNode = endNode;
         this.taskCode = taskCode;
         this.executedAt = LocalDateTime.now();
+    }
+
+    // 경로 계산/재계산 결과로 받은 전체 노드 순서 저장
+    public void updatePath(List<Long> pathNodes) {
+        this.pathNodes = pathNodes;
     }
 
     // AI 에이전트 호출 결과를 나중에 기록

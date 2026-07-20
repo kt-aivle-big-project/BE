@@ -3,9 +3,9 @@ package com.aivle.be.simulation.controller.response;
 import com.aivle.be.simulation.entity.Simulation;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public record SimulationResponse(
-
         Long id,
         Long warehouseId,
         Long missionId,
@@ -13,6 +13,7 @@ public record SimulationResponse(
         Long startNode,
         Long endNode,
         String taskCode,
+        List<Long> pathNodes,
         String agentInput,
         String agentOutput,
         Integer tokens,
@@ -26,7 +27,6 @@ public record SimulationResponse(
 ) {
     public SimulationResponse(Simulation simulation) {
         this(
-
                 simulation.getId(),
                 simulation.getWarehouse().getId(),
                 simulation.getMissionId(),
@@ -34,6 +34,7 @@ public record SimulationResponse(
                 simulation.getStartNode(),
                 simulation.getEndNode(),
                 simulation.getTaskCode(),
+                simulation.getPathNodes(),
                 simulation.getAgentInput(),
                 simulation.getAgentOutput(),
                 simulation.getTokens(),
