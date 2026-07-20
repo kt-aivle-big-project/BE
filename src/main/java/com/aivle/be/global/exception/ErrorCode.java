@@ -4,6 +4,10 @@ import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
 
+    INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "AUTH_001", "이메일 또는 비밀번호가 올바르지 않습니다."),
+    ACCOUNT_LOCKED(HttpStatus.LOCKED, "AUTH_002", "로그인 실패 횟수를 초과하여 계정이 일시 잠겼습니다."),
+    INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_003", "유효하지 않은 인증 토큰입니다."),
+
     SIMULATION_NOT_FOUND(HttpStatus.NOT_FOUND, "SIMULATION_001", "존재하지 않는 시뮬레이션입니다."),
     ROBOT_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_001", "존재하지 않는 로봇입니다."),
     EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "EVENT_001","존재하지 않는 이벤트입니다."),

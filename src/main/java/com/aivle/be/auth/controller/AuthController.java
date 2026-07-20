@@ -1,6 +1,8 @@
 package com.aivle.be.auth.controller;
 
 import com.aivle.be.auth.dto.request.SignupRequest;
+import com.aivle.be.auth.dto.request.LoginRequest;
+import com.aivle.be.auth.dto.response.LoginResponse;
 import com.aivle.be.auth.dto.response.SignupResponse;
 import com.aivle.be.auth.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,5 +32,14 @@ public class AuthController {
     @PostMapping("/signup")
     public ResponseEntity<SignupResponse> signup(@Valid @RequestBody SignupRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(authService.signup(request));
+    }
+
+    @Operation(summary = "로그인", description = "이메일과 비밀번호를 검증하고 Access Token을 발급합니다.")
+    @ApiResponse(responseCode = "200", description = "로그인 성공")
+    @ApiResponse(responseCode = "401", description = "이메일 또는 비밀번호 불일치")
+    @ApiResponse(responseCode = "423", description = "계정 일시 잠금")
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+        return ResponseEntity.ok(authService.login(request));
     }
 }
