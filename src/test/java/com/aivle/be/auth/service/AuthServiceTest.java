@@ -2,6 +2,7 @@ package com.aivle.be.auth.service;
 
 import com.aivle.be.auth.dto.request.SignupRequest;
 import com.aivle.be.auth.dto.response.SignupResponse;
+import com.aivle.be.auth.jwt.JwtTokenProvider;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.user.entity.User;
@@ -32,6 +33,9 @@ class AuthServiceTest {
 
     @Mock
     private PasswordEncoder passwordEncoder;
+
+    @Mock
+    private JwtTokenProvider jwtTokenProvider;
 
     @InjectMocks
     private AuthService authService;
