@@ -16,6 +16,7 @@ import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,11 +30,14 @@ public class EventService {
     private static final Set<EventType> PATH_OVERLAP_CHECK_TYPES =
             Set.of(EventType.COLLISION_RISK, EventType.PATH_BLOCKED);
 
+    private static final String TOPIC = "/topic/events";
+
     private final EventRepository eventRepository;
     private final WarehouseRepository warehouseRepository;
     private final RobotRepository robotRepository;
     private final TaskRepository taskRepository;
     private final SimulationService simulationService;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
     public EventResponse createEvent(EventCreateRequest request) {
@@ -49,14 +53,19 @@ public class EventService {
                 : null;
 
         Event event = new Event(warehouse, robot, task, request.eventType(), request.description(), request.nodeId());
+
         Event saved = eventRepository.save(event);
 
+        EventResponse response;
         if (PATH_OVERLAP_CHECK_TYPES.contains(saved.getEventType()) && saved.getNodeId() != null) {
             PathOverlapResponse overlap = simulationService.checkPathOverlap(saved.getNodeId());
-            return new EventResponse(saved, overlap.overlapping(), overlap.affectedSimulationIds());
+            response = new EventResponse(saved, overlap.overlapping(), overlap.affectedSimulationIds());
+        } else {
+            response = new EventResponse(saved);
         }
 
-        return new EventResponse(saved);
+        messagingTemplate.convertAndSend(TOPIC, response);
+        return response;
     }
 
     public EventResponse getEvent(Long eventId) {
@@ -73,7 +82,9 @@ public class EventService {
     public EventResponse resolveEvent(Long eventId) {
         Event event = findEventOrThrow(eventId);
         event.resolve();
-        return new EventResponse(event);
+        EventResponse response = new EventResponse(event);
+        messagingTemplate.convertAndSend(TOPIC, response);
+        return response;
     }
 
     private Event findEventOrThrow(Long eventId) {
