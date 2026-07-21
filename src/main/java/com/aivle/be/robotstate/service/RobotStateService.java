@@ -16,6 +16,7 @@ import com.aivle.be.warehouse.repository.WarehouseRepository;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,14 +26,17 @@ import java.util.List;
 @RequiredArgsConstructor
 public class RobotStateService {
 
+    private static final String TOPIC = "/topic/robots";
+
     private final RobotRepository robotRepository;
     private final WarehouseRepository warehouseRepository;
     private final WarehouseNodeRepository warehouseNodeRepository;
     private final TaskRepository taskRepository;
     private final RobotStateStore robotStateStore;
     private final RobotStateTransitionValidator transitionValidator;
+    private final SimpMessagingTemplate messagingTemplate;
 
-    @Transactional(readOnly = true)
+    @Transactional
     public RobotStateResponse updateState(Long robotId, RobotStateUpdateRequest request) {
         Robot robot = robotRepository.findById(robotId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ROBOT_NOT_FOUND));
@@ -53,7 +57,9 @@ public class RobotStateService {
                 request.eventTime()
         );
 
-        return RobotStateResponse.from(robotStateStore.save(state));
+        RobotStateResponse response = RobotStateResponse.from(robotStateStore.save(state));
+        messagingTemplate.convertAndSend(TOPIC, response);
+        return response;
     }
 
     public RobotStateResponse getState(Long robotId) {

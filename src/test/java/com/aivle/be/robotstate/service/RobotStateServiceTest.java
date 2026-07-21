@@ -17,6 +17,7 @@ import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -29,6 +30,7 @@ import static org.mockito.Mockito.when;
 
 class RobotStateServiceTest {
 
+    private SimpMessagingTemplate messagingTemplate;
     private RobotRepository robotRepository;
     private WarehouseNodeRepository nodeRepository;
     private RobotStateStore stateStore;
@@ -41,13 +43,15 @@ class RobotStateServiceTest {
         nodeRepository = mock(WarehouseNodeRepository.class);
         TaskRepository taskRepository = mock(TaskRepository.class);
         stateStore = mock(RobotStateStore.class);
+        messagingTemplate = mock(SimpMessagingTemplate.class);
         service = new RobotStateService(
                 robotRepository,
                 warehouseRepository,
                 nodeRepository,
                 taskRepository,
                 stateStore,
-                new RobotStateTransitionValidator()
+                new RobotStateTransitionValidator(),
+                messagingTemplate
         );
     }
 
