@@ -41,6 +41,36 @@ public class Robot {
     @Column(nullable = false)
     private RobotStatus status;
 
+    public static Robot create(
+            RobotSpec robotSpec,
+            Warehouse warehouse,
+            Long nodeId,
+            Integer battery,
+            RobotStatus status
+    ) {
+        Robot robot = new Robot();
+        robot.robotSpec = robotSpec;
+        robot.warehouse = warehouse;
+        robot.nodeId = nodeId;
+        robot.battery = battery;
+        robot.status = status;
+        return robot;
+    }
+
+    public void update(
+            RobotSpec robotSpec,
+            Warehouse warehouse,
+            Long nodeId,
+            Integer battery,
+            RobotStatus status
+    ) {
+        this.robotSpec = robotSpec;
+        this.warehouse = warehouse;
+        this.nodeId = nodeId;
+        this.battery = battery;
+        this.status = status;
+    }
+
     public enum RobotStatus {
         IDLE, BUSY, CHARGING
     }
