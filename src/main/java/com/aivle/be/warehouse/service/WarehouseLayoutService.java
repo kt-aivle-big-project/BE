@@ -2,6 +2,8 @@ package com.aivle.be.warehouse.service;
 
 import com.aivle.be.chargingstation.dto.response.ChargingStationResponse;
 import com.aivle.be.chargingstation.repository.ChargingStationRepository;
+import com.aivle.be.robot.dto.RobotResponse;
+import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.warehouse.dto.WarehouseLayoutResponse;
 import com.aivle.be.warehouse.dto.WarehouseResponse;
 import com.aivle.be.warehouse.entity.Warehouse;
@@ -28,6 +30,7 @@ public class WarehouseLayoutService {
     private final WarehouseNodeRepository warehouseNodeRepository;
     private final WarehouseEdgeRepository warehouseEdgeRepository;
     private final ChargingStationRepository chargingStationRepository;
+    private final RobotRepository robotRepository;
 
     public WarehouseLayoutResponse getLayout(Long warehouseId) {
         Warehouse warehouse = warehouseRepository.findById(warehouseId)
@@ -59,12 +62,19 @@ public class WarehouseLayoutService {
                         .map(ChargingStationResponse::from)
                         .toList();
 
+        List<RobotResponse> robots =
+                robotRepository.findAllByWarehouse_Id(warehouseId)
+                        .stream()
+                        .map(RobotResponse::from)
+                        .toList();
+
         return new WarehouseLayoutResponse(
                 WarehouseResponse.from(warehouse),
                 zones,
                 nodes,
                 edges,
-                chargingStations
+                chargingStations,
+                robots
         );
     }
 }
