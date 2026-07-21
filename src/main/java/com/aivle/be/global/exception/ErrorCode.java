@@ -4,6 +4,9 @@ import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
 
+    ROBOT_STATE_STORE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "ROBOT_STATE_007", "로봇 상태 저장소에 연결할 수 없습니다."),
+    ROBOT_STATE_DATA_CORRUPTED(HttpStatus.INTERNAL_SERVER_ERROR, "ROBOT_STATE_008", "저장된 로봇 상태 데이터가 올바르지 않습니다."),
+
     WAREHOUSE_NOT_FOUND(HttpStatus.NOT_FOUND, "WAREHOUSE_001", "존재하지 않는 창고입니다."),
     ROBOT_STATE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_001", "로봇의 현재 상태를 찾을 수 없습니다."),
     NODE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_002", "존재하지 않는 창고 노드입니다."),

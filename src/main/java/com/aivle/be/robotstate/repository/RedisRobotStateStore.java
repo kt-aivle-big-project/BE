@@ -1,7 +1,10 @@
 package com.aivle.be.robotstate.repository;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.robotstate.domain.RobotState;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
 import tools.jackson.core.JacksonException;
@@ -27,46 +30,58 @@ public class RedisRobotStateStore implements RobotStateStore {
         String stateKey = robotStateKey(state.robotId());
         String warehouseKey = warehouseRobotsKey(state.warehouseId());
 
-        redisTemplate.opsForValue().set(stateKey, serialize(state));
-        redisTemplate.opsForSet().add(warehouseKey, state.robotId().toString());
-        return state;
+        try {
+            redisTemplate.opsForValue().set(stateKey, serialize(state));
+            redisTemplate.opsForSet().add(warehouseKey, state.robotId().toString());
+            return state;
+        } catch (DataAccessException exception) {
+            throw storeUnavailable(exception);
+        }
     }
 
     @Override
     public Optional<RobotState> findByRobotId(Long robotId) {
-        String json = redisTemplate.opsForValue().get(robotStateKey(robotId));
-        return Optional.ofNullable(json).map(this::deserialize);
+        try {
+            String json = redisTemplate.opsForValue().get(robotStateKey(robotId));
+            return Optional.ofNullable(json).map(this::deserialize);
+        } catch (DataAccessException exception) {
+            throw storeUnavailable(exception);
+        }
     }
 
     @Override
     public List<RobotState> findAllByWarehouseId(Long warehouseId) {
-        Set<String> robotIds = redisTemplate.opsForSet().members(warehouseRobotsKey(warehouseId));
-        if (robotIds == null || robotIds.isEmpty()) {
-            return Collections.emptyList();
+        try {
+            Set<String> robotIds = redisTemplate.opsForSet().members(warehouseRobotsKey(warehouseId));
+            if (robotIds == null || robotIds.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            List<String> keys = robotIds.stream()
+                    .map(Long::valueOf)
+                    .sorted()
+                    .map(this::robotStateKey)
+                    .toList();
+
+            List<String> states = redisTemplate.opsForValue().multiGet(keys);
+            if (states == null) {
+                return Collections.emptyList();
+            }
+
+            return states.stream()
+                    .filter(json -> json != null)
+                    .map(this::deserialize)
+                    .toList();
+        } catch (DataAccessException exception) {
+            throw storeUnavailable(exception);
         }
-
-        List<String> keys = robotIds.stream()
-                .map(Long::valueOf)
-                .sorted()
-                .map(this::robotStateKey)
-                .toList();
-
-        List<String> states = redisTemplate.opsForValue().multiGet(keys);
-        if (states == null) {
-            return Collections.emptyList();
-        }
-
-        return states.stream()
-                .filter(json -> json != null)
-                .map(this::deserialize)
-                .toList();
     }
 
     private String serialize(RobotState state) {
         try {
             return objectMapper.writeValueAsString(state);
         } catch (JacksonException exception) {
-            throw new IllegalStateException("로봇 상태를 JSON으로 변환할 수 없습니다.", exception);
+            throw new BusinessException(ErrorCode.ROBOT_STATE_DATA_CORRUPTED, exception);
         }
     }
 
@@ -74,8 +89,12 @@ public class RedisRobotStateStore implements RobotStateStore {
         try {
             return objectMapper.readValue(json, RobotState.class);
         } catch (JacksonException exception) {
-            throw new IllegalStateException("Redis의 로봇 상태를 읽을 수 없습니다.", exception);
+            throw new BusinessException(ErrorCode.ROBOT_STATE_DATA_CORRUPTED, exception);
         }
+    }
+
+    private BusinessException storeUnavailable(DataAccessException exception) {
+        return new BusinessException(ErrorCode.ROBOT_STATE_STORE_UNAVAILABLE, exception);
     }
 
     private String robotStateKey(Long robotId) {
