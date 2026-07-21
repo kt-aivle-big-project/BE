@@ -1,6 +1,8 @@
 package com.aivle.be.warehouse.controller;
 
 import java.util.List;
+import com.aivle.be.warehouse.dto.WarehouseLayoutResponse;
+import com.aivle.be.warehouse.service.WarehouseLayoutService;
 import com.aivle.be.warehouse.dto.WarehouseUpdateRequest;
 import com.aivle.be.warehouse.dto.WarehouseCreateRequest;
 import com.aivle.be.warehouse.dto.WarehouseResponse;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 public class WarehouseController {
 
     private final WarehouseService warehouseService;
+    private final WarehouseLayoutService warehouseLayoutService;
 
     @PostMapping
     public ResponseEntity<WarehouseResponse> createWarehouse(
@@ -58,5 +61,13 @@ public class WarehouseController {
         warehouseService.deleteWarehouse(warehouseId);
 
         return ResponseEntity.noContent().build();
+    }
+    @GetMapping("/{warehouseId}/layout")
+    public ResponseEntity<WarehouseLayoutResponse> getWarehouseLayout(
+            @PathVariable Long warehouseId
+    ) {
+        return ResponseEntity.ok(
+                warehouseLayoutService.getLayout(warehouseId)
+        );
     }
 }
