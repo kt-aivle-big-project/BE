@@ -1,0 +1,33 @@
+package com.aivle.be.optimization.client;
+
+import com.aivle.be.optimization.dto.request.OptimizationRequest;
+import com.aivle.be.optimization.dto.response.OptimizationResponse;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+@Component
+public class OptimizationClient {
+
+    private final RestClient restClient;
+
+    public OptimizationClient(
+            @Value("${fastapi.base-url}") String fastApiBaseUrl
+    ) {
+        this.restClient = RestClient.builder()
+                .baseUrl(fastApiBaseUrl)
+                .build();
+    }
+
+    public OptimizationResponse optimize(OptimizationRequest request) {
+        // TODO: FastAPI 팀 최종 엔드포인트 확정 후 URI 수정
+        return restClient
+                .post()
+                .uri("/optimize")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve()
+                .body(OptimizationResponse.class);
+    }
+}
