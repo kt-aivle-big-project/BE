@@ -56,7 +56,7 @@ public class SimulationRunController {
         return ResponseEntity.ok(simulationRunService.resume(simulationRunId));
     }
 
-    @Operation(summary = "시뮬레이션 중지")
+    @Operation(summary = "시뮬레이션 수동 종료")
     @PostMapping("/{simulationRunId}/stop")
     public ResponseEntity<SimulationRunResponse> stop(@PathVariable Long simulationRunId) {
         return ResponseEntity.ok(simulationRunService.stop(simulationRunId));
