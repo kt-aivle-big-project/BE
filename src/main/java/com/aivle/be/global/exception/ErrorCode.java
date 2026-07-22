@@ -4,6 +4,13 @@ import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
 
+    SIMULATION_RUN_NOT_FOUND(HttpStatus.NOT_FOUND, "SIMULATION_RUN_001", "시뮬레이션 실행을 찾을 수 없습니다."),
+    INVALID_SIMULATION_RUN_TRANSITION(HttpStatus.CONFLICT, "SIMULATION_RUN_002", "허용되지 않는 시뮬레이션 상태 변경입니다."),
+    NO_AVAILABLE_ROBOTS(HttpStatus.CONFLICT, "SIMULATION_RUN_003", "시뮬레이션에 참여할 수 있는 대기 로봇이 없습니다."),
+    SIMULATION_RUN_ALREADY_ACTIVE(HttpStatus.CONFLICT, "SIMULATION_RUN_004", "해당 창고에서 이미 실행 중인 시뮬레이션이 있습니다."),
+    SIMULATION_RUN_NOT_RUNNING(HttpStatus.CONFLICT, "SIMULATION_RUN_005", "실행 중인 시뮬레이션에서만 로봇 상태를 갱신할 수 있습니다."),
+    ROBOT_NOT_IN_SIMULATION_RUN(HttpStatus.CONFLICT, "SIMULATION_RUN_006", "해당 시뮬레이션에 참여하지 않은 로봇입니다."),
+
     ROBOT_STATE_STORE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "ROBOT_STATE_007", "로봇 상태 저장소에 연결할 수 없습니다."),
     ROBOT_STATE_DATA_CORRUPTED(HttpStatus.INTERNAL_SERVER_ERROR, "ROBOT_STATE_008", "저장된 로봇 상태 데이터가 올바르지 않습니다."),
 

@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -38,6 +39,23 @@ public class RobotStateService {
 
     @Transactional
     public RobotStateResponse updateState(Long robotId, RobotStateUpdateRequest request) {
+        RobotState state = validateState(
+                robotId,
+                request,
+                robotStateStore.findByRobotId(robotId)
+        );
+
+        RobotStateResponse response = RobotStateResponse.from(robotStateStore.save(state));
+        messagingTemplate.convertAndSend(TOPIC, response);
+        return response;
+    }
+
+    @Transactional(readOnly = true)
+    public RobotState validateState(
+            Long robotId,
+            RobotStateUpdateRequest request,
+            Optional<RobotState> currentState
+    ) {
         Robot robot = robotRepository.findById(robotId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ROBOT_NOT_FOUND));
         WarehouseNode node = warehouseNodeRepository.findById(request.currentNodeId())
@@ -45,9 +63,9 @@ public class RobotStateService {
 
         validateSameWarehouse(robot, node);
         validateTask(robot, request.currentTaskId(), request.status());
-        validateEventOrder(robotId, request);
+        validateEventOrder(currentState, request);
 
-        RobotState state = new RobotState(
+        return new RobotState(
                 robotId,
                 robot.getWarehouse().getId(),
                 node.getId(),
@@ -56,10 +74,6 @@ public class RobotStateService {
                 request.currentTaskId(),
                 request.eventTime()
         );
-
-        RobotStateResponse response = RobotStateResponse.from(robotStateStore.save(state));
-        messagingTemplate.convertAndSend(TOPIC, response);
-        return response;
     }
 
     public RobotStateResponse getState(Long robotId) {
@@ -101,12 +115,15 @@ public class RobotStateService {
         }
     }
 
-    private void validateEventOrder(Long robotId, RobotStateUpdateRequest request) {
-        robotStateStore.findByRobotId(robotId).ifPresent(currentState -> {
-            if (request.eventTime().isBefore(currentState.updatedAt())) {
+    private void validateEventOrder(
+            Optional<RobotState> currentState,
+            RobotStateUpdateRequest request
+    ) {
+        currentState.ifPresent(state -> {
+            if (request.eventTime().isBefore(state.updatedAt())) {
                 throw new BusinessException(ErrorCode.STALE_ROBOT_STATE);
             }
-            transitionValidator.validate(currentState.status(), request.status());
+            transitionValidator.validate(state.status(), request.status());
         });
     }
 }
