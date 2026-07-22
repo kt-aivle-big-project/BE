@@ -3,6 +3,7 @@ package com.aivle.be.optimization.service;
 import com.aivle.be.optimization.client.OptimizationClient;
 import com.aivle.be.optimization.dto.request.OptimizationRequest;
 import com.aivle.be.optimization.dto.response.OptimizationResponse;
+import com.aivle.be.optimization.dto.response.OptimizationResultResponse;
 import com.aivle.be.optimization.entity.OptimizationResult;
 import com.aivle.be.optimization.entity.RobotRouteResult;
 import com.aivle.be.optimization.repository.OptimizationResultRepository;
@@ -11,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 
 @Service
 @RequiredArgsConstructor
@@ -61,5 +63,29 @@ public class OptimizationService {
                     e
             );
         }
+    }
+    @Transactional(readOnly = true)
+    public OptimizationResultResponse getResult(Long resultId) {
+        OptimizationResult result = optimizationResultRepository.findById(resultId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "최적화 결과를 찾을 수 없습니다. resultId=" + resultId
+                        )
+                );
+
+        return OptimizationResultResponse.from(result, objectMapper);
+    }
+
+    @Transactional(readOnly = true)
+    public OptimizationResultResponse getResultByRequestId(String requestId) {
+        OptimizationResult result = optimizationResultRepository
+                .findByRequestId(requestId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "최적화 결과를 찾을 수 없습니다. requestId=" + requestId
+                        )
+                );
+
+        return OptimizationResultResponse.from(result, objectMapper);
     }
 }

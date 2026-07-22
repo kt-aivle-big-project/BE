@@ -2,6 +2,7 @@ package com.aivle.be.optimization.controller;
 
 import com.aivle.be.optimization.dto.request.OptimizationRequest;
 import com.aivle.be.optimization.dto.response.OptimizationResponse;
+import com.aivle.be.optimization.dto.response.OptimizationResultResponse;
 import com.aivle.be.optimization.service.OptimizationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -22,5 +23,22 @@ public class OptimizationController {
                 optimizationService.optimize(request);
 
         return ResponseEntity.ok(response);
+    }
+    @GetMapping("/results/{resultId}")
+    public ResponseEntity<OptimizationResultResponse> getResult(
+            @PathVariable Long resultId
+    ) {
+        return ResponseEntity.ok(
+                optimizationService.getResult(resultId)
+        );
+    }
+
+    @GetMapping("/results/request/{requestId}")
+    public ResponseEntity<OptimizationResultResponse> getResultByRequestId(
+            @PathVariable String requestId
+    ) {
+        return ResponseEntity.ok(
+                optimizationService.getResultByRequestId(requestId)
+        );
     }
 }
