@@ -3,6 +3,7 @@ package com.aivle.be.task.entity;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.robot.entity.Robot;
+import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouseitem.entity.WarehouseItem;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
@@ -31,6 +32,10 @@ public class Task {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "robot_id")
     private Robot robot;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "simulation_run_id")
+    private SimulationRun simulationRun;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "warehouse_item_id")
@@ -66,11 +71,17 @@ public class Task {
 
     public Task(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
                 TaskType taskType, WarehouseItem warehouseItem) {
+        this(warehouse, startNode, endNode, taskType, warehouseItem, null);
+    }
+
+    public Task(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
+                TaskType taskType, WarehouseItem warehouseItem, SimulationRun simulationRun) {
         this.warehouse = warehouse;
         this.startNode = startNode;
         this.endNode = endNode;
         this.taskType = taskType;
         this.warehouseItem = warehouseItem;
+        this.simulationRun = simulationRun;
         this.status = TaskStatus.PENDING;
         this.requestedAt = LocalDateTime.now();
     }
@@ -85,20 +96,34 @@ public class Task {
     }
 
     public void start() {
+        if (this.status != TaskStatus.ASSIGNED) {
+            throw new BusinessException(ErrorCode.TASK_ALREADY_PROCESSED);
+        }
         this.status = TaskStatus.IN_PROGRESS;
         this.startedAt = LocalDateTime.now();
     }
 
     public void complete() {
+        if (this.status != TaskStatus.IN_PROGRESS) {
+            throw new BusinessException(ErrorCode.TASK_ALREADY_PROCESSED);
+        }
         this.status = TaskStatus.DONE;
         this.completedAt = LocalDateTime.now();
     }
 
     public void fail() {
+        if (this.status != TaskStatus.ASSIGNED && this.status != TaskStatus.IN_PROGRESS) {
+            throw new BusinessException(ErrorCode.TASK_ALREADY_PROCESSED);
+        }
         this.status = TaskStatus.FAILED;
     }
 
     public void cancel() {
+        if (this.status == TaskStatus.DONE
+                || this.status == TaskStatus.FAILED
+                || this.status == TaskStatus.CANCELLED) {
+            throw new BusinessException(ErrorCode.TASK_ALREADY_PROCESSED);
+        }
         this.status = TaskStatus.CANCELLED;
     }
 }

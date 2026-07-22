@@ -3,6 +3,7 @@ package com.aivle.be.simulationrun.entity;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import com.aivle.be.simulationrun.domain.ScenarioType;
 import com.aivle.be.warehouse.entity.Warehouse;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -54,14 +55,47 @@ public class SimulationRun {
     @Column(name = "ended_at")
     private LocalDateTime endedAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "scenario_type", length = 20)
+    private ScenarioType scenarioType;
+
+    @Column(name = "random_seed")
+    private Long randomSeed;
+
+    @Column(name = "planned_task_count")
+    private Integer plannedTaskCount;
+
+    @Column(name = "inbound_ratio")
+    private Double inboundRatio;
+
+    @Column(name = "generation_interval_seconds")
+    private Integer generationIntervalSeconds;
+
     @Version
     private Long version;
 
     public static SimulationRun create(Warehouse warehouse, LocalDateTime now) {
+        return create(warehouse, now, ScenarioType.MANUAL, null, null, null, null);
+    }
+
+    public static SimulationRun create(
+            Warehouse warehouse,
+            LocalDateTime now,
+            ScenarioType scenarioType,
+            Long randomSeed,
+            Integer plannedTaskCount,
+            Double inboundRatio,
+            Integer generationIntervalSeconds
+    ) {
         SimulationRun run = new SimulationRun();
         run.warehouse = warehouse;
         run.status = SimulationRunStatus.CREATED;
         run.createdAt = now;
+        run.scenarioType = scenarioType == null ? ScenarioType.MANUAL : scenarioType;
+        run.randomSeed = randomSeed;
+        run.plannedTaskCount = plannedTaskCount;
+        run.inboundRatio = inboundRatio;
+        run.generationIntervalSeconds = generationIntervalSeconds;
         return run;
     }
 

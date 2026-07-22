@@ -5,6 +5,8 @@ import com.aivle.be.simulationrun.dto.response.SimulationRunParticipantsResponse
 import com.aivle.be.simulationrun.dto.response.SimulationRunRobotStatesResponse;
 import com.aivle.be.simulationrun.dto.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.service.SimulationRunService;
+import com.aivle.be.task.controller.response.TaskResponse;
+import com.aivle.be.task.service.TaskService;
 import com.aivle.be.robotstate.dto.request.RobotStateUpdateRequest;
 import com.aivle.be.robotstate.dto.response.RobotStateResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -21,6 +23,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @Tag(name = "Simulation Run", description = "전체 시뮬레이션 실행 관리 API")
 @RestController
 @RequestMapping("/api/simulation-runs")
@@ -28,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class SimulationRunController {
 
     private final SimulationRunService simulationRunService;
+    private final TaskService taskService;
 
     @Operation(summary = "시뮬레이션 실행 생성")
     @PostMapping
@@ -86,6 +91,13 @@ public class SimulationRunController {
             @PathVariable Long simulationRunId
     ) {
         return ResponseEntity.ok(simulationRunService.getParticipants(simulationRunId));
+    }
+
+    @Operation(summary = "시뮬레이션 실행 작업 목록 조회")
+    @GetMapping("/{simulationRunId}/tasks")
+    public ResponseEntity<List<TaskResponse>> getTasks(@PathVariable Long simulationRunId) {
+        simulationRunService.getStatus(simulationRunId);
+        return ResponseEntity.ok(taskService.getTasksBySimulationRun(simulationRunId));
     }
 
     @Operation(summary = "시뮬레이션 로봇 실시간 상태 조회")

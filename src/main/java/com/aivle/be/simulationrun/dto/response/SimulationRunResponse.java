@@ -1,6 +1,7 @@
 package com.aivle.be.simulationrun.dto.response;
 
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import com.aivle.be.simulationrun.domain.ScenarioType;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 
 import java.time.LocalDateTime;
@@ -12,7 +13,12 @@ public record SimulationRunResponse(
         LocalDateTime createdAt,
         LocalDateTime startedAt,
         LocalDateTime pausedAt,
-        LocalDateTime endedAt
+        LocalDateTime endedAt,
+        ScenarioType scenarioType,
+        Long randomSeed,
+        Integer plannedTaskCount,
+        Double inboundRatio,
+        Integer generationIntervalSeconds
 ) {
     public static SimulationRunResponse from(SimulationRun run) {
         return new SimulationRunResponse(
@@ -22,7 +28,12 @@ public record SimulationRunResponse(
                 run.getCreatedAt(),
                 run.getStartedAt(),
                 run.getPausedAt(),
-                run.getEndedAt()
+                run.getEndedAt(),
+                run.getScenarioType() == null ? ScenarioType.MANUAL : run.getScenarioType(),
+                run.getRandomSeed(),
+                run.getPlannedTaskCount(),
+                run.getInboundRatio(),
+                run.getGenerationIntervalSeconds()
         );
     }
 }
