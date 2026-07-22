@@ -44,7 +44,10 @@ public class RobotStateService {
                 request,
                 robotStateStore.findByRobotId(robotId)
         );
-        return RobotStateResponse.from(robotStateStore.save(state));
+
+        RobotStateResponse response = RobotStateResponse.from(robotStateStore.save(state));
+        messagingTemplate.convertAndSend(TOPIC, response);
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -71,10 +74,6 @@ public class RobotStateService {
                 request.currentTaskId(),
                 request.eventTime()
         );
-
-        RobotStateResponse response = RobotStateResponse.from(robotStateStore.save(state));
-        messagingTemplate.convertAndSend(TOPIC, response);
-        return response;
     }
 
     public RobotStateResponse getState(Long robotId) {
