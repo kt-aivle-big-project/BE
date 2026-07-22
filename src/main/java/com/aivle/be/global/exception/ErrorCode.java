@@ -4,6 +4,11 @@ import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
 
+    INVALID_SCENARIO_CONFIG(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_007", "랜덤 시나리오 설정이 올바르지 않습니다."),
+    TASK_SIMULATION_RUN_MISMATCH(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_008", "작업과 시뮬레이션 실행의 창고가 일치하지 않습니다."),
+    TASK_ROBOT_NOT_PARTICIPANT(HttpStatus.CONFLICT, "SIMULATION_RUN_009", "시뮬레이션 실행에 참여하지 않은 로봇입니다."),
+    TASK_REQUIRES_RUNNING_SIMULATION(HttpStatus.CONFLICT, "SIMULATION_RUN_010", "실행 중인 시뮬레이션의 작업만 시작할 수 있습니다."),
+
     SIMULATION_RUN_NOT_FOUND(HttpStatus.NOT_FOUND, "SIMULATION_RUN_001", "시뮬레이션 실행을 찾을 수 없습니다."),
     INVALID_SIMULATION_RUN_TRANSITION(HttpStatus.CONFLICT, "SIMULATION_RUN_002", "허용되지 않는 시뮬레이션 상태 변경입니다."),
     NO_AVAILABLE_ROBOTS(HttpStatus.CONFLICT, "SIMULATION_RUN_003", "시뮬레이션에 참여할 수 있는 대기 로봇이 없습니다."),

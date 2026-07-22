@@ -10,6 +10,11 @@ public record TaskResponse(
         Long id,
         TaskType taskType,
         TaskStatus status,
+        Long simulationRunId,
+        Long warehouseId,
+        Long startNodeId,
+        Long endNodeId,
+        Long warehouseItemId,
         Long robotId,
         LocalDateTime requestedAt,
         LocalDateTime assignedAt
@@ -20,6 +25,11 @@ public record TaskResponse(
                 task.getId(),
                 task.getTaskType(),
                 task.getStatus(),
+                task.getSimulationRun() != null ? task.getSimulationRun().getId() : null,
+                task.getWarehouse().getId(),
+                task.getStartNode().getId(),
+                task.getEndNode().getId(),
+                task.getWarehouseItem() != null ? task.getWarehouseItem().getId() : null,
                 task.getRobot() != null ? task.getRobot().getId() : null,
                 task.getRequestedAt(),
                 task.getAssignedAt()

@@ -10,6 +10,8 @@ import com.aivle.be.robotstate.dto.response.RobotStateResponse;
 import com.aivle.be.robotstate.dto.request.RobotStateUpdateRequest;
 import com.aivle.be.robotstate.service.RobotStateService;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import com.aivle.be.simulationrun.domain.ScenarioType;
+import com.aivle.be.simulationrun.dto.request.ScenarioConfigRequest;
 import com.aivle.be.simulationrun.dto.request.SimulationRunCreateRequest;
 import com.aivle.be.simulationrun.dto.response.SimulationRunParticipantsResponse;
 import com.aivle.be.simulationrun.dto.response.SimulationRunRobotStatesResponse;
@@ -49,7 +51,22 @@ public class SimulationRunService {
     public SimulationRunResponse create(SimulationRunCreateRequest request) {
         Warehouse warehouse = warehouseRepository.findById(request.warehouseId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
-        SimulationRun run = SimulationRun.create(warehouse, LocalDateTime.now());
+        ScenarioConfigRequest scenario = request.scenario();
+        ScenarioType scenarioType = scenario == null || scenario.type() == null
+                ? ScenarioType.MANUAL
+                : scenario.type();
+        validateScenario(scenarioType, scenario);
+        SimulationRun run = SimulationRun.create(
+                warehouse,
+                LocalDateTime.now(),
+                scenarioType,
+                scenario == null ? null : scenario.seed(),
+                scenario == null ? null : scenario.taskCount(),
+                scenario == null ? null : scenario.inboundRatio(),
+                scenario == null || scenario.generationIntervalSeconds() == null
+                        ? 0
+                        : scenario.generationIntervalSeconds()
+        );
         return SimulationRunResponse.from(simulationRunRepository.save(run));
     }
 
@@ -194,5 +211,17 @@ public class SimulationRunService {
                 null,
                 now
         );
+    }
+
+    private void validateScenario(ScenarioType type, ScenarioConfigRequest scenario) {
+        if (type != ScenarioType.RANDOM) {
+            return;
+        }
+        if (scenario == null
+                || scenario.seed() == null
+                || scenario.taskCount() == null
+                || scenario.inboundRatio() == null) {
+            throw new BusinessException(ErrorCode.INVALID_SCENARIO_CONFIG);
+        }
     }
 }

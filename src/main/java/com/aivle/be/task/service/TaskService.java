@@ -2,25 +2,21 @@ package com.aivle.be.task.service;
 
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.repository.RobotRepository;
+import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import com.aivle.be.simulationrun.repository.SimulationRunRobotRepository;
+import com.aivle.be.simulationrun.service.SimulationRunProgressService;
 import com.aivle.be.task.controller.request.TaskAssignRequest;
 import com.aivle.be.task.controller.request.TaskCreateRequest;
 import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
-import com.aivle.be.warehouse.entity.Warehouse;
-import com.aivle.be.warehouse.repository.WarehouseRepository;
-import com.aivle.be.warehouseitem.entity.WarehouseItem;
-import com.aivle.be.warehouseitem.repository.WarehouseItemRepository;
-import com.aivle.be.warehousenode.entity.WarehouseNode;
-import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.socket.server.support.DefaultHandshakeHandler;
 
 import java.util.List;
 
@@ -31,24 +27,22 @@ public class TaskService {
     private static final String TOPIC = "/topic/tasks";
 
     private final TaskRepository taskRepository;
-    private final WarehouseRepository warehouseRepository;
-    private final WarehouseNodeRepository warehouseNodeRepository;
-    private final WarehouseItemRepository warehouseItemRepository;
     private final RobotRepository robotRepository;
+    private final TaskCreationService taskCreationService;
+    private final SimulationRunRobotRepository simulationRunRobotRepository;
+    private final SimulationRunProgressService simulationRunProgressService;
     private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
     public TaskResponse createTask(TaskCreateRequest request) {
-        Warehouse warehouse = warehouseRepository.getReferenceById(request.warehouseId());
-        WarehouseNode startNode = warehouseNodeRepository.getReferenceById(request.startNodeId());
-        WarehouseNode endNode = warehouseNodeRepository.getReferenceById(request.endNodeId());
-        WarehouseItem warehouseItem = request.warehouseItemId() != null
-                ? warehouseItemRepository.getReferenceById(request.warehouseItemId())
-                : null;
-
-        Task task = new Task(warehouse, startNode, endNode, request.taskType(), warehouseItem);
-
-        Task saved = taskRepository.save(task);
+        Task saved = taskCreationService.create(new TaskCreateCommand(
+                request.warehouseId(),
+                request.startNodeId(),
+                request.endNodeId(),
+                request.warehouseItemId(),
+                request.taskType(),
+                request.simulationRunId()
+        ));
         return new TaskResponse(saved);
     }
 
@@ -58,6 +52,14 @@ public class TaskService {
 
     public List<TaskResponse> getAllTasks() {
         return taskRepository.findAll().stream()
+                .map(TaskResponse::new)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<TaskResponse> getTasksBySimulationRun(Long simulationRunId) {
+        return taskRepository.findAllBySimulationRun_IdOrderByRequestedAtAsc(simulationRunId)
+                .stream()
                 .map(TaskResponse::new)
                 .toList();
     }
@@ -75,6 +77,17 @@ public class TaskService {
             throw new BusinessException(ErrorCode.ROBOT_NOT_AVAILABLE);
         }
 
+        if (!task.getWarehouse().getId().equals(robot.getWarehouse().getId())) {
+            throw new BusinessException(ErrorCode.TASK_SIMULATION_RUN_MISMATCH);
+        }
+        if (task.getSimulationRun() != null
+                && !simulationRunRobotRepository.existsBySimulationRun_IdAndRobot_Id(
+                task.getSimulationRun().getId(),
+                robot.getId()
+        )) {
+            throw new BusinessException(ErrorCode.TASK_ROBOT_NOT_PARTICIPANT);
+        }
+
         task.assignRobot(robot);
 
         return broadcast(task);
@@ -83,6 +96,10 @@ public class TaskService {
     @Transactional
     public TaskResponse startTask(Long taskId) {
         Task task = findTaskOrThrow(taskId);
+        if (task.getSimulationRun() != null
+                && task.getSimulationRun().getStatus() != SimulationRunStatus.RUNNING) {
+            throw new BusinessException(ErrorCode.TASK_REQUIRES_RUNNING_SIMULATION);
+        }
         task.start();
         return broadcast(task);
     }
@@ -91,14 +108,18 @@ public class TaskService {
     public TaskResponse completeTask(Long taskId) {
         Task task = findTaskOrThrow(taskId);
         task.complete();
-        return broadcast(task);
+        TaskResponse response = broadcast(task);
+        evaluateRun(task);
+        return response;
     }
 
     @Transactional
     public TaskResponse failTask(Long taskId) {
         Task task = findTaskOrThrow(taskId);
         task.fail();
-        return broadcast(task);
+        TaskResponse response = broadcast(task);
+        evaluateRun(task);
+        return response;
     }
 
     @Transactional
@@ -106,6 +127,7 @@ public class TaskService {
         Task task = findTaskOrThrow(taskId);
         task.cancel();
         broadcast(task);
+        evaluateRun(task);
     }
 
     private TaskResponse broadcast(Task task) {
@@ -117,5 +139,12 @@ public class TaskService {
     private Task findTaskOrThrow(Long taskId) {
         return taskRepository.findById(taskId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.TASK_NOT_FOUND));
+    }
+
+    private void evaluateRun(Task task) {
+        Long simulationRunId = task.getSimulationRun() == null
+                ? null
+                : task.getSimulationRun().getId();
+        simulationRunProgressService.evaluateAfterTaskFinished(simulationRunId);
     }
 }
