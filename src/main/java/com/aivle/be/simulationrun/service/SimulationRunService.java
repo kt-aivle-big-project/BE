@@ -24,11 +24,13 @@ import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 @Service
@@ -40,12 +42,16 @@ public class SimulationRunService {
             SimulationRunStatus.PAUSED
     );
 
+    // 런 자체의 생명주기(생성/시작/일시정지/재개/종료) 변경 브로드캐스트
+    private static final String RUN_TOPIC = "/topic/simulation-runs";
+
     private final SimulationRunRepository simulationRunRepository;
     private final SimulationRunRobotRepository simulationRunRobotRepository;
     private final WarehouseRepository warehouseRepository;
     private final RobotRepository robotRepository;
     private final SimulationRunStateStore simulationRunStateStore;
     private final RobotStateService robotStateService;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
     public SimulationRunResponse create(SimulationRunCreateRequest request) {
@@ -67,7 +73,8 @@ public class SimulationRunService {
                         ? 0
                         : scenario.generationIntervalSeconds()
         );
-        return SimulationRunResponse.from(simulationRunRepository.save(run));
+      
+        return broadcastRun(simulationRunRepository.save(run));
     }
 
     @Transactional
@@ -100,22 +107,26 @@ public class SimulationRunService {
 
         robots.stream()
                 .map(robot -> initialState(robot, warehouseId, now))
-                .forEach(state -> simulationRunStateStore.save(simulationRunId, state));
-        return SimulationRunResponse.from(run);
+                .forEach(state -> {
+                    simulationRunStateStore.save(simulationRunId, state);
+                    messagingTemplate.convertAndSend(robotTopic(simulationRunId), RobotStateResponse.from(state));
+                });
+
+        return broadcastRun(run);
     }
 
     @Transactional
     public SimulationRunResponse pause(Long simulationRunId) {
         SimulationRun run = findById(simulationRunId);
         run.pause(LocalDateTime.now());
-        return SimulationRunResponse.from(run);
+        return broadcastRun(run);
     }
 
     @Transactional
     public SimulationRunResponse resume(Long simulationRunId) {
         SimulationRun run = findById(simulationRunId);
         run.resume();
-        return SimulationRunResponse.from(run);
+        return broadcastRun(run);
     }
 
     @Transactional
@@ -123,7 +134,7 @@ public class SimulationRunService {
         SimulationRun run = findById(simulationRunId);
         run.stop(LocalDateTime.now());
         simulationRunStateStore.deleteAll(simulationRunId);
-        return SimulationRunResponse.from(run);
+        return broadcastRun(run);
     }
 
     @Transactional
@@ -131,7 +142,7 @@ public class SimulationRunService {
         SimulationRun run = findById(simulationRunId);
         run.complete(LocalDateTime.now());
         simulationRunStateStore.deleteAll(simulationRunId);
-        return SimulationRunResponse.from(run);
+        return broadcastRun(run);
     }
 
     @Transactional
@@ -139,7 +150,7 @@ public class SimulationRunService {
         SimulationRun run = findById(simulationRunId);
         run.fail(LocalDateTime.now());
         simulationRunStateStore.deleteAll(simulationRunId);
-        return SimulationRunResponse.from(run);
+        return broadcastRun(run);
     }
 
     @Transactional(readOnly = true)
@@ -168,7 +179,7 @@ public class SimulationRunService {
         return new SimulationRunRobotStatesResponse(simulationRunId, run.getStatus(), states);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public RobotStateResponse updateRobotState(
             Long simulationRunId,
             Long robotId,
@@ -191,9 +202,12 @@ public class SimulationRunService {
         RobotState nextState = robotStateService.validateState(
                 robotId,
                 request,
-                java.util.Optional.of(currentState)
+                Optional.of(currentState)
         );
-        return RobotStateResponse.from(simulationRunStateStore.save(simulationRunId, nextState));
+
+        RobotStateResponse response = RobotStateResponse.from(simulationRunStateStore.save(simulationRunId, nextState));
+        messagingTemplate.convertAndSend(robotTopic(simulationRunId), response);
+        return response;
     }
 
     private SimulationRun findById(Long simulationRunId) {
@@ -223,5 +237,14 @@ public class SimulationRunService {
                 || scenario.inboundRatio() == null) {
             throw new BusinessException(ErrorCode.INVALID_SCENARIO_CONFIG);
         }
+    }
+    private SimulationRunResponse broadcastRun(SimulationRun run) {
+        SimulationRunResponse response = SimulationRunResponse.from(run);
+        messagingTemplate.convertAndSend(RUN_TOPIC, response);
+        return response;
+    }
+
+    private String robotTopic(Long simulationRunId) {
+        return RUN_TOPIC + "/" + simulationRunId + "/robots";
     }
 }
