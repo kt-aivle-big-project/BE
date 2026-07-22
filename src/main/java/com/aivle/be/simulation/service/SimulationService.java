@@ -14,6 +14,7 @@ import com.aivle.be.simulation.repository.SimulationRepository;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,10 +24,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SimulationService {
 
+    private static final String TOPIC = "/topic/simulations";
+
     private final SimulationRepository simulationRepository;
     private final WarehouseRepository warehouseRepository;
-
-    // ===== Create (= 시작) =====
+    private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
     public SimulationResponse createSimulation(SimulationCreateRequest request) {
@@ -46,10 +48,8 @@ public class SimulationService {
         }
 
         Simulation saved = simulationRepository.save(simulation);
-        return new SimulationResponse(saved);
+        return broadcast(saved);
     }
-
-    // ===== Read =====
 
     public SimulationResponse getSimulation(Long simulationId) {
         return new SimulationResponse(findSimulationOrThrow(simulationId));
@@ -60,8 +60,6 @@ public class SimulationService {
                 .map(SimulationResponse::new)
                 .toList();
     }
-
-    // ===== Update (진행 중 기록) =====
 
     @Transactional
     public SimulationResponse recordAgentInteraction(Long simulationId, SimulationAgentInteractionRequest request) {
@@ -87,30 +85,30 @@ public class SimulationService {
     public SimulationResponse updatePath(Long simulationId, SimulationPathUpdateRequest request) {
         Simulation simulation = findSimulationOrThrow(simulationId);
         simulation.updatePath(request.pathNodes());
-        return new SimulationResponse(simulation);
+        return broadcast(simulation);
     }
 
-    // ===== 경로 재계산 필요 여부 판단 =====
-    // 특정 노드(장애물/차단 위치)가 현재 진행중인 시뮬레이션들의 경로에 포함되는지 확인
     public PathOverlapResponse checkPathOverlap(Long nodeId) {
         List<Simulation> affected = simulationRepository.findRunningSimulationsContainingNode(nodeId);
         List<Long> affectedIds = affected.stream().map(Simulation::getId).toList();
         return new PathOverlapResponse(nodeId, !affectedIds.isEmpty(), affectedIds);
     }
 
-    // ===== Update (종료 = 중지) =====
-
     @Transactional
     public SimulationResponse completeSimulation(Long simulationId, SimulationCompleteRequest request) {
         Simulation simulation = findSimulationOrThrow(simulationId);
         simulation.complete(request.success());
-        return new SimulationResponse(simulation);
+        return broadcast(simulation);
     }
-
-    // ===== 공통 조회 헬퍼 =====
 
     private Simulation findSimulationOrThrow(Long simulationId) {
         return simulationRepository.findById(simulationId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_NOT_FOUND));
+    }
+
+    private SimulationResponse broadcast(Simulation simulation) {
+        SimulationResponse response = new SimulationResponse(simulation);
+        messagingTemplate.convertAndSend(TOPIC, response);
+        return response;
     }
 }

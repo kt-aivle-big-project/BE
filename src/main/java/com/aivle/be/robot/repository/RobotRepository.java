@@ -7,8 +7,10 @@ import java.util.List;
 
 public interface RobotRepository extends JpaRepository<Robot, Long> {
 
-    List<Robot> findAllByWarehouse_IdAndStatusAndNodeIdIsNotNullOrderById(
-            Long warehouseId,
-            Robot.RobotStatus status
-    );
+      List<Robot> findAllByWarehouse_Id(Long warehouseId);
+
+      List<Robot> findAllByWarehouse_IdAndStatusAndNodeIdIsNotNullOrderById(
+              Long warehouseId,
+              Robot.RobotStatus status
+      );
 }
