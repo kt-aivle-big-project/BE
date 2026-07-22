@@ -67,8 +67,11 @@ public class TaskService {
     @Transactional
     public TaskResponse assignRobot(Long taskId, TaskAssignRequest request) {
         Task task = findTaskOrThrow(taskId);
+        requireRunningSimulation(task);
 
-        Robot robot = robotRepository.findById(request.robotId())
+        // Serialize assignments for the same robot so concurrent requests cannot
+        // both pass the availability check.
+        Robot robot = robotRepository.findByIdForUpdate(request.robotId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.ROBOT_NOT_FOUND));
 
         boolean alreadyWorking = taskRepository.existsByRobot_IdAndStatusIn(
@@ -96,10 +99,7 @@ public class TaskService {
     @Transactional
     public TaskResponse startTask(Long taskId) {
         Task task = findTaskOrThrow(taskId);
-        if (task.getSimulationRun() != null
-                && task.getSimulationRun().getStatus() != SimulationRunStatus.RUNNING) {
-            throw new BusinessException(ErrorCode.TASK_REQUIRES_RUNNING_SIMULATION);
-        }
+        requireRunningSimulation(task);
         task.start();
         return broadcast(task);
     }
@@ -139,6 +139,13 @@ public class TaskService {
     private Task findTaskOrThrow(Long taskId) {
         return taskRepository.findById(taskId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.TASK_NOT_FOUND));
+    }
+
+    private void requireRunningSimulation(Task task) {
+        if (task.getSimulationRun() != null
+                && task.getSimulationRun().getStatus() != SimulationRunStatus.RUNNING) {
+            throw new BusinessException(ErrorCode.TASK_REQUIRES_RUNNING_SIMULATION);
+        }
     }
 
     private void evaluateRun(Task task) {

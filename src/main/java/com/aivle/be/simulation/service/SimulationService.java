@@ -32,7 +32,8 @@ public class SimulationService {
 
     @Transactional
     public SimulationResponse createSimulation(SimulationCreateRequest request) {
-        Warehouse warehouse = warehouseRepository.getReferenceById(request.warehouseId());
+        Warehouse warehouse = warehouseRepository.findById(request.warehouseId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
 
         Simulation simulation = new Simulation(
                 warehouse,
