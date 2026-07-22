@@ -1,7 +1,7 @@
 package com.aivle.be.robot.dto;
 
 import com.aivle.be.robot.entity.Robot;
-import com.aivle.be.robot.entity.Robot.RobotStatus;
+import com.aivle.be.robot.domain.RobotAvailabilityStatus;
 import lombok.Builder;
 import lombok.Getter;
 
@@ -14,7 +14,7 @@ public class RobotResponse {
     private Long warehouseId;
     private Long nodeId;
     private Integer battery;
-    private RobotStatus status;
+    private RobotAvailabilityStatus status;
 
     public static RobotResponse from(Robot robot) {
         return RobotResponse.builder()

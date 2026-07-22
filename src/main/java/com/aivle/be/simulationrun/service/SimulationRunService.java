@@ -3,12 +3,13 @@ package com.aivle.be.simulationrun.service;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.robot.entity.Robot;
+import com.aivle.be.robot.domain.RobotAvailabilityStatus;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.domain.RobotState;
 import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.robotstate.dto.response.RobotStateResponse;
 import com.aivle.be.robotstate.dto.request.RobotStateUpdateRequest;
-import com.aivle.be.robotstate.service.RobotStateService;
+import com.aivle.be.robotstate.service.RobotStateValidationService;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.domain.ScenarioType;
 import com.aivle.be.simulationrun.dto.request.ScenarioConfigRequest;
@@ -50,7 +51,7 @@ public class SimulationRunService {
     private final WarehouseRepository warehouseRepository;
     private final RobotRepository robotRepository;
     private final SimulationRunStateStore simulationRunStateStore;
-    private final RobotStateService robotStateService;
+    private final RobotStateValidationService robotStateValidationService;
     private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
@@ -92,7 +93,7 @@ public class SimulationRunService {
 
         List<Robot> robots = robotRepository.findAllByWarehouse_IdAndStatusAndNodeIdIsNotNullOrderById(
                 warehouseId,
-                Robot.RobotStatus.IDLE
+                RobotAvailabilityStatus.AVAILABLE
         );
         if (robots.isEmpty()) {
             throw new BusinessException(ErrorCode.NO_AVAILABLE_ROBOTS);
@@ -199,7 +200,7 @@ public class SimulationRunService {
         RobotState currentState = simulationRunStateStore
                 .findByRobotId(simulationRunId, robotId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ROBOT_STATE_NOT_FOUND));
-        RobotState nextState = robotStateService.validateState(
+        RobotState nextState = robotStateValidationService.validate(
                 robotId,
                 request,
                 Optional.of(currentState)

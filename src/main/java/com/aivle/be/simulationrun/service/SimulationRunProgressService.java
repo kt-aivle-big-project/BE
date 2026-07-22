@@ -1,12 +1,14 @@
 package com.aivle.be.simulationrun.service;
 
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import com.aivle.be.simulationrun.dto.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +19,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class SimulationRunProgressService {
 
+    private static final String RUN_TOPIC = "/topic/simulation-runs";
+
     private static final Set<TaskStatus> TERMINAL_TASK_STATUSES = Set.of(
             TaskStatus.DONE,
             TaskStatus.FAILED,
@@ -26,6 +30,7 @@ public class SimulationRunProgressService {
     private final SimulationRunRepository simulationRunRepository;
     private final TaskRepository taskRepository;
     private final SimulationRunStateStore simulationRunStateStore;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
     public void evaluateAfterTaskFinished(Long simulationRunId) {
@@ -54,5 +59,6 @@ public class SimulationRunProgressService {
             run.complete(now);
         }
         simulationRunStateStore.deleteAll(simulationRunId);
+        messagingTemplate.convertAndSend(RUN_TOPIC, SimulationRunResponse.from(run));
     }
 }

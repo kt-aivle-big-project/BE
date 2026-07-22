@@ -1,5 +1,6 @@
 package com.aivle.be.robot.entity;
 
+import com.aivle.be.robot.domain.RobotAvailabilityStatus;
 import com.aivle.be.robotspec.entity.RobotSpec;
 import com.aivle.be.warehouse.entity.Warehouse;
 import jakarta.persistence.*;
@@ -37,23 +38,23 @@ public class Robot {
     @Column(nullable = false)
     private Integer battery;
 
-    @Enumerated(EnumType.STRING)
+    @Convert(converter = RobotAvailabilityStatusConverter.class)
     @Column(nullable = false)
-    private RobotStatus status;
+    private RobotAvailabilityStatus status;
 
     public static Robot create(
             RobotSpec robotSpec,
             Warehouse warehouse,
             Long nodeId,
             Integer battery,
-            RobotStatus status
+            RobotAvailabilityStatus status
     ) {
         Robot robot = new Robot();
         robot.robotSpec = robotSpec;
         robot.warehouse = warehouse;
         robot.nodeId = nodeId;
         robot.battery = battery;
-        robot.status = status;
+        robot.status = status == null ? RobotAvailabilityStatus.AVAILABLE : status;
         return robot;
     }
 
@@ -62,16 +63,14 @@ public class Robot {
             Warehouse warehouse,
             Long nodeId,
             Integer battery,
-            RobotStatus status
+            RobotAvailabilityStatus status
     ) {
         this.robotSpec = robotSpec;
         this.warehouse = warehouse;
         this.nodeId = nodeId;
         this.battery = battery;
-        this.status = status;
-    }
-
-    public enum RobotStatus {
-        IDLE, BUSY, CHARGING
+        if (status != null) {
+            this.status = status;
+        }
     }
 }

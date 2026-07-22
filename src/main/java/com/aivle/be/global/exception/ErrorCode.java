@@ -4,6 +4,10 @@ import org.springframework.http.HttpStatus;
 
 public enum ErrorCode {
 
+    ROBOT_SPEC_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_SPEC_001", "로봇 사양을 찾을 수 없습니다."),
+    DUPLICATE_ROBOT_CODE(HttpStatus.CONFLICT, "ROBOT_SPEC_002", "이미 사용 중인 로봇 모델 코드입니다."),
+    ROBOT_SPEC_IN_USE(HttpStatus.CONFLICT, "ROBOT_SPEC_003", "로봇이 사용 중인 사양은 수정하거나 삭제할 수 없습니다."),
+
     INVALID_SCENARIO_CONFIG(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_007", "랜덤 시나리오 설정이 올바르지 않습니다."),
     TASK_SIMULATION_RUN_MISMATCH(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_008", "작업과 시뮬레이션 실행의 창고가 일치하지 않습니다."),
     TASK_ROBOT_NOT_PARTICIPANT(HttpStatus.CONFLICT, "SIMULATION_RUN_009", "시뮬레이션 실행에 참여하지 않은 로봇입니다."),

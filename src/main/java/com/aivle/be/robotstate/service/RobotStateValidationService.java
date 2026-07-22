@@ -7,50 +7,28 @@ import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.domain.RobotState;
 import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.robotstate.dto.request.RobotStateUpdateRequest;
-import com.aivle.be.robotstate.dto.response.RobotStateResponse;
-import com.aivle.be.robotstate.repository.RobotStateStore;
 import com.aivle.be.robotstate.validation.RobotStateTransitionValidator;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.repository.TaskRepository;
-import com.aivle.be.warehouse.repository.WarehouseRepository;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.util.Optional;
 
-@Deprecated
+@Service
 @RequiredArgsConstructor
-public class RobotStateService {
-
-    private static final String TOPIC = "/topic/robots";
+public class RobotStateValidationService {
 
     private final RobotRepository robotRepository;
-    private final WarehouseRepository warehouseRepository;
     private final WarehouseNodeRepository warehouseNodeRepository;
     private final TaskRepository taskRepository;
-    private final RobotStateStore robotStateStore;
     private final RobotStateTransitionValidator transitionValidator;
-    private final SimpMessagingTemplate messagingTemplate;
-
-    @Transactional
-    public RobotStateResponse updateState(Long robotId, RobotStateUpdateRequest request) {
-        RobotState state = validateState(
-                robotId,
-                request,
-                robotStateStore.findByRobotId(robotId)
-        );
-
-        RobotStateResponse response = RobotStateResponse.from(robotStateStore.save(state));
-        messagingTemplate.convertAndSend(TOPIC, response);
-        return response;
-    }
 
     @Transactional(readOnly = true)
-    public RobotState validateState(
+    public RobotState validate(
             Long robotId,
             RobotStateUpdateRequest request,
             Optional<RobotState> currentState
@@ -73,22 +51,6 @@ public class RobotStateService {
                 request.currentTaskId(),
                 request.eventTime()
         );
-    }
-
-    public RobotStateResponse getState(Long robotId) {
-        return robotStateStore.findByRobotId(robotId)
-                .map(RobotStateResponse::from)
-                .orElseThrow(() -> new BusinessException(ErrorCode.ROBOT_STATE_NOT_FOUND));
-    }
-
-    public List<RobotStateResponse> getWarehouseStates(Long warehouseId) {
-        if (!warehouseRepository.existsById(warehouseId)) {
-            throw new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND);
-        }
-
-        return robotStateStore.findAllByWarehouseId(warehouseId).stream()
-                .map(RobotStateResponse::from)
-                .toList();
     }
 
     private void validateSameWarehouse(Robot robot, WarehouseNode node) {

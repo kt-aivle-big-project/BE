@@ -6,7 +6,6 @@ import com.aivle.be.robotstate.domain.RobotState;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Repository;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -15,7 +14,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
-@Repository
+@Deprecated
 @RequiredArgsConstructor
 public class RedisRobotStateStore implements RobotStateStore {
 

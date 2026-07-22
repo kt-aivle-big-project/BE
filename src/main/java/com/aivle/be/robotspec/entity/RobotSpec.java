@@ -3,13 +3,13 @@ package com.aivle.be.robotspec.entity;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
+
+import static lombok.AccessLevel.PROTECTED;
 
 @Entity
 @Table(name = "robot_specs")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = PROTECTED)
 public class RobotSpec {
 
     @Id
@@ -31,4 +31,34 @@ public class RobotSpec {
 
     @Column(name = "failure_rate")
     private Double failureRate;
+
+    public static RobotSpec create(
+            String robotCode,
+            String taskCode,
+            Double baseBatteryRate,
+            Double workBatteryRate,
+            Double failureRate
+    ) {
+        RobotSpec spec = new RobotSpec();
+        spec.robotCode = robotCode;
+        spec.taskCode = taskCode;
+        spec.baseBatteryRate = baseBatteryRate;
+        spec.workBatteryRate = workBatteryRate;
+        spec.failureRate = failureRate;
+        return spec;
+    }
+
+    public void update(
+            String robotCode,
+            String taskCode,
+            Double baseBatteryRate,
+            Double workBatteryRate,
+            Double failureRate
+    ) {
+        this.robotCode = robotCode;
+        this.taskCode = taskCode;
+        this.baseBatteryRate = baseBatteryRate;
+        this.workBatteryRate = workBatteryRate;
+        this.failureRate = failureRate;
+    }
 }

@@ -1,6 +1,6 @@
 package com.aivle.be.robot.dto;
 
-import com.aivle.be.robot.entity.Robot.RobotStatus;
+import com.aivle.be.robot.domain.RobotAvailabilityStatus;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -14,5 +14,5 @@ public class RobotCreateRequest {
     private Long warehouseId;
     private Long nodeId;
     private Integer battery;
-    private RobotStatus status;
+    private RobotAvailabilityStatus status;
 }
