@@ -3,6 +3,9 @@ package com.aivle.be.optimization.controller;
 import com.aivle.be.optimization.dto.request.OptimizationRequest;
 import com.aivle.be.optimization.dto.response.OptimizationResponse;
 import com.aivle.be.optimization.dto.response.OptimizationResultResponse;
+import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
+import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
+import com.aivle.be.optimization.service.ReoptimizationService;
 import com.aivle.be.optimization.service.OptimizationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 public class OptimizationController {
 
     private final OptimizationService optimizationService;
+    private final ReoptimizationService reoptimizationService;
 
     @PostMapping
     public ResponseEntity<OptimizationResponse> optimize(
@@ -41,4 +45,17 @@ public class OptimizationController {
                 optimizationService.getResultByRequestId(requestId)
         );
     }
+    @PostMapping("/simulation-runs/{simulationRunId}/reoptimize")
+    public ResponseEntity<ReoptimizationResponse> reoptimize(
+            @PathVariable Long simulationRunId,
+            @RequestBody ReoptimizationRequest request
+    ) {
+        return ResponseEntity.ok(
+                reoptimizationService.reoptimize(
+                        simulationRunId,
+                        request
+                )
+        );
+    }
+
 }
