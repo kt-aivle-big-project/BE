@@ -41,7 +41,8 @@ public class EventService {
 
     @Transactional
     public EventResponse createEvent(EventCreateRequest request) {
-        Warehouse warehouse = warehouseRepository.getReferenceById(request.warehouseId());
+        Warehouse warehouse = warehouseRepository.findById(request.warehouseId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
 
         Robot robot = request.robotId() != null
                 ? robotRepository.findById(request.robotId())
