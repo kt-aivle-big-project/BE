@@ -95,6 +95,25 @@ public class Task {
         this.assignedAt = LocalDateTime.now();
     }
 
+    public void reassignRobot(Robot robot) {
+        if (this.status != TaskStatus.ASSIGNED
+                && this.status != TaskStatus.IN_PROGRESS) {
+            throw new BusinessException(
+                    ErrorCode.TASK_ALREADY_PROCESSED
+            );
+        }
+
+        if (this.robot != null
+                && this.robot.getId().equals(robot.getId())) {
+            return;
+        }
+
+        this.robot = robot;
+        this.status = TaskStatus.ASSIGNED;
+        this.assignedAt = LocalDateTime.now();
+        this.startedAt = null;
+    }
+
     public void start() {
         if (this.status != TaskStatus.ASSIGNED) {
             throw new BusinessException(ErrorCode.TASK_ALREADY_PROCESSED);

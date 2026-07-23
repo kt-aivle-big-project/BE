@@ -17,6 +17,11 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
 
     List<Task> findAllBySimulationRun_IdOrderByRequestedAtAsc(Long simulationRunId);
 
+    List<Task> findAllBySimulationRun_IdAndStatusInOrderByRequestedAtAsc(
+            Long simulationRunId,
+            Collection<TaskStatus> statuses
+    );
+
     long countBySimulationRun_Id(Long simulationRunId);
 
     boolean existsBySimulationRun_IdAndStatusNotIn(

@@ -1,7 +1,9 @@
 package com.aivle.be.optimization.client;
 
 import com.aivle.be.optimization.dto.request.OptimizationRequest;
+import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.response.OptimizationResponse;
+import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -29,5 +31,16 @@ public class OptimizationClient {
                 .body(request)
                 .retrieve()
                 .body(OptimizationResponse.class);
+    }
+
+    public ReoptimizationResponse reoptimize(
+            ReoptimizationOptimizationRequest request
+    ) {
+        return restClient.post()
+                .uri("/reoptimize")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve()
+                .body(ReoptimizationResponse.class);
     }
 }
