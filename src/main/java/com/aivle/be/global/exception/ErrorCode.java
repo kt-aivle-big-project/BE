@@ -39,6 +39,7 @@ public enum ErrorCode {
 
     ROBOT_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_001", "존재하지 않는 로봇입니다."),
     ROBOT_NOT_AVAILABLE(HttpStatus.CONFLICT, "ROBOT_004", "이미 작업중인 로봇입니다."),
+    ROBOT_IN_ACTIVE_USE(HttpStatus.CONFLICT, "ROBOT_005", "활성 시뮬레이션 또는 진행 중인 작업에서 사용 중인 로봇입니다."),
 
     EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "EVENT_001","존재하지 않는 이벤트입니다."),
 

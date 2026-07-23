@@ -3,6 +3,9 @@ package com.aivle.be.task.repository;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.entity.TaskStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
@@ -22,4 +25,8 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     );
 
     boolean existsBySimulationRun_IdAndStatus(Long simulationRunId, TaskStatus status);
+
+    @Modifying(flushAutomatically = true)
+    @Query("update Task task set task.robot = null where task.robot.id = :robotId")
+    void clearRobotReference(@Param("robotId") Long robotId);
 }
