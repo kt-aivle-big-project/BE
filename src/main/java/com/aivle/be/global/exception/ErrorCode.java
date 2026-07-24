@@ -46,6 +46,11 @@ public enum ErrorCode {
     TASK_NOT_FOUND(HttpStatus.NOT_FOUND, "TASK_001", "존재하지 않는 작업입니다."),
     TASK_ALREADY_PROCESSED(HttpStatus.CONFLICT, "TASK_002", "이미 처리 중이거나 종료된 작업입니다."),
 
+    STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),
+
+    WAREHOUSE_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "WAREHOUSE_ITEM_001", "존재하지 않는 창고 품목입니다."),
+    WAREHOUSE_ITEM_LOCATION_MISMATCH(HttpStatus.BAD_REQUEST, "WAREHOUSE_ITEM_002", "보관위치가 지정한 창고에 속해 있지 않습니다."),
+
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "COMMON_001", "입력값이 올바르지 않습니다."),
 
     DUPLICATE_EMAIL(HttpStatus.CONFLICT, "USER_001", "이미 사용 중인 이메일입니다."),
