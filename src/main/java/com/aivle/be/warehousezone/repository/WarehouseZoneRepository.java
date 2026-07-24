@@ -9,4 +9,6 @@ public interface WarehouseZoneRepository
         extends JpaRepository<WarehouseZone, Long> {
 
     List<WarehouseZone> findAllByWarehouse_Id(Long warehouseId);
+
+    java.util.Optional<WarehouseZone> findByWarehouse_IdAndName(Long warehouseId, String name);
 }

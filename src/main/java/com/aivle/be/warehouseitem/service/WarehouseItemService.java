@@ -10,6 +10,7 @@ import com.aivle.be.warehouseitem.dto.WarehouseItemRequest;
 import com.aivle.be.warehouseitem.dto.WarehouseItemResponse;
 import com.aivle.be.warehouseitem.entity.WarehouseItem;
 import com.aivle.be.warehouseitem.repository.WarehouseItemRepository;
+import com.aivle.be.warehousezone.service.WarehouseZoneResolverService;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,7 @@ public class WarehouseItemService {
     private final WarehouseItemRepository warehouseItemRepository;
     private final WarehouseRepository warehouseRepository;
     private final StorageLocationRepository storageLocationRepository;
+    private final WarehouseZoneResolverService warehouseZoneResolverService;
 
     @Transactional
     public WarehouseItemResponse create(WarehouseItemRequest request) {
@@ -33,8 +35,8 @@ public class WarehouseItemService {
         StorageLocation storageLocation = findStorageLocation(request.storageLocationId());
         requireSameWarehouse(warehouse, storageLocation);
 
-        // 노드는 보관위치가 이미 1:1로 들고 있으므로 여기서 자동으로 도출한다.
         WarehouseNode node = storageLocation.getNode();
+        warehouseZoneResolverService.requireStorageZone(node);
 
         WarehouseItem item = WarehouseItem.create(
                 warehouse,
@@ -76,6 +78,8 @@ public class WarehouseItemService {
         Warehouse warehouse = findWarehouse(request.warehouseId());
         StorageLocation storageLocation = findStorageLocation(request.storageLocationId());
         requireSameWarehouse(warehouse, storageLocation);
+
+        warehouseZoneResolverService.requireStorageZone(storageLocation.getNode());
 
         item.update(
                 storageLocation,

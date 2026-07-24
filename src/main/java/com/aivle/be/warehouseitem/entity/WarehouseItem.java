@@ -1,5 +1,7 @@
 package com.aivle.be.warehouseitem.entity;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.storagelocation.entity.StorageLocation;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
@@ -87,5 +89,33 @@ public class WarehouseItem {
         this.itemId = itemId;
         this.expiryDate = expiryDate;
         this.quantity = quantity;
+    }
+
+    public void increaseQuantity(int amount) {
+        if (amount <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        this.quantity = safeQuantity() + amount;
+        this.inboundQuantity = safeCount(inboundQuantity) + amount;
+    }
+
+    public void decreaseQuantity(int amount) {
+        if (amount <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        int currentQuantity = safeQuantity();
+        if (currentQuantity < amount) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        this.quantity = currentQuantity - amount;
+        this.outboundQuantity = safeCount(outboundQuantity) + amount;
+    }
+
+    private int safeQuantity() {
+        return quantity == null ? 0 : quantity;
+    }
+
+    private int safeCount(Integer value) {
+        return value == null ? 0 : value;
     }
 }

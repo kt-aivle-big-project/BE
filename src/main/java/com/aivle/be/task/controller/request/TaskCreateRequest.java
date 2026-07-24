@@ -1,22 +1,39 @@
 package com.aivle.be.task.controller.request;
 
 import com.aivle.be.task.entity.TaskType;
+import jakarta.validation.constraints.Positive;
 
 public record TaskCreateRequest(
         Long warehouseId,
         Long startNodeId,
         Long endNodeId,
-        Long warehouseItemId, // 입출고 작업일 때만 채움, 없으면 null
+        Long warehouseItemId,
+        Long itemId,
         TaskType taskType,
-        Long simulationRunId
+        Long simulationRunId,
+        @Positive
+        Integer quantity
 ) {
     public TaskCreateRequest(
             Long warehouseId,
             Long startNodeId,
             Long endNodeId,
             Long warehouseItemId,
+            Long itemId,
             TaskType taskType
     ) {
-        this(warehouseId, startNodeId, endNodeId, warehouseItemId, taskType, null);
+        this(warehouseId, startNodeId, endNodeId, warehouseItemId, itemId, taskType, null, null);
+    }
+
+    public TaskCreateRequest(
+            Long warehouseId,
+            Long startNodeId,
+            Long endNodeId,
+            Long warehouseItemId,
+            Long itemId,
+            TaskType taskType,
+            Long simulationRunId
+    ) {
+        this(warehouseId, startNodeId, endNodeId, warehouseItemId, itemId, taskType, simulationRunId, null);
     }
 }
