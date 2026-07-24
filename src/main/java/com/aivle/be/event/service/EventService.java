@@ -7,6 +7,9 @@ import com.aivle.be.event.entity.EventType;
 import com.aivle.be.event.repository.EventRepository;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.optimization.domain.ReoptimizationReason;
+import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
+import com.aivle.be.optimization.service.ReoptimizationService;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.simulation.controller.response.PathOverlapResponse;
@@ -21,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -30,6 +34,13 @@ public class EventService {
     private static final Set<EventType> PATH_OVERLAP_CHECK_TYPES =
             Set.of(EventType.COLLISION_RISK, EventType.PATH_BLOCKED);
 
+    private static final Map<EventType, ReoptimizationReason> REOPT_TRIGGERS = Map.of(
+            EventType.LOW_BATTERY,    ReoptimizationReason.LOW_BATTERY,
+            EventType.PATH_BLOCKED,   ReoptimizationReason.OBSTACLE_DETECTED,
+            EventType.COLLISION_RISK, ReoptimizationReason.OBSTACLE_DETECTED,
+            EventType.TASK_FAILED,    ReoptimizationReason.ROBOT_FAILURE
+    );
+
     private static final String TOPIC = "/topic/events";
 
     private final EventRepository eventRepository;
@@ -37,6 +48,7 @@ public class EventService {
     private final RobotRepository robotRepository;
     private final TaskRepository taskRepository;
     private final SimulationService simulationService;
+    private final ReoptimizationService reoptimizationService;
     private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
@@ -66,6 +78,9 @@ public class EventService {
         }
 
         messagingTemplate.convertAndSend(TOPIC, response);
+
+        triggerReoptimizationIfNeeded(saved);
+
         return response;
     }
 
@@ -86,6 +101,29 @@ public class EventService {
         EventResponse response = new EventResponse(event);
         messagingTemplate.convertAndSend(TOPIC, response);
         return response;
+    }
+
+    private void triggerReoptimizationIfNeeded(Event event) {
+        ReoptimizationReason reason = REOPT_TRIGGERS.get(event.getEventType());
+        if (reason == null) {
+            return;
+        }
+        if (event.getTask() == null || event.getTask().getSimulationRun() == null) {
+            return;
+        }
+
+        Long simulationRunId = event.getTask().getSimulationRun().getId();
+        Long triggerRobotId = event.getRobot() == null ? null : event.getRobot().getId();
+
+        reoptimizationService.reoptimize(
+                simulationRunId,
+                new ReoptimizationRequest(
+                        reason,
+                        triggerRobotId,
+                        List.of(),
+                        event.getDescription()
+                )
+        );
     }
 
     private Event findEventOrThrow(Long eventId) {
