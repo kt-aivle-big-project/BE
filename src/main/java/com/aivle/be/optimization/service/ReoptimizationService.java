@@ -6,6 +6,7 @@ import com.aivle.be.optimization.client.OptimizationClient;
 import com.aivle.be.optimization.domain.ReoptimizationReason;
 import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
+import com.aivle.be.optimization.dto.response.ReoptimizationCompletedEvent;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import com.aivle.be.optimization.entity.OptimizationResult;
 import com.aivle.be.optimization.entity.RobotRouteResult;
@@ -25,12 +26,17 @@ import com.aivle.be.task.repository.TaskRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -42,12 +48,16 @@ public class ReoptimizationService {
             TaskStatus.IN_PROGRESS
     );
 
+    private static final String REOPTIMIZATION_TOPIC_FORMAT =
+            "/topic/simulation-runs/%d/reoptimization";
+
     private final SimulationRunRepository simulationRunRepository;
     private final SimulationRunStateStore simulationRunStateStore;
     private final TaskRepository taskRepository;
     private final RobotRepository robotRepository;
     private final OptimizationClient optimizationClient;
     private final OptimizationResultRepository optimizationResultRepository;
+    private final SimpMessagingTemplate messagingTemplate;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -132,11 +142,20 @@ public class ReoptimizationService {
                         response
                 );
 
-        saveReoptimizationResult(
+        OptimizationResult savedResult =
+                saveReoptimizationResult(
+                        simulationRun,
+                        request,
+                        response,
+                        assignmentResults
+                );
+
+        publishReoptimizationCompletedAfterCommit(
                 simulationRun,
                 request,
                 response,
-                assignmentResults
+                assignmentResults,
+                savedResult
         );
 
         return response;
@@ -224,7 +243,7 @@ public class ReoptimizationService {
         return assignmentResults;
     }
 
-    private void saveReoptimizationResult(
+    private OptimizationResult saveReoptimizationResult(
             SimulationRun simulationRun,
             ReoptimizationRequest request,
             ReoptimizationResponse response,
@@ -262,7 +281,84 @@ public class ReoptimizationService {
             result.addTaskAssignment(assignmentResult);
         }
 
-        optimizationResultRepository.save(result);
+        return optimizationResultRepository.save(result);
+    }
+
+    private void publishReoptimizationCompletedAfterCommit(
+            SimulationRun simulationRun,
+            ReoptimizationRequest request,
+            ReoptimizationResponse response,
+            List<TaskAssignmentResult> assignmentResults,
+            OptimizationResult savedResult
+    ) {
+        List<Long> changedTaskIds = assignmentResults.stream()
+                .map(TaskAssignmentResult::getTaskId)
+                .distinct()
+                .toList();
+
+        Set<Long> affectedRobotIdSet = new LinkedHashSet<>();
+
+        if (request.triggerRobotId() != null) {
+            affectedRobotIdSet.add(request.triggerRobotId());
+        }
+
+        for (TaskAssignmentResult assignmentResult
+                : assignmentResults) {
+
+            if (assignmentResult.getPreviousRobotId() != null) {
+                affectedRobotIdSet.add(
+                        assignmentResult.getPreviousRobotId()
+                );
+            }
+
+            affectedRobotIdSet.add(
+                    assignmentResult.getAssignedRobotId()
+            );
+        }
+
+        if (response.routes() != null) {
+            response.routes().stream()
+                    .map(ReoptimizationResponse.RobotRoute::robotId)
+                    .forEach(affectedRobotIdSet::add);
+        }
+
+        List<Long> affectedRobotIds =
+                List.copyOf(affectedRobotIdSet);
+
+        ReoptimizationCompletedEvent event =
+                ReoptimizationCompletedEvent.of(
+                        simulationRun.getId(),
+                        savedResult.getId(),
+                        response,
+                        request.reason(),
+                        request.triggerRobotId(),
+                        changedTaskIds,
+                        affectedRobotIds
+                );
+
+        String topic = REOPTIMIZATION_TOPIC_FORMAT.formatted(
+                simulationRun.getId()
+        );
+
+        if (TransactionSynchronizationManager
+                .isSynchronizationActive()) {
+
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            messagingTemplate.convertAndSend(
+                                    topic,
+                                    event
+                            );
+                        }
+                    }
+            );
+
+            return;
+        }
+
+        messagingTemplate.convertAndSend(topic, event);
     }
 
     private String convertNodePathToJson(List<Long> nodePath) {
