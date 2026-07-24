@@ -1,15 +1,19 @@
 package com.aivle.be.optimization.controller;
 
 import com.aivle.be.optimization.dto.request.OptimizationRequest;
+import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
 import com.aivle.be.optimization.dto.response.OptimizationResponse;
 import com.aivle.be.optimization.dto.response.OptimizationResultResponse;
-import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
+import com.aivle.be.optimization.dto.response.ReoptimizationHistoryResponse;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
-import com.aivle.be.optimization.service.ReoptimizationService;
 import com.aivle.be.optimization.service.OptimizationService;
+import com.aivle.be.optimization.service.ReoptimizationQueryService;
+import com.aivle.be.optimization.service.ReoptimizationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/optimizations")
@@ -18,6 +22,7 @@ public class OptimizationController {
 
     private final OptimizationService optimizationService;
     private final ReoptimizationService reoptimizationService;
+    private final ReoptimizationQueryService reoptimizationQueryService;
 
     @PostMapping
     public ResponseEntity<OptimizationResponse> optimize(
@@ -28,6 +33,7 @@ public class OptimizationController {
 
         return ResponseEntity.ok(response);
     }
+
     @GetMapping("/results/{resultId}")
     public ResponseEntity<OptimizationResultResponse> getResult(
             @PathVariable Long resultId
@@ -45,6 +51,7 @@ public class OptimizationController {
                 optimizationService.getResultByRequestId(requestId)
         );
     }
+
     @PostMapping("/simulation-runs/{simulationRunId}/reoptimize")
     public ResponseEntity<ReoptimizationResponse> reoptimize(
             @PathVariable Long simulationRunId,
@@ -58,4 +65,15 @@ public class OptimizationController {
         );
     }
 
+    @GetMapping("/simulation-runs/{simulationRunId}/reoptimization-histories")
+    public ResponseEntity<List<ReoptimizationHistoryResponse>>
+    getReoptimizationHistories(
+            @PathVariable Long simulationRunId
+    ) {
+        return ResponseEntity.ok(
+                reoptimizationQueryService.getHistories(
+                        simulationRunId
+                )
+        );
+    }
 }
