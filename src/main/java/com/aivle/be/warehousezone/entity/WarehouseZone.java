@@ -83,6 +83,14 @@ public class WarehouseZone {
         this.maxY = maxY;
     }
 
+    public boolean isStorageZone() {
+        return zoneType == ZoneType.STORAGE;
+    }
+
+    public boolean isMovingZone() {
+        return zoneType == ZoneType.MOVING;
+    }
+
     public enum ZoneType {
         STORAGE,
         MOVING,

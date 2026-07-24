@@ -5,6 +5,7 @@ import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.task.entity.Task;
+import com.aivle.be.task.entity.TaskType;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
@@ -44,6 +45,20 @@ public class TaskCreationService {
             throw new BusinessException(ErrorCode.TASK_SIMULATION_RUN_MISMATCH);
         }
 
+        Long itemId = command.itemId();
+        if (itemId == null && warehouseItem != null) {
+            itemId = warehouseItem.getItemId();
+        }
+        if ((command.taskType() == TaskType.INBOUND || command.taskType() == TaskType.OUTBOUND)
+                && itemId == null) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        if (warehouseItem != null
+                && itemId != null
+                && !warehouseItem.getItemId().equals(itemId)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
         SimulationRun simulationRun = command.simulationRunId() == null
                 ? null
                 : simulationRunRepository.findById(command.simulationRunId())
@@ -59,7 +74,9 @@ public class TaskCreationService {
                 endNode,
                 command.taskType(),
                 warehouseItem,
-                simulationRun
+                simulationRun,
+                command.quantity(),
+                itemId
         ));
     }
 

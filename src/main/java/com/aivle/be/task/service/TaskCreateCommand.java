@@ -7,7 +7,9 @@ public record TaskCreateCommand(
         Long startNodeId,
         Long endNodeId,
         Long warehouseItemId,
+        Long itemId,
         TaskType taskType,
-        Long simulationRunId
+        Long simulationRunId,
+        Integer quantity
 ) {
 }
