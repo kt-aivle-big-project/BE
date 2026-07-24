@@ -6,16 +6,16 @@ import com.aivle.be.warehousenode.entity.WarehouseNode;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+import static lombok.AccessLevel.PROTECTED;
+
 @Entity
 @Table(name = "warehouse_items")
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = PROTECTED)
 public class WarehouseItem {
 
     @Id
@@ -52,4 +52,40 @@ public class WarehouseItem {
 
     @Column(name = "outbound_quantity")
     private Integer outboundQuantity;
+
+    public static WarehouseItem create(
+            Warehouse warehouse,
+            StorageLocation storageLocation,
+            WarehouseNode node,
+            Long itemId,
+            LocalDate expiryDate,
+            LocalDateTime receivedAt,
+            Integer quantity
+    ) {
+        WarehouseItem item = new WarehouseItem();
+        item.warehouse = warehouse;
+        item.storageLocation = storageLocation;
+        item.node = node;
+        item.itemId = itemId;
+        item.expiryDate = expiryDate;
+        item.receivedAt = receivedAt;
+        item.quantity = quantity;
+        item.inboundQuantity = 0;
+        item.outboundQuantity = 0;
+        return item;
+    }
+
+    public void update(
+            StorageLocation storageLocation,
+            WarehouseNode node,
+            Long itemId,
+            LocalDate expiryDate,
+            Integer quantity
+    ) {
+        this.storageLocation = storageLocation;
+        this.node = node;
+        this.itemId = itemId;
+        this.expiryDate = expiryDate;
+        this.quantity = quantity;
+    }
 }
