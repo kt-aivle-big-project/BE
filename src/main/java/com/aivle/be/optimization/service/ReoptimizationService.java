@@ -3,10 +3,18 @@ package com.aivle.be.optimization.service;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.optimization.client.OptimizationClient;
+import com.aivle.be.optimization.domain.ReoptimizationReason;
 import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
+import com.aivle.be.optimization.entity.OptimizationResult;
+import com.aivle.be.optimization.entity.RobotRouteResult;
+import com.aivle.be.optimization.entity.TaskAssignmentResult;
+import com.aivle.be.optimization.repository.OptimizationResultRepository;
+import com.aivle.be.robot.entity.Robot;
+import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.domain.RobotState;
+import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
@@ -14,12 +22,14 @@ import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import com.aivle.be.robot.entity.Robot;
-import com.aivle.be.robot.repository.RobotRepository;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -35,8 +45,11 @@ public class ReoptimizationService {
     private final SimulationRunRepository simulationRunRepository;
     private final SimulationRunStateStore simulationRunStateStore;
     private final TaskRepository taskRepository;
-    private final OptimizationClient optimizationClient;
     private final RobotRepository robotRepository;
+    private final OptimizationClient optimizationClient;
+    private final OptimizationResultRepository optimizationResultRepository;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional
     public ReoptimizationResponse reoptimize(
@@ -112,58 +125,210 @@ public class ReoptimizationService {
         ReoptimizationResponse response =
                 optimizationClient.reoptimize(fastApiRequest);
 
-        applyAssignments(
+        List<TaskAssignmentResult> assignmentResults =
+                applyAssignments(
+                        simulationRun,
+                        request,
+                        response
+                );
+
+        saveReoptimizationResult(
                 simulationRun,
-                response
+                request,
+                response,
+                assignmentResults
         );
 
         return response;
     }
-    private void applyAssignments(
+
+    private List<TaskAssignmentResult> applyAssignments(
             SimulationRun simulationRun,
+            ReoptimizationRequest request,
             ReoptimizationResponse response
     ) {
-        if (response.assignments() == null) {
+        List<TaskAssignmentResult> assignmentResults =
+                new ArrayList<>();
+
+        if (response.assignments() != null) {
+            for (ReoptimizationResponse.TaskAssignment assignment
+                    : response.assignments()) {
+
+                Task task = taskRepository.findById(assignment.taskId())
+                        .orElseThrow(() ->
+                                new BusinessException(
+                                        ErrorCode.TASK_NOT_FOUND
+                                )
+                        );
+
+                Robot robot = robotRepository.findById(assignment.robotId())
+                        .orElseThrow(() ->
+                                new BusinessException(
+                                        ErrorCode.ROBOT_NOT_FOUND
+                                )
+                        );
+
+                if (task.getSimulationRun() == null
+                        || !task.getSimulationRun().getId()
+                        .equals(simulationRun.getId())) {
+                    throw new BusinessException(
+                            ErrorCode.TASK_NOT_FOUND
+                    );
+                }
+
+                if (!robot.getWarehouse().getId()
+                        .equals(simulationRun.getWarehouse().getId())) {
+                    throw new BusinessException(
+                            ErrorCode.ROBOT_NOT_FOUND
+                    );
+                }
+
+                Long previousRobotId =
+                        task.getRobot() == null
+                                ? null
+                                : task.getRobot().getId();
+
+                if (task.getStatus() == TaskStatus.PENDING) {
+                    task.assignRobot(robot);
+                } else if (task.getStatus() == TaskStatus.ASSIGNED
+                        || task.getStatus() == TaskStatus.IN_PROGRESS) {
+                    task.reassignRobot(robot);
+                }
+
+                if (previousRobotId == null
+                        || !previousRobotId.equals(robot.getId())) {
+
+                    TaskAssignmentResult assignmentResult =
+                            TaskAssignmentResult.create(
+                                    task.getId(),
+                                    previousRobotId,
+                                    robot.getId()
+                            );
+
+                    assignmentResults.add(assignmentResult);
+                }
+
+                updateAssignedRobotState(
+                        simulationRun.getId(),
+                        task,
+                        robot
+                );
+            }
+        }
+
+        updateFailedRobotState(
+                simulationRun.getId(),
+                request
+        );
+
+        return assignmentResults;
+    }
+
+    private void saveReoptimizationResult(
+            SimulationRun simulationRun,
+            ReoptimizationRequest request,
+            ReoptimizationResponse response,
+            List<TaskAssignmentResult> assignmentResults
+    ) {
+        OptimizationResult result =
+                OptimizationResult.createReoptimization(
+                        response.requestId(),
+                        simulationRun.getWarehouse().getId(),
+                        simulationRun.getId(),
+                        response.status(),
+                        request.reason(),
+                        request.triggerRobotId(),
+                        request.description()
+                );
+
+        if (response.routes() != null) {
+            for (ReoptimizationResponse.RobotRoute route
+                    : response.routes()) {
+
+                RobotRouteResult routeResult =
+                        RobotRouteResult.create(
+                                route.robotId(),
+                                convertNodePathToJson(route.nodePath()),
+                                route.totalDistance(),
+                                route.estimatedTime()
+                        );
+
+                result.addRoute(routeResult);
+            }
+        }
+
+        for (TaskAssignmentResult assignmentResult
+                : assignmentResults) {
+            result.addTaskAssignment(assignmentResult);
+        }
+
+        optimizationResultRepository.save(result);
+    }
+
+    private String convertNodePathToJson(List<Long> nodePath) {
+        try {
+            return objectMapper.writeValueAsString(nodePath);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(
+                    "재최적화 경로 노드 목록을 JSON으로 변환하지 못했습니다.",
+                    e
+            );
+        }
+    }
+
+    private void updateAssignedRobotState(
+            Long simulationRunId,
+            Task task,
+            Robot assignedRobot
+    ) {
+        simulationRunStateStore
+                .findByRobotId(
+                        simulationRunId,
+                        assignedRobot.getId()
+                )
+                .ifPresent(state ->
+                        simulationRunStateStore.save(
+                                simulationRunId,
+                                new RobotState(
+                                        state.robotId(),
+                                        state.warehouseId(),
+                                        state.currentNodeId(),
+                                        state.batteryLevel(),
+                                        RobotStatus.ASSIGNED,
+                                        task.getId(),
+                                        LocalDateTime.now()
+                                )
+                        )
+                );
+    }
+
+    private void updateFailedRobotState(
+            Long simulationRunId,
+            ReoptimizationRequest request
+    ) {
+        if (request.reason() != ReoptimizationReason.ROBOT_FAILURE
+                || request.triggerRobotId() == null) {
             return;
         }
 
-        for (ReoptimizationResponse.TaskAssignment assignment
-                : response.assignments()) {
-
-            Task task = taskRepository.findById(assignment.taskId())
-                    .orElseThrow(() ->
-                            new BusinessException(
-                                    ErrorCode.TASK_NOT_FOUND
-                            )
-                    );
-
-            Robot robot = robotRepository.findById(assignment.robotId())
-                    .orElseThrow(() ->
-                            new BusinessException(
-                                    ErrorCode.ROBOT_NOT_FOUND
-                            )
-                    );
-
-            if (!task.getSimulationRun().getId()
-                    .equals(simulationRun.getId())) {
-                throw new BusinessException(
-                        ErrorCode.TASK_NOT_FOUND
+        simulationRunStateStore
+                .findByRobotId(
+                        simulationRunId,
+                        request.triggerRobotId()
+                )
+                .ifPresent(state ->
+                        simulationRunStateStore.save(
+                                simulationRunId,
+                                new RobotState(
+                                        state.robotId(),
+                                        state.warehouseId(),
+                                        state.currentNodeId(),
+                                        state.batteryLevel(),
+                                        RobotStatus.ERROR,
+                                        null,
+                                        LocalDateTime.now()
+                                )
+                        )
                 );
-            }
-
-            if (!robot.getWarehouse().getId()
-                    .equals(simulationRun.getWarehouse().getId())) {
-                throw new BusinessException(
-                        ErrorCode.ROBOT_NOT_FOUND
-                );
-            }
-
-            if (task.getStatus() == TaskStatus.PENDING) {
-                task.assignRobot(robot);
-            } else if (task.getStatus() == TaskStatus.ASSIGNED
-                    || task.getStatus() == TaskStatus.IN_PROGRESS) {
-                task.reassignRobot(robot);
-            }
-        }
     }
 }
