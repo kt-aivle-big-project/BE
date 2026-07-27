@@ -78,8 +78,18 @@ public class AuthService {
         }
 
         user.resetLoginFailures();
-        String accessToken = jwtTokenProvider.createAccessToken(user);
+        return createLoginResponse(user);
+    }
 
+    @Transactional(readOnly = true)
+    public LoginResponse refreshAccessToken(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN));
+        return createLoginResponse(user);
+    }
+
+    private LoginResponse createLoginResponse(User user) {
+        String accessToken = jwtTokenProvider.createAccessToken(user);
         return new LoginResponse(
                 "Bearer",
                 accessToken,
