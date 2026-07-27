@@ -29,7 +29,11 @@ public class RobotRuntime {
         MOVING_TO_END,
 
         // 하역/적재 중
-        DROPPING
+        DROPPING,
+
+        // 충전소로 이동 중
+        // 충전 중
+        CHARGING
     }
 
     private final Long robotId;
@@ -49,13 +53,28 @@ public class RobotRuntime {
 
     private double batteryLevel;
 
+    // RobotSpec 기준 배터리 소모율
+    private final double moveBatteryRate;
+    private final double workBatteryRate;
+
+    private Long chargingNodeId;
+    private double chargingPowerPerMinute;
+
     // 남은 이동 경로
     private final Deque<Long> remainingPath = new ArrayDeque<>();
 
-    public RobotRuntime(Long robotId, Long startNodeId, double initialBattery) {
+    public RobotRuntime(
+            Long robotId,
+            Long startNodeId,
+            double initialBattery,
+            Double moveBatteryRate,
+            Double workBatteryRate
+    ) {
         this.robotId = robotId;
         this.currentNodeId = startNodeId;
-        this.batteryLevel = initialBattery;
+        this.batteryLevel = clampBattery(initialBattery);
+        this.moveBatteryRate = nonNegativeRate(moveBatteryRate);
+        this.workBatteryRate = nonNegativeRate(workBatteryRate);
     }
 
     public void setPath(List<Long> path) {
@@ -98,11 +117,51 @@ public class RobotRuntime {
         this.previousNodeId = null;
     }
 
-    public void consumeBattery(double amount) {
-        batteryLevel = Math.max(0, batteryLevel - amount);
+    public void consumeMoveBattery() {
+        consumeBattery(moveBatteryRate);
+    }
+
+    public void consumeWorkBattery() {
+        consumeBattery(workBatteryRate);
+    }
+
+    public void assignChargingStation(Long nodeId, Double chargingPowerPerMinute) {
+        this.chargingNodeId = nodeId;
+        this.chargingPowerPerMinute = nonNegativeRate(chargingPowerPerMinute);
+    }
+
+    public void charge(double simulatedSeconds) {
+        if (simulatedSeconds <= 0 || chargingPowerPerMinute <= 0) {
+            return;
+        }
+        batteryLevel = Math.min(
+                100,
+                batteryLevel + chargingPowerPerMinute * simulatedSeconds / 60.0
+        );
+    }
+
+    public boolean isFullyCharged() {
+        return batteryLevel >= 100;
+    }
+
+    public void clearChargingStation() {
+        chargingNodeId = null;
+        chargingPowerPerMinute = 0;
     }
 
     public int batteryPercent() {
         return (int) Math.round(batteryLevel);
+    }
+
+    private void consumeBattery(double amount) {
+        batteryLevel = Math.max(0, batteryLevel - amount);
+    }
+
+    private double clampBattery(double battery) {
+        return Math.max(0, Math.min(100, battery));
+    }
+
+    private double nonNegativeRate(Double rate) {
+        return rate == null ? 0 : Math.max(0, rate);
     }
 }
