@@ -28,6 +28,7 @@ import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.entity.Task;
+import com.aivle.be.task.generation.ScenarioTaskPlanner;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
@@ -72,6 +73,7 @@ public class SimulationRunService {
     private final WarehouseNodeRepository warehouseNodeRepository;
     private final TaskRepository taskRepository;
     private final SimulationPlaybackService simulationPlaybackService;
+    private final ScenarioTaskPlanner scenarioTaskPlanner;
     private final SimpMessagingTemplate messagingTemplate;
 
     @Transactional
@@ -102,7 +104,20 @@ public class SimulationRunService {
         // 입고 품목 구성 비율 검증 (합계 100%)
         validateInboundRatio(request.inbound());
 
-        return broadcastRun(simulationRunRepository.save(run));
+        SimulationRun saved = simulationRunRepository.save(run);
+
+        // 입고/출고 설정을 실제 작업 목록으로 펼친다.
+        // 전체 작업을 이 시점에 한 번에 만들어 두고,
+        // 재생 엔진은 각 작업의 발생 시각(releaseAtSeconds)에 맞춰 투입한다.
+        scenarioTaskPlanner.plan(
+                saved.getId(),
+                warehouse.getId(),
+                request.inbound(),
+                request.outbound(),
+                scenario == null ? null : scenario.seed()
+        );
+
+        return broadcastRun(saved);
     }
 
     /**
