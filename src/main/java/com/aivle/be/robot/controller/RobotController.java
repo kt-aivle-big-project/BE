@@ -5,6 +5,7 @@ import com.aivle.be.robot.dto.RobotResponse;
 import com.aivle.be.robot.dto.RobotUpdateRequest;
 import com.aivle.be.robot.service.RobotService;
 import lombok.RequiredArgsConstructor;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -20,7 +21,7 @@ public class RobotController {
 
     @PostMapping
     public ResponseEntity<RobotResponse> createRobot(
-            @RequestBody RobotCreateRequest request
+            @Valid @RequestBody RobotCreateRequest request
     ) {
         RobotResponse response = robotService.createRobot(request);
 
@@ -56,7 +57,7 @@ public class RobotController {
     @PatchMapping("/{robotId}")
     public ResponseEntity<RobotResponse> updateRobot(
             @PathVariable Long robotId,
-            @RequestBody RobotUpdateRequest request
+            @Valid @RequestBody RobotUpdateRequest request
     ) {
         return ResponseEntity.ok(
                 robotService.updateRobot(robotId, request)

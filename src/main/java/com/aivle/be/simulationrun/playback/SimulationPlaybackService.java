@@ -108,13 +108,11 @@ public class SimulationPlaybackService {
                 .sorted(Comparator.comparingInt(PlaybackContext.ScheduledTask::releaseAtSeconds))
                 .toList();
 
-        int initialBattery = run.getInitialBattery() == null ? 100 : run.getInitialBattery();
-
         List<RobotRuntime> runtimes = robots.stream()
                 .map(robot -> new RobotRuntime(
                         robot.getId(),
                         robot.getNodeId(),
-                        initialBattery,
+                        robot.getBattery(),
                         robot.getRobotSpec().getBaseBatteryRate(),
                         robot.getRobotSpec().getWorkBatteryRate()
                 ))

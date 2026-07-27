@@ -66,13 +66,13 @@ public class RobotRuntime {
     public RobotRuntime(
             Long robotId,
             Long startNodeId,
-            double initialBattery,
+            double startingBattery,
             Double moveBatteryRate,
             Double workBatteryRate
     ) {
         this.robotId = robotId;
         this.currentNodeId = startNodeId;
-        this.batteryLevel = clampBattery(initialBattery);
+        this.batteryLevel = clampBattery(startingBattery);
         this.moveBatteryRate = nonNegativeRate(moveBatteryRate);
         this.workBatteryRate = nonNegativeRate(workBatteryRate);
     }

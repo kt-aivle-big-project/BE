@@ -9,7 +9,6 @@ public record ScenarioResponse(
         String scenarioName,
         Integer robotCount,
         Double simulationSpeed,
-        Integer initialBattery,
         Integer chargingThreshold,
         Boolean autoReplan,
         Boolean obstacleEnabled
@@ -22,7 +21,6 @@ public record ScenarioResponse(
                 scenario.getScenarioName(),
                 scenario.getRobotCount(),
                 scenario.getSimulationSpeed(),
-                scenario.getInitialBattery(),
                 scenario.getChargingThreshold(),
                 scenario.getAutoReplan(),
                 scenario.getObstacleEnabled()

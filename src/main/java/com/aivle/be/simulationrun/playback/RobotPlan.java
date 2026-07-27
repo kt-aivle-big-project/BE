@@ -17,10 +17,10 @@ public class RobotPlan {
     private int cursor = 0;
     private int batteryLevel = 100;
 
-    public RobotPlan(Long robotId, List<PlaybackStep> steps, int initialBattery) {
+    public RobotPlan(Long robotId, List<PlaybackStep> steps, int startingBattery) {
         this.robotId = robotId;
         this.steps = steps;
-        this.batteryLevel = initialBattery;
+        this.batteryLevel = startingBattery;
     }
 
     public boolean isFinished() {
