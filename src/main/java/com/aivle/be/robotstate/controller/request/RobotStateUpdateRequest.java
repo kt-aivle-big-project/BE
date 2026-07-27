@@ -1,4 +1,4 @@
-package com.aivle.be.robotstate.dto.request;
+package com.aivle.be.robotstate.controller.request;
 
 import com.aivle.be.robotstate.domain.RobotStatus;
 import io.swagger.v3.oas.annotations.media.Schema;

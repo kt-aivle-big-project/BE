@@ -29,6 +29,7 @@ public class TaskService {
     private final TaskRepository taskRepository;
     private final RobotRepository robotRepository;
     private final TaskCreationService taskCreationService;
+    private final TaskInventoryService taskInventoryService;
     private final SimulationRunRobotRepository simulationRunRobotRepository;
     private final SimulationRunProgressService simulationRunProgressService;
     private final SimpMessagingTemplate messagingTemplate;
@@ -40,8 +41,11 @@ public class TaskService {
                 request.startNodeId(),
                 request.endNodeId(),
                 request.warehouseItemId(),
+                request.itemId(),
                 request.taskType(),
-                request.simulationRunId()
+                request.simulationRunId(),
+                request.quantity(),
+                request.releaseAtSeconds()
         ));
         return new TaskResponse(saved);
     }
@@ -108,6 +112,7 @@ public class TaskService {
     public TaskResponse completeTask(Long taskId) {
         Task task = findTaskOrThrow(taskId);
         task.complete();
+        taskInventoryService.applyCompletion(task);
         TaskResponse response = broadcast(task);
         evaluateRun(task);
         return response;

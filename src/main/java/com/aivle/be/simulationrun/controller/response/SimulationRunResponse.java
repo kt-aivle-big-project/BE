@@ -1,5 +1,6 @@
-package com.aivle.be.simulationrun.dto.response;
+package com.aivle.be.simulationrun.controller.response;
 
+import com.aivle.be.scenario.entity.Scenario;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.domain.ScenarioType;
 import com.aivle.be.simulationrun.entity.SimulationRun;
@@ -18,9 +19,22 @@ public record SimulationRunResponse(
         Long randomSeed,
         Integer plannedTaskCount,
         Double inboundRatio,
-        Integer generationIntervalSeconds
+        Integer generationIntervalSeconds,
+
+        // 시나리오 프리셋 및 실행 설정
+        Long scenarioId,
+        String scenarioCode,
+        String scenarioName,
+        Double simulationSpeed,
+        Integer robotCount,
+        Integer initialBattery,
+        Integer chargingThreshold,
+        Boolean autoReplan,
+        Boolean obstacleEnabled
 ) {
     public static SimulationRunResponse from(SimulationRun run) {
+        Scenario scenario = run.getScenario();
+
         return new SimulationRunResponse(
                 run.getId(),
                 run.getWarehouse().getId(),
@@ -33,7 +47,16 @@ public record SimulationRunResponse(
                 run.getRandomSeed(),
                 run.getPlannedTaskCount(),
                 run.getInboundRatio(),
-                run.getGenerationIntervalSeconds()
+                run.getGenerationIntervalSeconds(),
+                scenario == null ? null : scenario.getId(),
+                scenario == null ? null : scenario.getScenarioCode(),
+                scenario == null ? null : scenario.getScenarioName(),
+                run.getSimulationSpeed(),
+                run.getRobotCount(),
+                run.getInitialBattery(),
+                run.getChargingThreshold(),
+                run.getAutoReplan(),
+                run.getObstacleEnabled()
         );
     }
 }

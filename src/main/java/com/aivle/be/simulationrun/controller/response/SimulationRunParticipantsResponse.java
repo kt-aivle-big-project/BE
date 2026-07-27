@@ -1,4 +1,4 @@
-package com.aivle.be.simulationrun.dto.response;
+package com.aivle.be.simulationrun.controller.response;
 
 import java.util.List;
 

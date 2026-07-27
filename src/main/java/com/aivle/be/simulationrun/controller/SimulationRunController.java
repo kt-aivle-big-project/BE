@@ -1,14 +1,14 @@
 package com.aivle.be.simulationrun.controller;
 
-import com.aivle.be.simulationrun.dto.request.SimulationRunCreateRequest;
-import com.aivle.be.simulationrun.dto.response.SimulationRunParticipantsResponse;
-import com.aivle.be.simulationrun.dto.response.SimulationRunRobotStatesResponse;
-import com.aivle.be.simulationrun.dto.response.SimulationRunResponse;
+import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
+import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
+import com.aivle.be.simulationrun.controller.response.SimulationRunRobotStatesResponse;
+import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.service.SimulationRunService;
 import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.service.TaskService;
-import com.aivle.be.robotstate.dto.request.RobotStateUpdateRequest;
-import com.aivle.be.robotstate.dto.response.RobotStateResponse;
+import com.aivle.be.robotstate.controller.request.RobotStateUpdateRequest;
+import com.aivle.be.robotstate.controller.response.RobotStateResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -59,6 +59,12 @@ public class SimulationRunController {
     @PostMapping("/{simulationRunId}/resume")
     public ResponseEntity<SimulationRunResponse> resume(@PathVariable Long simulationRunId) {
         return ResponseEntity.ok(simulationRunService.resume(simulationRunId));
+    }
+
+    @Operation(summary = "시뮬레이션 초기화 (로봇 실시간 상태 삭제 후 대기 상태로 되돌림)")
+    @PostMapping("/{simulationRunId}/reset")
+    public ResponseEntity<SimulationRunResponse> reset(@PathVariable Long simulationRunId) {
+        return ResponseEntity.ok(simulationRunService.reset(simulationRunId));
     }
 
     @Operation(summary = "시뮬레이션 수동 종료")

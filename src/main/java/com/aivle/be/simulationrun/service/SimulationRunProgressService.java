@@ -1,7 +1,7 @@
 package com.aivle.be.simulationrun.service;
 
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
-import com.aivle.be.simulationrun.dto.response.SimulationRunResponse;
+import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;

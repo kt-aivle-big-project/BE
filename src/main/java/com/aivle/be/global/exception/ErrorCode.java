@@ -46,6 +46,16 @@ public enum ErrorCode {
     TASK_NOT_FOUND(HttpStatus.NOT_FOUND, "TASK_001", "존재하지 않는 작업입니다."),
     TASK_ALREADY_PROCESSED(HttpStatus.CONFLICT, "TASK_002", "이미 처리 중이거나 종료된 작업입니다."),
 
+    SCENARIO_NOT_FOUND(HttpStatus.NOT_FOUND, "SCENARIO_001", "존재하지 않는 시나리오입니다."),
+    DUPLICATE_SCENARIO_CODE(HttpStatus.CONFLICT, "SCENARIO_002", "이미 사용 중인 시나리오 코드입니다."),
+    SCENARIO_WAREHOUSE_MISMATCH(HttpStatus.BAD_REQUEST, "SCENARIO_003", "시나리오와 시뮬레이션의 창고가 일치하지 않습니다."),
+
+    PRODUCT_NOT_FOUND(HttpStatus.NOT_FOUND, "PRODUCT_001", "존재하지 않는 품목입니다."),
+    DUPLICATE_PRODUCT_CODE(HttpStatus.CONFLICT, "PRODUCT_002", "이미 사용 중인 품목 코드입니다."),
+
+    INVALID_INBOUND_RATIO(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_011", "입고 품목 구성 비율의 합계는 100%여야 합니다."),
+    INVALID_SIMULATION_SPEED(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_012", "허용되지 않는 실행 배속입니다."),
+
     STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),
 
     WAREHOUSE_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "WAREHOUSE_ITEM_001", "존재하지 않는 창고 품목입니다."),

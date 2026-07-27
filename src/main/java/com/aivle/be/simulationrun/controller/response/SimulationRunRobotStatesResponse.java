@@ -1,6 +1,6 @@
-package com.aivle.be.simulationrun.dto.response;
+package com.aivle.be.simulationrun.controller.response;
 
-import com.aivle.be.robotstate.dto.response.RobotStateResponse;
+import com.aivle.be.robotstate.controller.response.RobotStateResponse;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 
 import java.util.List;

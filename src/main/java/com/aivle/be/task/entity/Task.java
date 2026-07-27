@@ -7,7 +7,17 @@ import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouseitem.entity.WarehouseItem;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
-import jakarta.persistence.*;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -41,6 +51,9 @@ public class Task {
     @JoinColumn(name = "warehouse_item_id")
     private WarehouseItem warehouseItem;
 
+    @Column(name = "item_id")
+    private Long itemId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "start_node_id", nullable = false)
     private WarehouseNode startNode;
@@ -52,6 +65,13 @@ public class Task {
     @Enumerated(EnumType.STRING)
     @Column(name = "task_type", nullable = false)
     private TaskType taskType;
+
+    @Column(name = "quantity")
+    private Integer quantity;
+
+    // 시뮬레이션 시작 후 몇 초에 이 작업이 발생하는지 (null이면 시작과 동시에)
+    @Column(name = "release_at_seconds")
+    private Integer releaseAtSeconds;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -71,19 +91,62 @@ public class Task {
 
     public Task(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
                 TaskType taskType, WarehouseItem warehouseItem) {
-        this(warehouse, startNode, endNode, taskType, warehouseItem, null);
+        this(warehouse, startNode, endNode, taskType, warehouseItem, null, null, null);
     }
 
     public Task(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
                 TaskType taskType, WarehouseItem warehouseItem, SimulationRun simulationRun) {
+        this(warehouse, startNode, endNode, taskType, warehouseItem, simulationRun, null, null);
+    }
+
+    public Task(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
+                TaskType taskType, WarehouseItem warehouseItem, SimulationRun simulationRun, Integer quantity) {
+        this(warehouse, startNode, endNode, taskType, warehouseItem, simulationRun, quantity, null);
+    }
+
+    public Task(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
+                TaskType taskType, WarehouseItem warehouseItem, SimulationRun simulationRun, Integer quantity, Long itemId) {
         this.warehouse = warehouse;
         this.startNode = startNode;
         this.endNode = endNode;
         this.taskType = taskType;
         this.warehouseItem = warehouseItem;
         this.simulationRun = simulationRun;
+        this.quantity = quantity;
+        this.itemId = itemId != null ? itemId : (warehouseItem != null ? warehouseItem.getItemId() : null);
         this.status = TaskStatus.PENDING;
         this.requestedAt = LocalDateTime.now();
+    }
+
+    public Long getEffectiveItemId() {
+        return itemId != null ? itemId : (warehouseItem != null ? warehouseItem.getItemId() : null);
+    }
+
+    public int effectiveQuantity() {
+        return quantity == null ? 1 : quantity;
+    }
+
+    public int effectiveReleaseAtSeconds() {
+        return releaseAtSeconds == null ? 0 : releaseAtSeconds;
+    }
+
+    /**
+     * 시뮬레이션 내 작업 발생 시각을 지정한다. (시나리오 타임라인용)
+     */
+    public void scheduleAt(Integer releaseAtSeconds) {
+        this.releaseAtSeconds = releaseAtSeconds;
+    }
+
+    /**
+     * 시뮬레이션 초기화 시 작업을 처음 상태로 되돌린다.
+     * 같은 시나리오를 반복 실행할 수 있게 한다.
+     */
+    public void resetForReplay() {
+        this.robot = null;
+        this.status = TaskStatus.PENDING;
+        this.assignedAt = null;
+        this.startedAt = null;
+        this.completedAt = null;
     }
 
     public void assignRobot(Robot robot) {

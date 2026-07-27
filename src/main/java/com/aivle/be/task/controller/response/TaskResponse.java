@@ -15,11 +15,12 @@ public record TaskResponse(
         Long startNodeId,
         Long endNodeId,
         Long warehouseItemId,
+        Long itemId,
         Long robotId,
+        Integer quantity,
         LocalDateTime requestedAt,
         LocalDateTime assignedAt
 ) {
-    // Entity -> Response 변환용 보조 생성자
     public TaskResponse(Task task) {
         this(
                 task.getId(),
@@ -30,7 +31,9 @@ public record TaskResponse(
                 task.getStartNode().getId(),
                 task.getEndNode().getId(),
                 task.getWarehouseItem() != null ? task.getWarehouseItem().getId() : null,
+                task.getEffectiveItemId(),
                 task.getRobot() != null ? task.getRobot().getId() : null,
+                task.getQuantity(),
                 task.getRequestedAt(),
                 task.getAssignedAt()
         );

@@ -6,7 +6,7 @@ import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.domain.RobotState;
 import com.aivle.be.robotstate.domain.RobotStatus;
-import com.aivle.be.robotstate.dto.request.RobotStateUpdateRequest;
+import com.aivle.be.robotstate.controller.request.RobotStateUpdateRequest;
 import com.aivle.be.robotstate.validation.RobotStateTransitionValidator;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.repository.TaskRepository;
@@ -42,10 +42,12 @@ public class RobotStateValidationService {
         validateTask(robot, request.currentTaskId(), request.status());
         validateEventOrder(currentState, request);
 
-        return new RobotState(
+        // 외부에서 보고된 상태에는 이동 예정 정보가 없다
+        return RobotState.stationary(
                 robotId,
                 robot.getWarehouse().getId(),
                 node.getId(),
+                node.getNodeCode(),
                 request.batteryLevel(),
                 request.status(),
                 request.currentTaskId(),
