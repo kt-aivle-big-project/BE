@@ -1,0 +1,234 @@
+{
+  "info": {
+    "name": "LARO 시뮬레이션 시연",
+    "description": "순서대로 실행하세요. 1번에서 runId가 자동 저장되고, 이후 요청들이 그 값을 씁니다.\n\n작업은 시뮬레이션 시작 후 발생 시각(releaseAtSeconds)이 각각 다르게 설정돼 있어서,\n로봇 6대가 시간차를 두고 순차적으로 움직이는 그림이 나옵니다.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080/api" },
+    { "key": "warehouseId", "value": "1" },
+    { "key": "runId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. 시뮬레이션 실행 생성",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const data = pm.response.json();",
+              "pm.collectionVariables.set('runId', data.simulationRunId);",
+              "console.log('생성된 runId =', data.simulationRunId);",
+              "pm.test('생성 성공', () => pm.response.code === 201 || pm.response.code === 200);"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/simulation-runs", "host": ["{{baseUrl}}"], "path": ["simulation-runs"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"warehouseId\": {{warehouseId}},\n  \"scenarioId\": 1,\n  \"simulationSpeed\": 1\n}"
+        },
+        "description": "시나리오 1번(로봇 5대, 배터리 100%, 1배속)으로 실행을 만듭니다.\n응답의 simulationRunId가 runId 변수에 자동 저장됩니다."
+      }
+    },
+
+    {
+      "name": "2-1. 입고 작업 (0초) - 입고구역 I_a → 랙 K2_1",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/tasks", "host": ["{{baseUrl}}"], "path": ["tasks"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"warehouseId\": {{warehouseId}},\n  \"startNodeId\": 136,\n  \"endNodeId\": 104,\n  \"itemId\": 1,\n  \"taskType\": \"INBOUND\",\n  \"simulationRunId\": {{runId}},\n  \"quantity\": 20,\n  \"releaseAtSeconds\": 0\n}"
+        },
+        "description": "시작과 동시에 발생.\n입고구역(136, I_a)에서 물건을 집어 랙(104, K2_1)에 적재합니다.\n완료 시 재고가 20 증가합니다."
+      }
+    },
+    {
+      "name": "2-2. 입고 작업 (0초) - 입고구역 I_b → 랙 K2_2",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/tasks", "host": ["{{baseUrl}}"], "path": ["tasks"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"warehouseId\": {{warehouseId}},\n  \"startNodeId\": 137,\n  \"endNodeId\": 105,\n  \"itemId\": 2,\n  \"taskType\": \"INBOUND\",\n  \"simulationRunId\": {{runId}},\n  \"quantity\": 15,\n  \"releaseAtSeconds\": 0\n}"
+        }
+      }
+    },
+    {
+      "name": "2-3. 출고 작업 (10초) - 랙 K0_1 → 출고구역 O_A",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/tasks", "host": ["{{baseUrl}}"], "path": ["tasks"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"warehouseId\": {{warehouseId}},\n  \"startNodeId\": 88,\n  \"endNodeId\": 143,\n  \"warehouseItemId\": 1,\n  \"itemId\": 2,\n  \"taskType\": \"OUTBOUND\",\n  \"simulationRunId\": {{runId}},\n  \"quantity\": 10,\n  \"releaseAtSeconds\": 10\n}"
+        },
+        "description": "시작 10초 뒤 발생.\n랙(88, K0_1)의 재고 50개 중 10개를 출고구역(143, O_A)으로 옮깁니다.\n완료 시 재고가 40으로 줄어듭니다."
+      }
+    },
+    {
+      "name": "2-4. 출고 작업 (15초) - 랙 K0_2 → 출고구역 O_B",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/tasks", "host": ["{{baseUrl}}"], "path": ["tasks"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"warehouseId\": {{warehouseId}},\n  \"startNodeId\": 89,\n  \"endNodeId\": 144,\n  \"warehouseItemId\": 2,\n  \"itemId\": 3,\n  \"taskType\": \"OUTBOUND\",\n  \"simulationRunId\": {{runId}},\n  \"quantity\": 25,\n  \"releaseAtSeconds\": 15\n}"
+        }
+      }
+    },
+    {
+      "name": "2-5. 입고 작업 (25초) - 입고구역 I_c → 랙 K2_3",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/tasks", "host": ["{{baseUrl}}"], "path": ["tasks"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"warehouseId\": {{warehouseId}},\n  \"startNodeId\": 138,\n  \"endNodeId\": 106,\n  \"itemId\": 3,\n  \"taskType\": \"INBOUND\",\n  \"simulationRunId\": {{runId}},\n  \"quantity\": 30,\n  \"releaseAtSeconds\": 25\n}"
+        },
+        "description": "시작 25초 뒤 발생.\n앞선 작업을 끝낸 로봇이 이걸 이어받는 그림이 나옵니다."
+      }
+    },
+    {
+      "name": "2-6. 출고 작업 (35초) - 랙 K0_3 → 출고구역 O_D",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/tasks", "host": ["{{baseUrl}}"], "path": ["tasks"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"warehouseId\": {{warehouseId}},\n  \"startNodeId\": 90,\n  \"endNodeId\": 146,\n  \"warehouseItemId\": 3,\n  \"itemId\": 4,\n  \"taskType\": \"OUTBOUND\",\n  \"simulationRunId\": {{runId}},\n  \"quantity\": 20,\n  \"releaseAtSeconds\": 35\n}"
+        }
+      }
+    },
+
+    {
+      "name": "3. 등록된 작업 확인",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/simulation-runs/{{runId}}/tasks",
+          "host": ["{{baseUrl}}"],
+          "path": ["simulation-runs", "{{runId}}", "tasks"]
+        },
+        "description": "시작 전에 작업 6건이 PENDING 상태로 들어갔는지 확인합니다."
+      }
+    },
+
+    {
+      "name": "4. 시뮬레이션 시작",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/simulation-runs/{{runId}}/start",
+          "host": ["{{baseUrl}}"],
+          "path": ["simulation-runs", "{{runId}}", "start"]
+        },
+        "description": "여기서부터 로봇이 움직입니다.\n프론트 화면을 띄워두고 이 요청을 쏘면 실시간으로 보입니다.\n\n※ 프론트에서 시작 버튼을 쓸 경우 브라우저 콘솔에서 먼저:\nlocalStorage.setItem('simulationRunId', '<runId>')"
+      }
+    },
+
+    {
+      "name": "5. 로봇 실시간 상태 조회",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/simulation-runs/{{runId}}/robots/states",
+          "host": ["{{baseUrl}}"],
+          "path": ["simulation-runs", "{{runId}}", "robots", "states"]
+        },
+        "description": "Redis에 저장된 로봇 상태를 봅니다.\n실행 중에 여러 번 눌러보면 currentNodeCode / nextNodeCode / arrivalInSeconds 가 계속 바뀝니다.\n이게 화면 보간에 쓰이는 값입니다."
+      }
+    },
+
+    {
+      "name": "6. 실행 상태 조회",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/simulation-runs/{{runId}}/status",
+          "host": ["{{baseUrl}}"],
+          "path": ["simulation-runs", "{{runId}}", "status"]
+        },
+        "description": "RUNNING → 모든 작업 완료 시 COMPLETED 로 바뀝니다."
+      }
+    },
+
+    {
+      "name": "7-1. 일시정지",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/simulation-runs/{{runId}}/pause",
+          "host": ["{{baseUrl}}"],
+          "path": ["simulation-runs", "{{runId}}", "pause"]
+        },
+        "description": "시뮬레이션 시계가 멈춥니다. 로봇도 그 자리에 정지합니다."
+      }
+    },
+    {
+      "name": "7-2. 재개",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/simulation-runs/{{runId}}/resume",
+          "host": ["{{baseUrl}}"],
+          "path": ["simulation-runs", "{{runId}}", "resume"]
+        }
+      }
+    },
+
+    {
+      "name": "8. 이벤트 발생 → 재계획 자동 호출",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/events", "host": ["{{baseUrl}}"], "path": ["events"] },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"warehouseId\": {{warehouseId}},\n  \"robotId\": 1,\n  \"eventType\": \"PATH_BLOCKED\",\n  \"description\": \"3번 노드 통로 차단\",\n  \"nodeId\": 3\n}"
+        },
+        "description": "장애물 이벤트를 발생시킵니다.\nEventService가 이걸 받아 재최적화(OBSTACLE_DETECTED)를 자동으로 호출합니다.\n\n※ FastAPI 서버가 안 떠 있으면 재최적화 호출에서 에러가 납니다.\n   이벤트 자체는 저장되고 화면 이벤트 카드에는 뜹니다."
+      }
+    },
+
+    {
+      "name": "9. 재고 확인 (작업 완료 후 증감 검증)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/warehouse-items?warehouseId={{warehouseId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["warehouse-items"],
+          "query": [{ "key": "warehouseId", "value": "{{warehouseId}}" }]
+        },
+        "description": "시작 전과 후를 비교하세요.\n입고 작업이 끝나면 재고가 늘고, 출고 작업이 끝나면 줄어듭니다.\n예: 랙 88번(K0_1) 재고 50 → 출고 10 완료 후 40"
+      }
+    },
+
+    {
+      "name": "10. 초기화 (같은 시나리오 재생)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/simulation-runs/{{runId}}/reset",
+          "host": ["{{baseUrl}}"],
+          "path": ["simulation-runs", "{{runId}}", "reset"]
+        },
+        "description": "작업이 전부 PENDING 으로 돌아가고 로봇도 원위치합니다.\n이 상태에서 4번(시작)을 다시 누르면 같은 시나리오가 처음부터 재생됩니다.\n\n※ 재고는 되돌아가지 않습니다. (작업이 실제로 반영됐다는 증거)"
+      }
+    }
+  ]
+}

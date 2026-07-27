@@ -2,6 +2,7 @@ package com.aivle.be.simulationrun.entity;
 
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.scenario.entity.Scenario;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.domain.ScenarioType;
 import com.aivle.be.warehouse.entity.Warehouse;
@@ -71,6 +72,30 @@ public class SimulationRun {
     @Column(name = "generation_interval_seconds")
     private Integer generationIntervalSeconds;
 
+    // ===== 시나리오 프리셋 및 실행 설정 스냅샷 =====
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "scenario_id")
+    private Scenario scenario;
+
+    @Column(name = "simulation_speed")
+    private Double simulationSpeed;
+
+    @Column(name = "robot_count")
+    private Integer robotCount;
+
+    @Column(name = "initial_battery")
+    private Integer initialBattery;
+
+    @Column(name = "charging_threshold")
+    private Integer chargingThreshold;
+
+    @Column(name = "auto_replan")
+    private Boolean autoReplan;
+
+    @Column(name = "obstacle_enabled")
+    private Boolean obstacleEnabled;
+
     @Version
     private Long version;
 
@@ -99,6 +124,27 @@ public class SimulationRun {
         return run;
     }
 
+    /**
+     * 시나리오 프리셋과 실행 배속을 적용한다. (생성 직후 1회)
+     */
+    public void applyScenario(Scenario scenario, Double simulationSpeed) {
+        this.scenario = scenario;
+        if (scenario != null) {
+            this.robotCount = scenario.getRobotCount();
+            this.initialBattery = scenario.getInitialBattery();
+            this.chargingThreshold = scenario.getChargingThreshold();
+            this.autoReplan = scenario.getAutoReplan();
+            this.obstacleEnabled = scenario.getObstacleEnabled();
+            this.simulationSpeed = scenario.getSimulationSpeed();
+        }
+        if (simulationSpeed != null) {
+            this.simulationSpeed = simulationSpeed;
+        }
+        if (this.simulationSpeed == null) {
+            this.simulationSpeed = 1.0;
+        }
+    }
+
     public void start(LocalDateTime now) {
         requireStatus(SimulationRunStatus.CREATED);
         status = SimulationRunStatus.RUNNING;
@@ -116,10 +162,38 @@ public class SimulationRun {
         status = SimulationRunStatus.RUNNING;
     }
 
+    /**
+     * 재계획 시작. 실행 중일 때만 진입한다.
+     */
+    public void startReplanning() {
+        requireStatus(SimulationRunStatus.RUNNING);
+        status = SimulationRunStatus.REPLANNING;
+    }
+
+    /**
+     * 재계획 종료 후 실행 상태로 복귀.
+     */
+    public void finishReplanning() {
+        requireStatus(SimulationRunStatus.REPLANNING);
+        status = SimulationRunStatus.RUNNING;
+    }
+
+    /**
+     * 시뮬레이션 초기화.
+     * 같은 시나리오를 반복 실행할 수 있도록 완료·중지된 실행도 다시 되돌릴 수 있다.
+     */
+    public void reset() {
+        status = SimulationRunStatus.CREATED;
+        startedAt = null;
+        pausedAt = null;
+        endedAt = null;
+    }
+
     public void stop(LocalDateTime now) {
         if (status != SimulationRunStatus.CREATED
                 && status != SimulationRunStatus.RUNNING
-                && status != SimulationRunStatus.PAUSED) {
+                && status != SimulationRunStatus.PAUSED
+                && status != SimulationRunStatus.REPLANNING) {
             throw invalidTransition();
         }
         status = SimulationRunStatus.STOPPED;
@@ -133,7 +207,9 @@ public class SimulationRun {
     }
 
     public void fail(LocalDateTime now) {
-        if (status != SimulationRunStatus.RUNNING && status != SimulationRunStatus.PAUSED) {
+        if (status != SimulationRunStatus.RUNNING
+                && status != SimulationRunStatus.PAUSED
+                && status != SimulationRunStatus.REPLANNING) {
             throw invalidTransition();
         }
         status = SimulationRunStatus.FAILED;

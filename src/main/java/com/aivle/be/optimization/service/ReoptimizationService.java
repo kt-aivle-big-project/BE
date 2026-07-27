@@ -385,10 +385,11 @@ public class ReoptimizationService {
                 .ifPresent(state ->
                         simulationRunStateStore.save(
                                 simulationRunId,
-                                new RobotState(
+                                RobotState.stationary(
                                         state.robotId(),
                                         state.warehouseId(),
                                         state.currentNodeId(),
+                                        state.currentNodeCode(),
                                         state.batteryLevel(),
                                         RobotStatus.ASSIGNED,
                                         task.getId(),
@@ -415,10 +416,11 @@ public class ReoptimizationService {
                 .ifPresent(state ->
                         simulationRunStateStore.save(
                                 simulationRunId,
-                                new RobotState(
+                                RobotState.stationary(
                                         state.robotId(),
                                         state.warehouseId(),
                                         state.currentNodeId(),
+                                        state.currentNodeCode(),
                                         state.batteryLevel(),
                                         RobotStatus.ERROR,
                                         null,

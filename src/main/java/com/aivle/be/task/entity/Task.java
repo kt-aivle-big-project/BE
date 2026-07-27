@@ -69,6 +69,10 @@ public class Task {
     @Column(name = "quantity")
     private Integer quantity;
 
+    // 시뮬레이션 시작 후 몇 초에 이 작업이 발생하는지 (null이면 시작과 동시에)
+    @Column(name = "release_at_seconds")
+    private Integer releaseAtSeconds;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private TaskStatus status;
@@ -120,6 +124,29 @@ public class Task {
 
     public int effectiveQuantity() {
         return quantity == null ? 1 : quantity;
+    }
+
+    public int effectiveReleaseAtSeconds() {
+        return releaseAtSeconds == null ? 0 : releaseAtSeconds;
+    }
+
+    /**
+     * 시뮬레이션 내 작업 발생 시각을 지정한다. (시나리오 타임라인용)
+     */
+    public void scheduleAt(Integer releaseAtSeconds) {
+        this.releaseAtSeconds = releaseAtSeconds;
+    }
+
+    /**
+     * 시뮬레이션 초기화 시 작업을 처음 상태로 되돌린다.
+     * 같은 시나리오를 반복 실행할 수 있게 한다.
+     */
+    public void resetForReplay() {
+        this.robot = null;
+        this.status = TaskStatus.PENDING;
+        this.assignedAt = null;
+        this.startedAt = null;
+        this.completedAt = null;
     }
 
     public void assignRobot(Robot robot) {

@@ -68,7 +68,7 @@ public class TaskCreationService {
             throw new BusinessException(ErrorCode.TASK_SIMULATION_RUN_MISMATCH);
         }
 
-        return taskRepository.save(new Task(
+        Task task = new Task(
                 warehouse,
                 startNode,
                 endNode,
@@ -77,7 +77,12 @@ public class TaskCreationService {
                 simulationRun,
                 command.quantity(),
                 itemId
-        ));
+        );
+
+        // 시뮬레이션 내 발생 시각 지정 (시나리오 타임라인용)
+        task.scheduleAt(command.releaseAtSeconds());
+
+        return taskRepository.save(task);
     }
 
     private WarehouseNode findNode(Long nodeId) {

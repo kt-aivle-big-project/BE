@@ -22,3 +22,9 @@ jwt:
 
 fastapi:
   base-url: http://localhost:8000
+
+# 시뮬레이션 재생 엔진
+simulation:
+  playback:
+    # 재생 틱 주기(ms). 값이 작을수록 로봇이 빠르게 움직인다.
+    tick-ms: 500

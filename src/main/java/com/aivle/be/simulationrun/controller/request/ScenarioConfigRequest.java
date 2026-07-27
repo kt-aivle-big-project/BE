@@ -1,4 +1,4 @@
-package com.aivle.be.simulationrun.dto.request;
+package com.aivle.be.simulationrun.controller.request;
 
 import com.aivle.be.simulationrun.domain.ScenarioType;
 import jakarta.validation.constraints.DecimalMax;

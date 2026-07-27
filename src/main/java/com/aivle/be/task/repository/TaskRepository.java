@@ -31,6 +31,9 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
 
     boolean existsBySimulationRun_IdAndStatus(Long simulationRunId, TaskStatus status);
 
+    // 재생 엔진에서 로봇이 수행 중인 작업을 찾을 때 사용
+    List<Task> findAllByRobot_IdAndStatusIn(Long robotId, Collection<TaskStatus> statuses);
+
     @Modifying(flushAutomatically = true)
     @Query("update Task task set task.robot = null where task.robot.id = :robotId")
     void clearRobotReference(@Param("robotId") Long robotId);

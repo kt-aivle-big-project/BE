@@ -44,7 +44,8 @@ public class TaskService {
                 request.itemId(),
                 request.taskType(),
                 request.simulationRunId(),
-                request.quantity()
+                request.quantity(),
+                request.releaseAtSeconds()
         ));
         return new TaskResponse(saved);
     }

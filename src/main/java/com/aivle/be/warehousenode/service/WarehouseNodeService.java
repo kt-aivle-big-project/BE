@@ -29,7 +29,9 @@ public class WarehouseNodeService {
                 warehouse,
                 request.getZoneId(),
                 request.getX(),
-                request.getY()
+                request.getY(),
+                request.getNodeCode(),
+                request.getNodeType()
         );
 
         WarehouseNode savedNode = warehouseNodeRepository.save(node);
@@ -63,7 +65,9 @@ public class WarehouseNodeService {
         node.update(
                 request.getZoneId(),
                 request.getX(),
-                request.getY()
+                request.getY(),
+                request.getNodeCode(),
+                request.getNodeType()
         );
 
         return WarehouseNodeResponse.from(node);
