@@ -11,9 +11,14 @@ springdoc:
     operations-sorter: method
     tags-sorter: alpha
 
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+
 jwt:
   secret: ${JWT_SECRET}
-  access-token-expiration-ms: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:3600000}
+  access-token-expiration-ms: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:900000}
+  refresh-token-expiration-ms: ${JWT_REFRESH_TOKEN_EXPIRATION_MS:1209600000}
+  refresh-cookie-secure: ${JWT_REFRESH_COOKIE_SECURE:true}
 
 fastapi:
   base-url: http://localhost:8000
