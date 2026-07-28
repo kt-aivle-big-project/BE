@@ -22,6 +22,12 @@ public class PlaybackContext {
     // 창고 그래프 인접 리스트
     private final Map<Long, Set<Long>> adjacency;
 
+    // 랙 노드 -> 그 랙에 접근할 수 있는 통로 노드 목록
+    //
+    // 로봇은 랙 안으로 들어가지 않고 앞 통로에 서서 작업한다.
+    // (실제 창고에서도 로봇이 선반 안으로 들어가지 않는다)
+    private final Map<Long, List<Long>> accessNodes;
+
     private final List<RobotRuntime> robots;
 
     // 아직 발생하지 않은 작업 (발생 시각 오름차순)
@@ -45,6 +51,7 @@ public class PlaybackContext {
             Long simulationRunId,
             Long warehouseId,
             Map<Long, Set<Long>> adjacency,
+            Map<Long, List<Long>> accessNodes,
             List<RobotRuntime> robots,
             List<ScheduledTask> scheduledTasks,
             double speed,
@@ -55,6 +62,7 @@ public class PlaybackContext {
         this.simulationRunId = simulationRunId;
         this.warehouseId = warehouseId;
         this.adjacency = adjacency;
+        this.accessNodes = accessNodes;
         this.robots = robots;
         this.pendingTasks = new ArrayDeque<>(scheduledTasks);
         this.speed = speed <= 0 ? 1.0 : speed;
