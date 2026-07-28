@@ -42,9 +42,6 @@ public class Scenario {
     @Column(name = "simulation_speed", nullable = false)
     private Double simulationSpeed;
 
-    @Column(name = "initial_battery", nullable = false)
-    private Integer initialBattery;
-
     @Column(name = "charging_threshold", nullable = false)
     private Integer chargingThreshold;
 
@@ -74,7 +71,6 @@ public class Scenario {
             String scenarioName,
             Integer robotCount,
             Double simulationSpeed,
-            Integer initialBattery,
             Integer chargingThreshold,
             Boolean autoReplan,
             Boolean obstacleEnabled
@@ -85,7 +81,6 @@ public class Scenario {
         scenario.scenarioName = scenarioName;
         scenario.robotCount = robotCount;
         scenario.simulationSpeed = simulationSpeed == null ? 1.0 : simulationSpeed;
-        scenario.initialBattery = initialBattery;
         scenario.chargingThreshold = chargingThreshold;
         scenario.autoReplan = autoReplan != null && autoReplan;
         scenario.obstacleEnabled = obstacleEnabled != null && obstacleEnabled;
@@ -119,7 +114,6 @@ public class Scenario {
             String scenarioName,
             Integer robotCount,
             Double simulationSpeed,
-            Integer initialBattery,
             Integer chargingThreshold,
             Boolean autoReplan,
             Boolean obstacleEnabled
@@ -127,7 +121,6 @@ public class Scenario {
         if (scenarioName != null) this.scenarioName = scenarioName;
         if (robotCount != null) this.robotCount = robotCount;
         if (simulationSpeed != null) this.simulationSpeed = simulationSpeed;
-        if (initialBattery != null) this.initialBattery = initialBattery;
         if (chargingThreshold != null) this.chargingThreshold = chargingThreshold;
         if (autoReplan != null) this.autoReplan = autoReplan;
         if (obstacleEnabled != null) this.obstacleEnabled = obstacleEnabled;

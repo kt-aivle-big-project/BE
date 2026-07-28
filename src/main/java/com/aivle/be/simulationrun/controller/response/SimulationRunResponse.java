@@ -27,7 +27,6 @@ public record SimulationRunResponse(
         String scenarioName,
         Double simulationSpeed,
         Integer robotCount,
-        Integer initialBattery,
         Integer chargingThreshold,
         Boolean autoReplan,
         Boolean obstacleEnabled
@@ -53,7 +52,6 @@ public record SimulationRunResponse(
                 scenario == null ? null : scenario.getScenarioName(),
                 run.getSimulationSpeed(),
                 run.getRobotCount(),
-                run.getInitialBattery(),
                 run.getChargingThreshold(),
                 run.getAutoReplan(),
                 run.getObstacleEnabled()

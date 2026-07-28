@@ -6,6 +6,9 @@
 
 BEGIN;
 
+ALTER TABLE scenario DROP COLUMN IF EXISTS initial_battery;
+ALTER TABLE simulation_runs DROP COLUMN IF EXISTS initial_battery;
+
 -- ============================================================
 -- ⚠️ 경고: 아래 TRUNCATE는 해당 테이블의 모든 데이터를 삭제합니다.
 --    개발/테스트 DB에서만 실행하세요.
@@ -490,11 +493,11 @@ INSERT INTO robot (robot_id, robot_spec_id, warehouse_id, node_id, battery, stat
 
 -- 9) 시나리오 프리셋 ------------------------------------------
 INSERT INTO scenario (scenario_id, warehouse_id, scenario_code, scenario_name,
-                      robot_count, simulation_speed, initial_battery,
+                      robot_count, simulation_speed,
                       charging_threshold, auto_replan, obstacle_enabled) VALUES
-  (1, 1, 'S1', '시나리오 v1', 5, 1.0, 100, 20, true,  false),
-  (2, 1, 'S2', '시나리오 v2', 5, 1.0,  30, 20, true,  false),
-  (3, 1, 'S3', '시나리오 v3', 5, 2.0, 100, 20, true,  true);
+  (1, 1, 'S1', '시나리오 v1', 5, 1.0, 20, true,  false),
+  (2, 1, 'S2', '시나리오 v2', 5, 1.0, 20, true,  false),
+  (3, 1, 'S3', '시나리오 v3', 5, 2.0, 20, true,  true);
 
 -- 10) 품목 마스터 ---------------------------------------------
 INSERT INTO product (product_id, product_code, product_name) VALUES

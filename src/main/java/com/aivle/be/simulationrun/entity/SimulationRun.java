@@ -84,9 +84,6 @@ public class SimulationRun {
     @Column(name = "robot_count")
     private Integer robotCount;
 
-    @Column(name = "initial_battery")
-    private Integer initialBattery;
-
     @Column(name = "charging_threshold")
     private Integer chargingThreshold;
 
@@ -131,7 +128,6 @@ public class SimulationRun {
         this.scenario = scenario;
         if (scenario != null) {
             this.robotCount = scenario.getRobotCount();
-            this.initialBattery = scenario.getInitialBattery();
             this.chargingThreshold = scenario.getChargingThreshold();
             this.autoReplan = scenario.getAutoReplan();
             this.obstacleEnabled = scenario.getObstacleEnabled();
