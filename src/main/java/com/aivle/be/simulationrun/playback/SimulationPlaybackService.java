@@ -255,6 +255,10 @@ public class SimulationPlaybackService {
 
     /** 유휴 로봇이 대기 중인 작업을 집어간다. */
     private void tryStartNextTask(PlaybackContext context, RobotRuntime robot) {
+        if (robot.getStatus() == RobotStatus.ERROR) {
+            return;
+        }
+
         if (!context.hasReadyTask()) {
             return;
         }
@@ -343,6 +347,11 @@ public class SimulationPlaybackService {
     /** 경로를 한 칸 이동하거나, 도착했으면 다음 단계로 넘어간다. */
     private void moveOrArrive(PlaybackContext context, RobotRuntime robot, boolean towardStart) {
         if (robot.hasRemainingPath()) {
+            if (!robot.canMove()) {
+                failBatteryDepletedTask(context, robot);
+                return;
+            }
+
             Long nextNode = robot.pollNextNode();
 
             robot.moveTo(nextNode);
@@ -395,6 +404,30 @@ public class SimulationPlaybackService {
 
             publish(context, robot);
         }
+    }
+
+    private void failBatteryDepletedTask(PlaybackContext context, RobotRuntime robot) {
+        Long taskId = robot.getCurrentTaskId();
+        if (taskId != null) {
+            taskRepository.findById(taskId).ifPresent(task -> {
+                if (task.getStatus() == TaskStatus.ASSIGNED
+                        || task.getStatus() == TaskStatus.IN_PROGRESS) {
+                    task.fail();
+                    broadcastTask(task);
+                }
+            });
+        }
+
+        context.releaseChargingNode(robot.getChargingNodeId());
+        robot.clearChargingStation();
+        robot.setCurrentTaskId(null);
+        robot.setPhase(RobotRuntime.Phase.IDLE);
+        robot.setStatus(RobotStatus.ERROR);
+        robot.stopMoving();
+
+        publish(context, robot);
+        log.warn("[재생] 로봇 {} 배터리 방전으로 작업 {} 이동 실패",
+                robot.getRobotId(), taskId);
     }
 
     /** 집품이 끝나면 도착지로 향한다. */

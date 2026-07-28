@@ -125,6 +125,10 @@ public class RobotRuntime {
         consumeBattery(workBatteryRate);
     }
 
+    public boolean canMove() {
+        return batteryLevel > 0;
+    }
+
     public void assignChargingStation(Long nodeId, Double chargingPowerPerMinute) {
         this.chargingNodeId = nodeId;
         this.chargingPowerPerMinute = nonNegativeRate(chargingPowerPerMinute);

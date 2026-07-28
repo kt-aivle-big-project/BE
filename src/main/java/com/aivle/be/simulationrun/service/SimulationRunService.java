@@ -155,10 +155,17 @@ public class SimulationRunService {
             throw new BusinessException(ErrorCode.SIMULATION_RUN_ALREADY_ACTIVE);
         }
 
-        List<Robot> robots = robotRepository.findAllByWarehouse_IdAndStatusAndNodeIdIsNotNullOrderById(
-                warehouseId,
-                RobotAvailabilityStatus.AVAILABLE
-        );
+        List<Robot> availableRobots =
+                robotRepository.findAllByWarehouse_IdAndStatusAndNodeIdIsNotNullOrderById(
+                        warehouseId,
+                        RobotAvailabilityStatus.AVAILABLE
+                );
+        int robotCount = run.getRobotCount() == null
+                ? availableRobots.size()
+                : Math.max(0, run.getRobotCount());
+        List<Robot> robots = availableRobots.stream()
+                .limit(robotCount)
+                .toList();
         if (robots.isEmpty()) {
             throw new BusinessException(ErrorCode.NO_AVAILABLE_ROBOTS);
         }
