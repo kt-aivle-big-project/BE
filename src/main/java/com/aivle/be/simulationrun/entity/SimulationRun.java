@@ -141,6 +141,16 @@ public class SimulationRun {
         }
     }
 
+    /**
+     * 실행 배속을 변경한다. 진행 중에도 호출할 수 있다.
+     */
+    public void changeSpeed(Double simulationSpeed) {
+        if (simulationSpeed == null || simulationSpeed <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_SIMULATION_SPEED);
+        }
+        this.simulationSpeed = simulationSpeed;
+    }
+
     public void start(LocalDateTime now) {
         requireStatus(SimulationRunStatus.CREATED);
         status = SimulationRunStatus.RUNNING;

@@ -16,6 +16,7 @@ import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.domain.ScenarioType;
 import com.aivle.be.simulationrun.controller.request.InboundConfigRequest;
 import com.aivle.be.simulationrun.controller.request.ScenarioConfigRequest;
+import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunRobotStatesResponse;
@@ -202,6 +203,26 @@ public class SimulationRunService {
     public SimulationRunResponse pause(Long simulationRunId) {
         SimulationRun run = findById(simulationRunId);
         run.pause(LocalDateTime.now());
+        return broadcastRun(run);
+    }
+
+    /**
+     * 실행 배속 변경.
+     *
+     * 실행 기록을 갱신하고, 재생 중이면 엔진의 시계 속도도 즉시 바꾼다.
+     * 정지 상태에서 바꿔두면 다음 시작 때 그 배속으로 재생된다.
+     */
+    @Transactional
+    public SimulationRunResponse changeSpeed(
+            Long simulationRunId,
+            SimulationSpeedUpdateRequest request
+    ) {
+        SimulationRun run = findById(simulationRunId);
+        run.changeSpeed(request.simulationSpeed());
+
+        simulationPlaybackService.changeSpeed(
+                simulationRunId, request.simulationSpeed());
+
         return broadcastRun(run);
     }
 

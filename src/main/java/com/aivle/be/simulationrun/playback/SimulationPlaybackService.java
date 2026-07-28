@@ -18,6 +18,7 @@ import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.entity.TaskType;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.task.service.TaskService;
+import com.aivle.be.warehousenode.domain.NodeType;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import lombok.RequiredArgsConstructor;
@@ -30,10 +31,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * 시뮬레이션 재생 엔진 (시간 기반).
@@ -139,10 +143,13 @@ public class SimulationPlaybackService {
 
         double speed = run.getSimulationSpeed() == null ? 1.0 : run.getSimulationSpeed();
 
+        Map<Long, Set<Long>> adjacency = pathFinder.loadAdjacency(warehouseId);
+
         PlaybackContext context = new PlaybackContext(
                 simulationRunId,
                 warehouseId,
-                pathFinder.loadAdjacency(warehouseId),
+                adjacency,
+                buildAccessNodes(warehouseId, adjacency),
                 new ArrayList<>(runtimes),
                 scheduled,
                 speed,
@@ -304,8 +311,9 @@ public class SimulationPlaybackService {
             broadcastTask(task);
         }
 
-        List<Long> path = pathFinder.findPath(
-                context.getAdjacency(), robot.getCurrentNodeId(), task.getStartNode().getId());
+        // 출발지가 랙이면 랙 앞 통로까지만 이동한다
+        List<Long> path = pathToWorkPosition(
+                context, robot, task.getStartNode().getId());
 
         robot.setCurrentTaskId(taskId);
         robot.setPath(path);
@@ -439,8 +447,9 @@ public class SimulationPlaybackService {
             return;
         }
 
-        List<Long> path = pathFinder.findPath(
-                context.getAdjacency(), robot.getCurrentNodeId(), task.getEndNode().getId());
+        // 도착지가 랙이면 랙 앞 통로까지만 이동한다
+        List<Long> path = pathToWorkPosition(
+                context, robot, task.getEndNode().getId());
 
         robot.setPath(path);
         robot.setPhase(RobotRuntime.Phase.MOVING_TO_END);
@@ -545,6 +554,31 @@ public class SimulationPlaybackService {
         contexts.remove(simulationRunId);
     }
 
+    /**
+     * 재생 중인 시뮬레이션의 배속을 즉시 변경한다.
+     *
+     * 배속이 바뀌면 화면 보간에 쓰이는 "도착까지 남은 시간"도 달라지므로,
+     * 이동 중인 로봇의 상태를 다시 내보내 화면이 바로 반응하게 한다.
+     *
+     * @return 재생 중이어서 실제로 반영했으면 true
+     */
+    public boolean changeSpeed(Long simulationRunId, double newSpeed) {
+        PlaybackContext context = contexts.get(simulationRunId);
+
+        if (context == null) {
+            return false;
+        }
+
+        context.changeSpeed(newSpeed);
+
+        for (RobotRuntime robot : context.getRobots()) {
+            publish(context, robot);
+        }
+
+        log.info("[재생] runId={} 배속 변경 -> {}x", simulationRunId, newSpeed);
+        return true;
+    }
+
     public boolean isPlaying(Long simulationRunId) {
         return contexts.containsKey(simulationRunId);
     }
@@ -560,6 +594,84 @@ public class SimulationPlaybackService {
                 || status == SimulationRunStatus.FAILED
                 || status == SimulationRunStatus.STOPPED
                 || status == SimulationRunStatus.CREATED;
+    }
+
+    /**
+     * 랙 노드마다 "앞에 설 수 있는 통로 노드"를 찾아둔다.
+     *
+     * 로봇은 랙 안으로 들어가지 않고 인접한 통로에 서서 집품·적재한다.
+     * 랙 하나에 통로가 여러 개 붙어 있으면(위/아래 통로) 모두 후보로 둔다.
+     */
+    private Map<Long, List<Long>> buildAccessNodes(
+            Long warehouseId,
+            Map<Long, Set<Long>> adjacency
+    ) {
+        Set<Long> rackNodeIds = warehouseNodeRepository
+                .findAllByWarehouse_IdAndNodeType(warehouseId, NodeType.RACK_STORAGE)
+                .stream()
+                .map(WarehouseNode::getId)
+                .collect(Collectors.toSet());
+
+        Map<Long, List<Long>> accessNodes = new HashMap<>();
+
+        // 엣지는 방향이 있을 수 있으므로 양쪽 방향을 모두 훑어
+        // "랙과 맞닿은 통로 노드"를 모은다.
+        for (Map.Entry<Long, Set<Long>> entry : adjacency.entrySet()) {
+            Long from = entry.getKey();
+
+            for (Long to : entry.getValue()) {
+                if (rackNodeIds.contains(to) && !rackNodeIds.contains(from)) {
+                    accessNodes.computeIfAbsent(to, key -> new ArrayList<>()).add(from);
+                }
+                if (rackNodeIds.contains(from) && !rackNodeIds.contains(to)) {
+                    accessNodes.computeIfAbsent(from, key -> new ArrayList<>()).add(to);
+                }
+            }
+        }
+
+        return accessNodes;
+    }
+
+    /**
+     * 목적지까지의 경로를 만든다.
+     *
+     * 목적지가 랙이면 랙 안이 아니라 "앞 통로"까지만 간다.
+     * 통로가 여러 개면 더 가까운 쪽을 고른다.
+     */
+    private List<Long> pathToWorkPosition(
+            PlaybackContext context,
+            RobotRuntime robot,
+            Long targetNodeId
+    ) {
+        List<Long> candidates = context.getAccessNodes().get(targetNodeId);
+
+        // 랙이 아니면(입고구역·출고구역 등) 그 노드까지 그대로 간다
+        if (candidates == null || candidates.isEmpty()) {
+            return pathFinder.findPath(
+                    context.getAdjacency(), robot.getCurrentNodeId(), targetNodeId);
+        }
+
+        // 이미 작업 가능한 통로에 서 있으면 이동하지 않는다
+        if (candidates.contains(robot.getCurrentNodeId())) {
+            return List.of();
+        }
+
+        List<Long> shortest = null;
+
+        for (Long access : candidates) {
+            List<Long> path = pathFinder.findPath(
+                    context.getAdjacency(), robot.getCurrentNodeId(), access);
+
+            if (path.isEmpty()) {
+                continue;
+            }
+
+            if (shortest == null || path.size() < shortest.size()) {
+                shortest = path;
+            }
+        }
+
+        return shortest == null ? List.of() : shortest;
     }
 
     private void cacheNodeCodes(Long warehouseId) {
