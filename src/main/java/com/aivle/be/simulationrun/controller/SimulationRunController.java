@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -60,6 +61,13 @@ public class SimulationRunController {
     @PostMapping("/{simulationRunId}/resume")
     public ResponseEntity<SimulationRunResponse> resume(@PathVariable Long simulationRunId) {
         return ResponseEntity.ok(simulationRunService.resume(simulationRunId));
+    }
+
+    @Operation(summary = "창고에서 진행 중인 시뮬레이션 전체 중지")
+    @PostMapping("/stop-active")
+    public ResponseEntity<Void> stopActiveRuns(@RequestParam Long warehouseId) {
+        simulationRunService.stopActiveRuns(warehouseId);
+        return ResponseEntity.noContent().build();
     }
 
     @Operation(summary = "시뮬레이션 실행 배속 변경 (진행 중에도 즉시 반영)")

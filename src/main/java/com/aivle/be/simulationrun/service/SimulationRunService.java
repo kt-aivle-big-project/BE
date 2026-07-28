@@ -242,6 +242,31 @@ public class SimulationRunService {
         return broadcastRun(run);
     }
 
+    /**
+     * 창고에서 진행 중인 모든 시뮬레이션을 중지한다.
+     *
+     * 한 창고에서는 하나의 실행만 활성화될 수 있으므로,
+     * 새 시뮬레이션을 만들기 전에 이전 실행을 정리하는 용도로 쓴다.
+     *
+     * @return 중지된 실행 수
+     */
+    @Transactional
+    public int stopActiveRuns(Long warehouseId) {
+        List<SimulationRun> activeRuns = simulationRunRepository
+                .findAllByWarehouse_IdAndStatusIn(warehouseId, ACTIVE_STATUSES);
+
+        LocalDateTime now = LocalDateTime.now();
+
+        for (SimulationRun run : activeRuns) {
+            run.stop(now);
+            simulationRunStateStore.deleteAll(run.getId());
+            simulationPlaybackService.clear(run.getId());
+            broadcastRun(run);
+        }
+
+        return activeRuns.size();
+    }
+
     @Transactional
     public SimulationRunResponse complete(Long simulationRunId) {
         SimulationRun run = findById(simulationRunId);
