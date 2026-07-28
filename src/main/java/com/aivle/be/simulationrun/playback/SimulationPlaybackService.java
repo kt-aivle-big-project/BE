@@ -414,6 +414,31 @@ public class SimulationPlaybackService {
         contexts.remove(simulationRunId);
     }
 
+    /**
+     * 재생 중인 시뮬레이션의 배속을 즉시 변경한다.
+     *
+     * 배속이 바뀌면 화면 보간에 쓰이는 "도착까지 남은 시간"도 달라지므로,
+     * 이동 중인 로봇의 상태를 다시 내보내 화면이 바로 반응하게 한다.
+     *
+     * @return 재생 중이어서 실제로 반영했으면 true
+     */
+    public boolean changeSpeed(Long simulationRunId, double newSpeed) {
+        PlaybackContext context = contexts.get(simulationRunId);
+
+        if (context == null) {
+            return false;
+        }
+
+        context.changeSpeed(newSpeed);
+
+        for (RobotRuntime robot : context.getRobots()) {
+            publish(context, robot);
+        }
+
+        log.info("[재생] runId={} 배속 변경 -> {}x", simulationRunId, newSpeed);
+        return true;
+    }
+
     public boolean isPlaying(Long simulationRunId) {
         return contexts.containsKey(simulationRunId);
     }

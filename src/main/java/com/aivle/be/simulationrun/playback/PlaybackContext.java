@@ -33,8 +33,8 @@ public class PlaybackContext {
     // 시뮬레이션 내부 경과 시간(초)
     private double clockSeconds = 0.0;
 
-    // 실행 배속
-    private final double speed;
+    // 실행 배속. 진행 중에도 변경할 수 있다.
+    private double speed;
 
     // 동작별 소요 시간(초)
     private final double moveSecondsPerNode;
@@ -61,6 +61,16 @@ public class PlaybackContext {
         this.moveSecondsPerNode = moveSecondsPerNode <= 0 ? 2.0 : moveSecondsPerNode;
         this.pickingSeconds = pickingSeconds <= 0 ? 5.0 : pickingSeconds;
         this.loadingSeconds = loadingSeconds <= 0 ? 5.0 : loadingSeconds;
+    }
+
+    /**
+     * 실행 배속을 변경한다.
+     *
+     * 시계 전진 속도만 바뀌므로 이미 진행 중인 동작도
+     * 남은 시간이 그만큼 빠르게/느리게 소진된다.
+     */
+    public void changeSpeed(double newSpeed) {
+        this.speed = newSpeed <= 0 ? 1.0 : newSpeed;
     }
 
     /**
