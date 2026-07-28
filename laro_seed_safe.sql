@@ -6,6 +6,9 @@
 
 BEGIN;
 
+ALTER TABLE scenario DROP COLUMN IF EXISTS initial_battery;
+ALTER TABLE simulation_runs DROP COLUMN IF EXISTS initial_battery;
+
 -- ============================================================
 -- 이 파일은 기존 데이터를 지우지 않습니다.
 -- 이미 같은 ID/코드가 있으면 그 행은 건너뜁니다. (ON CONFLICT DO NOTHING)
@@ -475,11 +478,11 @@ ON CONFLICT DO NOTHING;
 
 -- 9) 시나리오 프리셋 ------------------------------------------
 INSERT INTO scenario (scenario_id, warehouse_id, scenario_code, scenario_name,
-                      robot_count, simulation_speed, initial_battery,
+                      robot_count, simulation_speed,
                       charging_threshold, auto_replan, obstacle_enabled) VALUES
-  (1, 1, 'S1', '시나리오 v1', 5, 1.0, 100, 20, true,  false),
-  (2, 1, 'S2', '시나리오 v2', 5, 1.0,  30, 20, true,  false),
-  (3, 1, 'S3', '시나리오 v3', 5, 2.0, 100, 20, true,  true)
+  (1, 1, 'S1', '시나리오 v1', 5, 1.0, 20, true,  false),
+  (2, 1, 'S2', '시나리오 v2', 5, 1.0, 20, true,  false),
+  (3, 1, 'S3', '시나리오 v3', 5, 2.0, 20, true,  true)
 ON CONFLICT DO NOTHING;
 
 -- 10) 품목 마스터 ---------------------------------------------

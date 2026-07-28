@@ -37,7 +37,6 @@ public class ScenarioService {
                 request.scenarioName().trim(),
                 request.robotCount(),
                 request.simulationSpeed(),
-                request.initialBattery(),
                 request.chargingThreshold(),
                 request.autoReplan(),
                 request.obstacleEnabled()
@@ -70,7 +69,6 @@ public class ScenarioService {
                 request.scenarioName(),
                 request.robotCount(),
                 request.simulationSpeed(),
-                request.initialBattery(),
                 request.chargingThreshold(),
                 request.autoReplan(),
                 request.obstacleEnabled()

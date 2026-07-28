@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
 import java.util.Set;
 
 /**
@@ -47,6 +48,10 @@ public class PlaybackContext {
     private final double pickingSeconds;
     private final double loadingSeconds;
 
+    // 충전 노드 ID -> 분당 충전량(%)
+    private final Map<Long, Double> chargingPowerByNode;
+    private final Set<Long> reservedChargingNodeIds = new HashSet<>();
+
     public PlaybackContext(
             Long simulationRunId,
             Long warehouseId,
@@ -57,7 +62,8 @@ public class PlaybackContext {
             double speed,
             double moveSecondsPerNode,
             double pickingSeconds,
-            double loadingSeconds
+            double loadingSeconds,
+            Map<Long, Double> chargingPowerByNode
     ) {
         this.simulationRunId = simulationRunId;
         this.warehouseId = warehouseId;
@@ -69,6 +75,7 @@ public class PlaybackContext {
         this.moveSecondsPerNode = moveSecondsPerNode <= 0 ? 2.0 : moveSecondsPerNode;
         this.pickingSeconds = pickingSeconds <= 0 ? 5.0 : pickingSeconds;
         this.loadingSeconds = loadingSeconds <= 0 ? 5.0 : loadingSeconds;
+        this.chargingPowerByNode = Map.copyOf(chargingPowerByNode);
     }
 
     /**
@@ -110,6 +117,16 @@ public class PlaybackContext {
 
     public boolean hasReadyTask() {
         return !readyTaskIds.isEmpty();
+    }
+
+    public boolean reserveChargingNode(Long nodeId) {
+        return reservedChargingNodeIds.add(nodeId);
+    }
+
+    public void releaseChargingNode(Long nodeId) {
+        if (nodeId != null) {
+            reservedChargingNodeIds.remove(nodeId);
+        }
     }
 
     /**
