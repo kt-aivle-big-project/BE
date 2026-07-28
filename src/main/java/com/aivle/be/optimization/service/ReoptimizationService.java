@@ -58,6 +58,7 @@ public class ReoptimizationService {
     private final OptimizationClient optimizationClient;
     private final OptimizationResultRepository optimizationResultRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final ReplanningStateService replanningStateService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -79,6 +80,13 @@ public class ReoptimizationService {
                     ErrorCode.SIMULATION_RUN_NOT_RUNNING
             );
         }
+
+        // 별도 트랜잭션으로 REPLANNING 상태를 즉시 반영한다.
+        // SimulationPlaybackService.tick()은 RUNNING이 아니므로 진행을 멈춘다.
+        replanningStateService.startReplanning(simulationRunId);
+
+        // 현재 트랜잭션이 성공하거나 실패한 뒤 시뮬레이션을 다시 실행 상태로 복구한다.
+        registerReplanningFinishAfterCompletion(simulationRunId);
 
         List<RobotState> robotStates =
                 simulationRunStateStore.findAll(simulationRunId);
@@ -159,6 +167,26 @@ public class ReoptimizationService {
         );
 
         return response;
+    }
+
+    private void registerReplanningFinishAfterCompletion(
+            Long simulationRunId
+    ) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            replanningStateService.finishReplanning(simulationRunId);
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCompletion(int status) {
+                        replanningStateService.finishReplanning(
+                                simulationRunId
+                        );
+                    }
+                }
+        );
     }
 
     private List<TaskAssignmentResult> applyAssignments(
