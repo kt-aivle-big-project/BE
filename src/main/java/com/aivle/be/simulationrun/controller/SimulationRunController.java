@@ -1,6 +1,7 @@
 package com.aivle.be.simulationrun.controller;
 
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
+import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunRobotStatesResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
@@ -59,6 +60,17 @@ public class SimulationRunController {
     @PostMapping("/{simulationRunId}/resume")
     public ResponseEntity<SimulationRunResponse> resume(@PathVariable Long simulationRunId) {
         return ResponseEntity.ok(simulationRunService.resume(simulationRunId));
+    }
+
+    @Operation(summary = "시뮬레이션 실행 배속 변경 (진행 중에도 즉시 반영)")
+    @PatchMapping("/{simulationRunId}/speed")
+    public ResponseEntity<SimulationRunResponse> changeSpeed(
+            @PathVariable Long simulationRunId,
+            @Valid @RequestBody SimulationSpeedUpdateRequest request
+    ) {
+        return ResponseEntity.ok(
+                simulationRunService.changeSpeed(simulationRunId, request)
+        );
     }
 
     @Operation(summary = "시뮬레이션 초기화 (로봇 실시간 상태 삭제 후 대기 상태로 되돌림)")
