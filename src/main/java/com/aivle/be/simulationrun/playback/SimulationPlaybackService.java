@@ -555,6 +555,44 @@ public class SimulationPlaybackService {
     }
 
     /**
+     * 로봇을 고장(ERROR) 상태로 만든다.
+     *
+     * 재생 엔진이 로봇 상태의 주인이므로, 외부에서 Redis를 직접 고치면
+     * 다음 tick 에 덮어써져 화면이 한 번 튄다. 반드시 이 메서드를 통해야 한다.
+     *
+     * ERROR 로봇은 tick 에서 건너뛰므로 더 이상 움직이지 않는다.
+     *
+     * @return 재생 중이어서 실제로 반영했으면 true
+     */
+    public boolean markRobotError(Long simulationRunId, Long robotId) {
+        PlaybackContext context = contexts.get(simulationRunId);
+
+        if (context == null || robotId == null) {
+            return false;
+        }
+
+        for (RobotRuntime robot : context.getRobots()) {
+            if (!robotId.equals(robot.getRobotId())) {
+                continue;
+            }
+
+            context.releaseChargingNode(robot.getChargingNodeId());
+            robot.clearChargingStation();
+            robot.setCurrentTaskId(null);
+            robot.setPhase(RobotRuntime.Phase.IDLE);
+            robot.setStatus(RobotStatus.ERROR);
+            robot.stopMoving();
+
+            publish(context, robot);
+
+            log.info("[재생] runId={} 로봇 {} 고장 처리", simulationRunId, robotId);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * 재생 중인 시뮬레이션의 배속을 즉시 변경한다.
      *
      * 배속이 바뀌면 화면 보간에 쓰이는 "도착까지 남은 시간"도 달라지므로,
