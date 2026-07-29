@@ -20,6 +20,7 @@ import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateReques
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunRobotStatesResponse;
+import com.aivle.be.simulationrun.controller.response.SimulationRunHistoryResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.entity.SimulationRunRobot;
@@ -31,6 +32,10 @@ import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.generation.ScenarioTaskPlanner;
 import com.aivle.be.task.repository.TaskRepository;
+import com.aivle.be.user.repository.UserRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
@@ -42,6 +47,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -75,10 +81,26 @@ public class SimulationRunService {
     private final TaskRepository taskRepository;
     private final SimulationPlaybackService simulationPlaybackService;
     private final ScenarioTaskPlanner scenarioTaskPlanner;
+    private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
+
+    private static final Logger log =
+            LoggerFactory.getLogger(SimulationRunService.class);
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional
     public SimulationRunResponse create(SimulationRunCreateRequest request) {
+        return create(request, null);
+    }
+
+    /**
+     * 시뮬레이션 실행 생성.
+     *
+     * @param userId 실행한 사용자 ID (인증 정보에서 전달, 없으면 null)
+     */
+    @Transactional
+    public SimulationRunResponse create(SimulationRunCreateRequest request, Long userId) {
         Warehouse warehouse = warehouseRepository.findById(request.warehouseId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
         ScenarioConfigRequest scenario = request.scenario();
@@ -105,6 +127,14 @@ public class SimulationRunService {
         // 입고 품목 구성 비율 검증 (합계 100%)
         validateInboundRatio(request.inbound());
 
+        // 실행자 기록 (내 실행 이력 조회용)
+        if (userId != null) {
+            run.assignUser(userRepository.getReferenceById(userId));
+        }
+
+        // 작업을 만든 설정을 그대로 보관해 같은 설정으로 다시 실행할 수 있게 한다
+        run.recordGenerationConfig(serializeGenerationConfig(request));
+
         SimulationRun saved = simulationRunRepository.save(run);
 
         // 입고/출고 설정을 실제 작업 목록으로 펼친다.
@@ -119,6 +149,20 @@ public class SimulationRunService {
         );
 
         return broadcastRun(saved);
+    }
+
+    /**
+     * 로그인한 사용자가 실행했던 시뮬레이션 이력을 최신순으로 반환한다.
+     */
+    @Transactional(readOnly = true)
+    public List<SimulationRunHistoryResponse> getMyRuns(Long userId) {
+        return simulationRunRepository.findAllByUser_IdOrderByIdDesc(userId)
+                .stream()
+                .map(run -> SimulationRunHistoryResponse.of(
+                        run,
+                        taskRepository.countBySimulationRun_Id(run.getId())
+                ))
+                .toList();
     }
 
     /**
@@ -398,6 +442,22 @@ public class SimulationRunService {
             throw new BusinessException(ErrorCode.INVALID_SCENARIO_CONFIG);
         }
     }
+    /**
+     * 작업 생성에 쓰인 입출고 설정을 JSON 문자열로 만든다.
+     * 직렬화에 실패해도 실행 생성 자체를 막지는 않는다.
+     */
+    private String serializeGenerationConfig(SimulationRunCreateRequest request) {
+        try {
+            return objectMapper.writeValueAsString(Map.of(
+                    "inbound", request.inbound() == null ? Map.of() : request.inbound(),
+                    "outbound", request.outbound() == null ? Map.of() : request.outbound()
+            ));
+        } catch (Exception exception) {
+            log.warn("생성 설정 직렬화 실패: {}", exception.getMessage());
+            return null;
+        }
+    }
+
     private SimulationRunResponse broadcastRun(SimulationRun run) {
         SimulationRunResponse response = SimulationRunResponse.from(run);
         messagingTemplate.convertAndSend(RUN_TOPIC, response);
