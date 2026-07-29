@@ -352,7 +352,12 @@ public class SimulationRunService {
                 .stream()
                 .map(RobotStateResponse::from)
                 .toList();
-        return new SimulationRunRobotStatesResponse(simulationRunId, run.getStatus(), states);
+        return new SimulationRunRobotStatesResponse(
+                simulationRunId,
+                run.getStatus(),
+                states,
+                simulationPlaybackService.currentClockMillis(simulationRunId)
+        );
     }
 
     @Transactional
