@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
 /**
  * 시뮬레이션 재생 엔진 (시간 기반).
  *
- * 내부 시계를 두고, 작업은 지정된 발생 시각(releaseAtSeconds)에 투입된다.
+ * 내부 시계를 두고, 작업은 지정된 발생 시각(releaseAtMillis)에 투입된다.
  * 유휴 로봇이 대기 중인 작업을 집어가고, 이동/집품/적재에 각각 소요 시간이 걸린다.
  *
  * 지금은 백엔드가 BFS로 경로를 계산하지만,
@@ -56,6 +56,11 @@ public class SimulationPlaybackService {
 
     private static final String RUN_TOPIC = "/topic/simulation-runs";
     private static final String TASK_TOPIC = "/topic/tasks";
+
+    // 한 tick 에서 로봇 한 대가 처리할 수 있는 최대 동작 수.
+    // 배속이 높거나 동작 시간이 짧을 때 밀리지 않게 하되,
+    // 예기치 못한 무한 루프는 막는다.
+    private static final int MAX_STEPS_PER_TICK = 50;
 
     // 계획 대상 작업 상태
     private static final List<TaskStatus> PLANNABLE_STATUSES =
@@ -108,8 +113,9 @@ public class SimulationPlaybackService {
         // 발생 시각 순으로 예약
         List<PlaybackContext.ScheduledTask> scheduled = tasks.stream()
                 .map(task -> new PlaybackContext.ScheduledTask(
-                        task.getId(), task.effectiveReleaseAtSeconds()))
-                .sorted(Comparator.comparingInt(PlaybackContext.ScheduledTask::releaseAtSeconds))
+                        task.getId(),
+                        task.effectiveReleaseAtSeconds() * 1000L))
+                .sorted(Comparator.comparingLong(PlaybackContext.ScheduledTask::releaseAtMillis))
                 .toList();
 
         List<RobotRuntime> runtimes = robots.stream()
@@ -172,10 +178,10 @@ public class SimulationPlaybackService {
     /**
      * 스케줄러가 주기적으로 호출한다.
      *
-     * @param tickSeconds 실제 경과 시간(초)
+     * @param tickMillis 실제 경과 시간(ms)
      */
     @Transactional
-    public void tick(double tickSeconds) {
+    public void tick(long tickMillis) {
         if (contexts.isEmpty()) {
             return;
         }
@@ -198,65 +204,82 @@ public class SimulationPlaybackService {
                 continue;
             }
 
-            advance(context, tickSeconds);
+            advance(context, tickMillis);
 
             if (context.isFinished()) {
                 contexts.remove(runId);
                 log.info("[재생] runId={} 모든 작업 수행 완료 (시뮬 시각 {}초)",
-                        runId, Math.round(context.getClockSeconds()));
+                        runId, context.clockSeconds());
             }
         }
     }
 
-    private void advance(PlaybackContext context, double tickSeconds) {
-        context.advanceClock(tickSeconds);
+    private void advance(PlaybackContext context, long tickMillis) {
+        long simulatedMillis = context.advanceClock(tickMillis);
 
         // 1) 발생 시각이 된 작업 투입
         for (Long taskId : context.releaseDueTasks()) {
             log.info("[재생] 시뮬 {}초 - 작업 {} 발생",
-                    Math.round(context.getClockSeconds()), taskId);
+                    context.clockSeconds(), taskId);
         }
 
         // 2) 로봇별 진행
-        double simulatedSeconds = tickSeconds * context.getSpeed();
         for (RobotRuntime robot : context.getRobots()) {
-            step(context, robot, simulatedSeconds);
+            step(context, robot, simulatedMillis);
         }
     }
 
     /**
-     * 로봇 한 대의 다음 동작을 수행한다.
-     * 현재 동작이 아직 끝나지 않았으면 아무것도 하지 않는다.
+     * 로봇 한 대를 현재 시각까지 진행시킨다.
+     *
+     * 한 tick 사이에 여러 동작이 끝날 수 있으므로
+     * (예: tick 500ms 인데 이동 1칸이 200ms) 시계가 지난 동작은 모두 소진한다.
+     * 그렇지 않으면 tick 마다 동작 하나씩만 처리되어 계획보다 점점 뒤처진다.
      */
     private void step(
             PlaybackContext context,
             RobotRuntime robot,
-            double simulatedSeconds
+            long simulatedMillis
     ) {
         if (robot.getPhase() == RobotRuntime.Phase.CHARGING) {
-            charge(context, robot, simulatedSeconds);
+            charge(context, robot, simulatedMillis);
             return;
         }
 
-        if (context.getClockSeconds() < robot.getBusyUntilSeconds()) {
-            return;
-        }
+        // 무한 루프 방지 (동작이 시간을 전혀 소비하지 않는 경우 대비)
+        int guard = 0;
 
-        try {
-            switch (robot.getPhase()) {
-                case IDLE -> tryStartNextTask(context, robot);
-                case MOVING_TO_START -> moveOrArrive(context, robot, true);
-                case PICKING -> beginMoveToEnd(context, robot);
-                case MOVING_TO_END -> moveOrArrive(context, robot, false);
-                case DROPPING -> finishTask(context, robot);
-                case CHARGING -> charge(context, robot, simulatedSeconds);
+        while (context.getClockMillis() >= robot.getBusyUntilMillis()
+                && robot.getPhase() != RobotRuntime.Phase.CHARGING
+                && guard++ < MAX_STEPS_PER_TICK) {
+
+            long busyBefore = robot.getBusyUntilMillis();
+            RobotRuntime.Phase phaseBefore = robot.getPhase();
+
+            try {
+                switch (robot.getPhase()) {
+                    case IDLE -> tryStartNextTask(context, robot);
+                    case MOVING_TO_START -> moveOrArrive(context, robot, true);
+                    case PICKING -> beginMoveToEnd(context, robot);
+                    case MOVING_TO_END -> moveOrArrive(context, robot, false);
+                    case DROPPING -> finishTask(context, robot);
+                    case CHARGING -> charge(context, robot, simulatedMillis);
+                }
+            } catch (Exception exception) {
+                log.warn("[재생] 로봇 {} 처리 실패: {}",
+                        robot.getRobotId(), exception.getMessage());
+                context.releaseChargingNode(robot.getChargingNodeId());
+                robot.clearChargingStation();
+                robot.setPhase(RobotRuntime.Phase.IDLE);
+                robot.setCurrentTaskId(null);
+                return;
             }
-        } catch (Exception exception) {
-            log.warn("[재생] 로봇 {} 처리 실패: {}", robot.getRobotId(), exception.getMessage());
-            context.releaseChargingNode(robot.getChargingNodeId());
-            robot.clearChargingStation();
-            robot.setPhase(RobotRuntime.Phase.IDLE);
-            robot.setCurrentTaskId(null);
+
+            // 아무 진전이 없으면(대기 중인 작업이 없는 유휴 상태 등) 이번 tick 은 종료
+            if (robot.getBusyUntilMillis() == busyBefore
+                    && robot.getPhase() == phaseBefore) {
+                return;
+            }
         }
     }
 
@@ -323,15 +346,15 @@ public class SimulationPlaybackService {
         publish(context, robot);
 
         log.info("[재생] 시뮬 {}초 - 로봇 {} 이 작업 {} 시작 (경로 {}칸)",
-                Math.round(context.getClockSeconds()), robot.getRobotId(), taskId, path.size());
+                context.clockSeconds(), robot.getRobotId(), taskId, path.size());
     }
 
     private void charge(
             PlaybackContext context,
             RobotRuntime robot,
-            double simulatedSeconds
+            long simulatedMillis
     ) {
-        robot.charge(simulatedSeconds);
+        robot.charge(simulatedMillis);
 
         if (robot.isFullyCharged()) {
             Long taskId = robot.getCurrentTaskId();
@@ -365,8 +388,8 @@ public class SimulationPlaybackService {
             robot.moveTo(nextNode);
             robot.setStatus(RobotStatus.MOVING);
             robot.consumeMoveBattery();
-            robot.setBusyUntilSeconds(
-                    context.getClockSeconds() + context.getMoveSecondsPerNode());
+            robot.setBusyUntilMillis(
+                    context.getClockMillis() + context.getMoveMillisPerNode());
 
             publish(context, robot);
             return;
@@ -386,8 +409,8 @@ public class SimulationPlaybackService {
             robot.setPhase(RobotRuntime.Phase.PICKING);
             robot.setStatus(RobotStatus.PICKING);
             robot.consumeWorkBattery();
-            robot.setBusyUntilSeconds(
-                    context.getClockSeconds() + context.getPickingSeconds());
+            robot.setBusyUntilMillis(
+                    context.getClockMillis() + context.getPickingMillis());
 
             startTask(robot.getCurrentTaskId());
             publish(context, robot);
@@ -407,8 +430,8 @@ public class SimulationPlaybackService {
             robot.setPhase(RobotRuntime.Phase.DROPPING);
             robot.setStatus(dropStatus);
             robot.consumeWorkBattery();
-            robot.setBusyUntilSeconds(
-                    context.getClockSeconds() + context.getLoadingSeconds());
+            robot.setBusyUntilMillis(
+                    context.getClockMillis() + context.getLoadingMillis());
 
             publish(context, robot);
         }
@@ -465,7 +488,7 @@ public class SimulationPlaybackService {
             try {
                 taskService.completeTask(taskId);
                 log.info("[재생] 시뮬 {}초 - 작업 {} 완료 (로봇 {})",
-                        Math.round(context.getClockSeconds()), taskId, robot.getRobotId());
+                        context.clockSeconds(), taskId, robot.getRobotId());
             } catch (Exception exception) {
                 log.warn("[재생] 작업 {} 완료 처리 실패: {}", taskId, exception.getMessage());
             }
@@ -508,15 +531,15 @@ public class SimulationPlaybackService {
 
         if (robot.getStatus() == RobotStatus.MOVING) {
             // 현재 이동이 끝나기까지 남은 시간
-            double remaining = robot.getBusyUntilSeconds() - context.getClockSeconds();
+            long remainingMillis = robot.getBusyUntilMillis() - context.getClockMillis();
 
-            if (remaining > 0) {
+            if (remainingMillis > 0) {
                 // 지금 향하고 있는 노드는 방금 진입한 currentNode 이므로,
                 // 화면에서는 "직전 노드 -> 현재 노드" 구간을 보간한다.
                 nextNodeId = robot.getCurrentNodeId();
                 nextNodeCode = nodeCodeCache.get(nextNodeId);
-                // 배속을 반영한 실제 경과 시간으로 환산
-                arrivalInSeconds = remaining / context.getSpeed();
+                // 배속을 반영한 실제 경과 시간(초)으로 환산
+                arrivalInSeconds = remainingMillis / 1000.0 / context.getSpeed();
             }
         }
 
@@ -621,10 +644,10 @@ public class SimulationPlaybackService {
         return contexts.containsKey(simulationRunId);
     }
 
-    /** 현재 시뮬레이션 시각(초). 진행 중이 아니면 0. */
-    public double currentClock(Long simulationRunId) {
+    /** 현재 시뮬레이션 시각(ms). 진행 중이 아니면 0. */
+    public long currentClockMillis(Long simulationRunId) {
         PlaybackContext context = contexts.get(simulationRunId);
-        return context == null ? 0 : context.getClockSeconds();
+        return context == null ? 0 : context.getClockMillis();
     }
 
     private boolean isTerminated(SimulationRunStatus status) {

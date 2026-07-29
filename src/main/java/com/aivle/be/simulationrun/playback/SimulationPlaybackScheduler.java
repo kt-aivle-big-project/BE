@@ -25,7 +25,7 @@ public class SimulationPlaybackScheduler {
     @Scheduled(fixedRateString = "${simulation.playback.tick-ms:500}")
     public void tick() {
         try {
-            playbackService.tick(tickMs / 1000.0);
+            playbackService.tick(tickMs);
         } catch (Exception exception) {
             log.error("[재생] 틱 처리 중 오류", exception);
         }

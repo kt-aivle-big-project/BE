@@ -48,8 +48,9 @@ public class RobotRuntime {
     private Phase phase = Phase.IDLE;
     private RobotStatus status = RobotStatus.IDLE;
 
-    // 이 시뮬레이션 시각까지는 현재 동작을 수행 중 (그전에는 다음 동작으로 넘어가지 않음)
-    private double busyUntilSeconds = 0.0;
+    // 이 시뮬레이션 시각(ms)까지는 현재 동작을 수행 중.
+    // 시계가 이 값을 넘어야 다음 동작으로 넘어간다.
+    private long busyUntilMillis = 0L;
 
     private double batteryLevel;
 
@@ -134,13 +135,16 @@ public class RobotRuntime {
         this.chargingPowerPerMinute = nonNegativeRate(chargingPowerPerMinute);
     }
 
-    public void charge(double simulatedSeconds) {
-        if (simulatedSeconds <= 0 || chargingPowerPerMinute <= 0) {
+    /**
+     * 충전. 분당 충전량을 경과 시간(ms)만큼 적용한다.
+     */
+    public void charge(long simulatedMillis) {
+        if (simulatedMillis <= 0 || chargingPowerPerMinute <= 0) {
             return;
         }
         batteryLevel = Math.min(
                 100,
-                batteryLevel + chargingPowerPerMinute * simulatedSeconds / 60.0
+                batteryLevel + chargingPowerPerMinute * simulatedMillis / 60_000.0
         );
     }
 
