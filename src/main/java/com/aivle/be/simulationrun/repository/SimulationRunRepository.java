@@ -19,4 +19,9 @@ public interface SimulationRunRepository extends JpaRepository<SimulationRun, Lo
             Long warehouseId,
             Collection<SimulationRunStatus> statuses
     );
+
+    /**
+     * 특정 사용자가 실행한 시뮬레이션 목록 (최신순).
+     */
+    List<SimulationRun> findAllByUser_IdOrderByIdDesc(Long userId);
 }
