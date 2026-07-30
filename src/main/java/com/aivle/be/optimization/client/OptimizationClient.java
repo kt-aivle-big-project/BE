@@ -15,9 +15,10 @@ public class OptimizationClient {
     private final RestClient restClient;
 
     public OptimizationClient(
+            RestClient.Builder restClientBuilder,
             @Value("${fastapi.base-url}") String fastApiBaseUrl
     ) {
-        this.restClient = RestClient.builder()
+        this.restClient = restClientBuilder.clone()
                 .baseUrl(fastApiBaseUrl)
                 .build();
     }
