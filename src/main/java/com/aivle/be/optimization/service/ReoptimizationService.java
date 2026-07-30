@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -59,8 +60,10 @@ public class ReoptimizationService {
     private final SimulationPlaybackService simulationPlaybackService;
     private final SimpMessagingTemplate messagingTemplate;
     private final ReplanningStateService replanningStateService;
+    private final ReplanningDecisionService replanningDecisionService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+
 
     @Transactional
     public ReoptimizationResponse reoptimize(
@@ -79,6 +82,12 @@ public class ReoptimizationService {
             throw new BusinessException(
                     ErrorCode.SIMULATION_RUN_NOT_RUNNING
             );
+        }
+
+        // 경로 재계획이 필요 없는 단순 이벤트는
+        // 시뮬레이션을 멈추거나 FastAPI를 호출하지 않는다.
+        if (!replanningDecisionService.requiresReplanning(request.reason())) {
+            return createNoReplanningResponse();
         }
 
         // 별도 트랜잭션으로 REPLANNING 상태를 즉시 반영한다.
@@ -412,5 +421,13 @@ public class ReoptimizationService {
         // Redis 를 직접 고치면 다음 tick 에 정상 상태로 되돌아가 버린다.
         simulationPlaybackService.markRobotError(
                 simulationRunId, request.triggerRobotId());
+    }
+    private ReoptimizationResponse createNoReplanningResponse() {
+        return new ReoptimizationResponse(
+                UUID.randomUUID().toString(),
+                "SUCCESS",
+                List.of(),
+                List.of()
+        );
     }
 }
