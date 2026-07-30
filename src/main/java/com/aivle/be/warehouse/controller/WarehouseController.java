@@ -5,7 +5,9 @@ import com.aivle.be.warehouse.dto.WarehouseLayoutResponse;
 import com.aivle.be.warehouse.service.WarehouseLayoutService;
 import com.aivle.be.warehouse.dto.WarehouseUpdateRequest;
 import com.aivle.be.warehouse.dto.WarehouseCreateRequest;
+import com.aivle.be.warehouse.dto.WarehouseGraphResponse;
 import com.aivle.be.warehouse.dto.WarehouseResponse;
+import com.aivle.be.warehouse.service.WarehouseGraphService;
 import com.aivle.be.warehouse.service.WarehouseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -19,6 +21,20 @@ public class WarehouseController {
 
     private final WarehouseService warehouseService;
     private final WarehouseLayoutService warehouseLayoutService;
+    private final WarehouseGraphService warehouseGraphService;
+
+    /**
+     * 창고 그래프(맵) 전체를 내려준다.
+     *
+     * 프론트 화면과 AI(cuOpt/MAPF)가 같은 맵을 바라보게 하기 위한 창구다.
+     * 노드·간선을 숫자 PK 가 아니라 코드(R0_0, H0_0)로 내보낸다.
+     */
+    @GetMapping("/{warehouseId}/graph")
+    public ResponseEntity<WarehouseGraphResponse> getGraph(
+            @PathVariable Long warehouseId
+    ) {
+        return ResponseEntity.ok(warehouseGraphService.getGraph(warehouseId));
+    }
 
     @PostMapping
     public ResponseEntity<WarehouseResponse> createWarehouse(

@@ -15,10 +15,10 @@ import com.aivle.be.optimization.repository.OptimizationResultRepository;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.domain.RobotState;
-import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
+import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.entity.TaskStatus;
@@ -32,7 +32,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -57,6 +56,7 @@ public class ReoptimizationService {
     private final RobotRepository robotRepository;
     private final OptimizationClient optimizationClient;
     private final OptimizationResultRepository optimizationResultRepository;
+    private final SimulationPlaybackService simulationPlaybackService;
     private final SimpMessagingTemplate messagingTemplate;
     private final ReplanningStateService replanningStateService;
 
@@ -255,11 +255,10 @@ public class ReoptimizationService {
                     assignmentResults.add(assignmentResult);
                 }
 
-                updateAssignedRobotState(
-                        simulationRun.getId(),
-                        task,
-                        robot
-                );
+                // 로봇 실시간 상태는 재생 엔진이 관리한다.
+                // 여기서 Redis 를 직접 고치면 다음 tick 에 덮어써지면서
+                // 화면의 로봇이 한 번 멈췄다 다시 움직인다.
+                // 담당 로봇 변경은 위의 Task 갱신만으로 충분하다.
             }
         }
 
@@ -400,33 +399,6 @@ public class ReoptimizationService {
         }
     }
 
-    private void updateAssignedRobotState(
-            Long simulationRunId,
-            Task task,
-            Robot assignedRobot
-    ) {
-        simulationRunStateStore
-                .findByRobotId(
-                        simulationRunId,
-                        assignedRobot.getId()
-                )
-                .ifPresent(state ->
-                        simulationRunStateStore.save(
-                                simulationRunId,
-                                RobotState.stationary(
-                                        state.robotId(),
-                                        state.warehouseId(),
-                                        state.currentNodeId(),
-                                        state.currentNodeCode(),
-                                        state.batteryLevel(),
-                                        RobotStatus.ASSIGNED,
-                                        task.getId(),
-                                        LocalDateTime.now()
-                                )
-                        )
-                );
-    }
-
     private void updateFailedRobotState(
             Long simulationRunId,
             ReoptimizationRequest request
@@ -436,25 +408,9 @@ public class ReoptimizationService {
             return;
         }
 
-        simulationRunStateStore
-                .findByRobotId(
-                        simulationRunId,
-                        request.triggerRobotId()
-                )
-                .ifPresent(state ->
-                        simulationRunStateStore.save(
-                                simulationRunId,
-                                RobotState.stationary(
-                                        state.robotId(),
-                                        state.warehouseId(),
-                                        state.currentNodeId(),
-                                        state.currentNodeCode(),
-                                        state.batteryLevel(),
-                                        RobotStatus.ERROR,
-                                        null,
-                                        LocalDateTime.now()
-                                )
-                        )
-                );
+        // 재생 엔진에 고장을 알린다.
+        // Redis 를 직접 고치면 다음 tick 에 정상 상태로 되돌아가 버린다.
+        simulationPlaybackService.markRobotError(
+                simulationRunId, request.triggerRobotId());
     }
 }

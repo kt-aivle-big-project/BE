@@ -1,8 +1,12 @@
 package com.aivle.be.simulationrun.controller;
 
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
+import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunRobotStatesResponse;
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.simulationrun.controller.response.SimulationRunHistoryResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.service.SimulationRunService;
 import com.aivle.be.task.controller.response.TaskResponse;
@@ -21,6 +25,8 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -37,10 +43,11 @@ public class SimulationRunController {
     @Operation(summary = "시뮬레이션 실행 생성")
     @PostMapping
     public ResponseEntity<SimulationRunResponse> create(
-            @Valid @RequestBody SimulationRunCreateRequest request
+            @Valid @RequestBody SimulationRunCreateRequest request,
+            @AuthenticationPrincipal String userId
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(simulationRunService.create(request));
+                .body(simulationRunService.create(request, parseUserId(userId)));
     }
 
     @Operation(summary = "시뮬레이션 시작")
@@ -59,6 +66,52 @@ public class SimulationRunController {
     @PostMapping("/{simulationRunId}/resume")
     public ResponseEntity<SimulationRunResponse> resume(@PathVariable Long simulationRunId) {
         return ResponseEntity.ok(simulationRunService.resume(simulationRunId));
+    }
+
+    @Operation(summary = "내가 실행했던 시뮬레이션 이력 조회")
+    @GetMapping("/my")
+    public ResponseEntity<List<SimulationRunHistoryResponse>> getMyRuns(
+            @AuthenticationPrincipal String userId
+    ) {
+        return ResponseEntity.ok(
+                simulationRunService.getMyRuns(parseUserId(userId))
+        );
+    }
+
+    /**
+     * 인증 정보에서 사용자 ID를 꺼낸다.
+     *
+     * JwtAuthenticationFilter 가 토큰의 subject(사용자 ID 문자열)를 principal 로 심는다.
+     * 추후 필터가 사용자 객체를 심도록 바뀌면 이 메서드만 고치면 된다.
+     */
+    private Long parseUserId(String principal) {
+        if (principal == null || principal.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
+
+        try {
+            return Long.valueOf(principal);
+        } catch (NumberFormatException exception) {
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
+    }
+
+    @Operation(summary = "창고에서 진행 중인 시뮬레이션 전체 중지")
+    @PostMapping("/stop-active")
+    public ResponseEntity<Void> stopActiveRuns(@RequestParam Long warehouseId) {
+        simulationRunService.stopActiveRuns(warehouseId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "시뮬레이션 실행 배속 변경 (진행 중에도 즉시 반영)")
+    @PatchMapping("/{simulationRunId}/speed")
+    public ResponseEntity<SimulationRunResponse> changeSpeed(
+            @PathVariable Long simulationRunId,
+            @Valid @RequestBody SimulationSpeedUpdateRequest request
+    ) {
+        return ResponseEntity.ok(
+                simulationRunService.changeSpeed(simulationRunId, request)
+        );
     }
 
     @Operation(summary = "시뮬레이션 초기화 (로봇 실시간 상태 삭제 후 대기 상태로 되돌림)")

@@ -27,6 +27,11 @@ public record SignupRequest(
         @Schema(description = "개인정보 수집 및 이용 필수 동의", example = "true")
         @NotNull(message = "개인정보 수집 및 이용 동의 여부는 필수입니다.")
         @AssertTrue(message = "개인정보 수집 및 이용에 동의해야 합니다.")
-        Boolean privacyAgreed
+        Boolean privacyAgreed,
+
+        @Schema(description = "서비스 이용약관 필수 동의", example = "true")
+        @NotNull(message = "서비스 이용약관 동의 여부는 필수입니다.")
+        @AssertTrue(message = "서비스 이용약관에 동의해야 합니다.")
+        Boolean serviceAgreed
 ) {
 }

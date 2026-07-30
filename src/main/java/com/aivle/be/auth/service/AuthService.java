@@ -25,6 +25,7 @@ import java.time.LocalDateTime;
 public class AuthService {
 
     private static final String PRIVACY_TERMS_VERSION = "1.0";
+    private static final String SERVICE_TERMS_VERSION = "1.0";
     private static final int MAX_LOGIN_ATTEMPTS = 5;
     private static final int LOCK_MINUTES = 10;
 
@@ -52,6 +53,12 @@ public class AuthService {
                 savedUser,
                 ConsentType.PRIVACY_COLLECTION_AND_USE,
                 PRIVACY_TERMS_VERSION,
+                LocalDateTime.now()
+        ));
+        userConsentRepository.save(new UserConsent(
+                savedUser,
+                ConsentType.SERVICE_TERMS,
+                SERVICE_TERMS_VERSION,
                 LocalDateTime.now()
         ));
 

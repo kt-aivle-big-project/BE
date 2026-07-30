@@ -5,6 +5,7 @@ import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.scenario.entity.Scenario;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.domain.ScenarioType;
+import com.aivle.be.user.entity.User;
 import com.aivle.be.warehouse.entity.Warehouse;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -39,6 +40,16 @@ public class SimulationRun {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "warehouse_id", nullable = false)
     private Warehouse warehouse;
+
+    /**
+     * 이 시뮬레이션을 실행한 사용자.
+     *
+     * 창고 소유자와 별개로 "누가 돌렸는지"를 남긴다.
+     * 같은 창고를 여러 명이 쓰더라도 각자 자기 실행 이력을 볼 수 있다.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private User user;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -84,9 +95,6 @@ public class SimulationRun {
     @Column(name = "robot_count")
     private Integer robotCount;
 
-    @Column(name = "initial_battery")
-    private Integer initialBattery;
-
     @Column(name = "charging_threshold")
     private Integer chargingThreshold;
 
@@ -95,6 +103,15 @@ public class SimulationRun {
 
     @Column(name = "obstacle_enabled")
     private Boolean obstacleEnabled;
+
+    /**
+     * 이 실행의 작업을 만들 때 사용한 입출고 설정(JSON 원문).
+     *
+     * 작업 자체는 task 테이블에 남지만 "어떤 설정으로 만들었는지"는 남지 않는다.
+     * 같은 설정으로 다시 실행할 수 있도록 요청 내용을 그대로 보관한다.
+     */
+    @Column(name = "generation_config", columnDefinition = "text")
+    private String generationConfig;
 
     @Version
     private Long version;
@@ -125,13 +142,26 @@ public class SimulationRun {
     }
 
     /**
+     * 실행자를 지정한다. (생성 직후 1회)
+     */
+    public void assignUser(User user) {
+        this.user = user;
+    }
+
+    /**
+     * 작업 생성에 사용한 설정을 보관한다. (생성 직후 1회)
+     */
+    public void recordGenerationConfig(String generationConfig) {
+        this.generationConfig = generationConfig;
+    }
+
+    /**
      * 시나리오 프리셋과 실행 배속을 적용한다. (생성 직후 1회)
      */
     public void applyScenario(Scenario scenario, Double simulationSpeed) {
         this.scenario = scenario;
         if (scenario != null) {
             this.robotCount = scenario.getRobotCount();
-            this.initialBattery = scenario.getInitialBattery();
             this.chargingThreshold = scenario.getChargingThreshold();
             this.autoReplan = scenario.getAutoReplan();
             this.obstacleEnabled = scenario.getObstacleEnabled();
@@ -143,6 +173,16 @@ public class SimulationRun {
         if (this.simulationSpeed == null) {
             this.simulationSpeed = 1.0;
         }
+    }
+
+    /**
+     * 실행 배속을 변경한다. 진행 중에도 호출할 수 있다.
+     */
+    public void changeSpeed(Double simulationSpeed) {
+        if (simulationSpeed == null || simulationSpeed <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_SIMULATION_SPEED);
+        }
+        this.simulationSpeed = simulationSpeed;
     }
 
     public void start(LocalDateTime now) {

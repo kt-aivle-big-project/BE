@@ -8,6 +8,8 @@ import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.List;
+
 @Configuration
 public class SwaggerConfig {
 
@@ -16,23 +18,19 @@ public class SwaggerConfig {
         String securitySchemeName = "bearerAuth";
 
         return new OpenAPI()
-                .addSecurityItem(
+                .components(new Components().addSecuritySchemes(
+                        securitySchemeName,
+                        new SecurityScheme()
+                                .type(SecurityScheme.Type.HTTP)
+                                .scheme("bearer")
+                                .bearerFormat("JWT")
+                ))
+                .security(List.of(
                         new SecurityRequirement().addList(securitySchemeName)
-                )
-                .components(
-                        new Components().addSecuritySchemes(
-                                securitySchemeName,
-                                new SecurityScheme()
-                                        .type(SecurityScheme.Type.HTTP)
-                                        .scheme("bearer")
-                                        .bearerFormat("JWT")
-                        )
-                )
-                .info(
-                        new Info()
-                                .title("Warehouse API")
-                                .description("Warehouse backend API documentation")
-                                .version("1.0.0")
-                );
+                ))
+                .info(new Info()
+                        .title("Warehouse API")
+                        .description("Warehouse backend API documentation")
+                        .version("1.0.0"));
     }
 }

@@ -8,7 +8,6 @@ public record ScenarioUpdateRequest(
         String scenarioName,
         @Min(1) @Max(100) Integer robotCount,
         Double simulationSpeed,
-        @Min(0) @Max(100) Integer initialBattery,
         @Min(0) @Max(100) Integer chargingThreshold,
         Boolean autoReplan,
         Boolean obstacleEnabled
