@@ -50,9 +50,9 @@ INSERT INTO scenario (
     robot_count, simulation_speed, charging_threshold, auto_replan, obstacle_enabled
 )
 SELECT
-    w.id * 100 + preset.offset,
+    w.id * 100 + preset.preset_no,
     w.id,
-    'S' || preset.offset,
+    'S' || preset.preset_no,
     preset.label,
     preset.robots,
     preset.speed,
@@ -65,7 +65,7 @@ CROSS JOIN (
         (1, '기본',      5, 1.0, false),
         (2, '고속',      5, 2.0, false),
         (3, '장애물 포함', 5, 1.0, true)
-) AS preset(offset, label, robots, speed, obstacle)
+) AS preset(preset_no, label, robots, speed, obstacle)
 ON CONFLICT DO NOTHING;
 
 -- ---------------------------------------------------------------------------
