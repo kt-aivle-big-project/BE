@@ -14,13 +14,13 @@
 
 무엇을 하는가
     1. 통로/충전/입출고 노드를 그대로 옮긴다
-    2. 접근 노드 이름에서 랙 노드를 되살린다  (K0_1_ACCESS_A -> K0_1)
-    3. 접근 노드를 거치던 간선을 랙에 직접 잇는다
-    4. 충전소, 보관위치, 로봇을 노드에서 유도한다
+    2. 입출고 진입 자리(inbound_access, outbound_access)는 통로로 저장한다
+    3. 랙 접근 노드 이름에서 랙 노드를 되살린다  (K0_1_ACCESS_A -> K0_1)
+    4. 랙 접근 노드를 거치던 간선을 랙에 직접 잇는다
+    5. 충전소, 보관위치, 로봇을 노드에서 유도한다
 
 무엇을 하지 않는가
-    작업 전용 노드(rack_access 등)는 저장하지 않는다.
-    백엔드가 쓰지 않고, 노드 타입도 정의돼 있지 않다.
+    랙 접근 자리와 빈 토트 버퍼는 노드로 저장하지 않는다.
     화면에는 프론트 JSON 으로 계속 보인다.
 """
 
@@ -30,19 +30,33 @@ import re
 from pathlib import Path
 
 # JSON 노드 타입 -> 백엔드 NodeType
+#
+# inbound_access / outbound_access 는 입출고구 앞의 진입 자리다.
+# 통로에서 입고구로 가는 길이 전부 이 자리를 거치므로 반드시 저장해야 한다.
+# 빠뜨리면 양 끝 중 한쪽이 없는 간선이 통째로 버려져
+# 입고구·출고구가 통로와 끊긴 외딴섬이 된다.
+#
+# 랙 접근 자리처럼 하나로 합칠 수는 없다.
+# 랙은 접근 자리 2개가 랙 1개에 대응하지만,
+# 출고 진입 자리 O_0 은 출고구 O_A·O_B·O_C 세 개에 동시에 붙어 있다.
+# 즉 이 자리들은 합칠 대상이 아니라 그냥 통로 교차점이다.
 NODE_TYPE_MAP = {
     "route": "ROUTE",
     "route_charge_junction": "ROUTE_CHARGE_JUNCTION",
     "inbound": "INBOUND",
     "outbound": "OUTBOUND",
     "charging_slot": "CHARGING_SLOT",
+    "inbound_access": "ROUTE",
+    "outbound_access": "ROUTE",
 }
 
-# 저장하지 않는 타입 (작업 전용 자리)
+# 저장하지 않는 타입
+#
+# rack_access            랙 노드로 되살려 대체한다
+# empty_tote_buffer_access  통로 노드 하나에만 붙은 막다른 작업 자리다.
+#                           지나다닐 수 없어(transit_allowed=false) 빼도 길이 끊기지 않는다.
 SKIPPED_TYPES = {
     "rack_access",
-    "inbound_access",
-    "outbound_access",
     "empty_tote_buffer_access",
 }
 

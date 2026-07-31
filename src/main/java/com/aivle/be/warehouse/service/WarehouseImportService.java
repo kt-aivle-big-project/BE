@@ -4,6 +4,8 @@ import com.aivle.be.chargingstation.entity.ChargingStation;
 import com.aivle.be.chargingstation.repository.ChargingStationRepository;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.product.entity.Product;
+import com.aivle.be.product.repository.ProductRepository;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.domain.RobotAvailabilityStatus;
 import com.aivle.be.robot.repository.RobotRepository;
@@ -21,6 +23,8 @@ import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import com.aivle.be.warehouseedge.entity.WarehouseEdge;
 import com.aivle.be.warehouseedge.repository.WarehouseEdgeRepository;
+import com.aivle.be.warehouseitem.entity.WarehouseItem;
+import com.aivle.be.warehouseitem.repository.WarehouseItemRepository;
 import com.aivle.be.warehousenode.domain.NodeType;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
@@ -75,13 +79,27 @@ public class WarehouseImportService {
 
     private static final Logger log = LoggerFactory.getLogger(WarehouseImportService.class);
 
-    /** 지도 JSON 의 타입 -> 우리 노드 타입 */
+    /**
+     * 지도 JSON 의 타입 -> 우리 노드 타입.
+     *
+     * <p>{@code inbound_access} / {@code outbound_access} 는 입출고구 앞의 진입 자리다.
+     * 통로에서 입고구로 가는 길이 전부 이 자리를 거치므로 반드시 저장해야 한다.
+     * 빠뜨리면 양 끝 중 한쪽이 없는 간선이 통째로 버려져
+     * 입고구·출고구가 통로와 끊긴 외딴섬이 된다.
+     *
+     * <p>랙 접근 자리처럼 하나로 합칠 수는 없다.
+     * 랙은 접근 자리 2개가 랙 1개에 대응하지만,
+     * 출고 진입 자리 {@code O_0} 은 출고구 {@code O_A}·{@code O_B}·{@code O_C} 세 개에 동시에 붙어 있다.
+     * 즉 이 자리들은 합칠 대상이 아니라 그냥 통로 교차점이다.
+     */
     private static final Map<String, NodeType> NODE_TYPES = Map.of(
             "route", NodeType.ROUTE,
             "route_charge_junction", NodeType.ROUTE_CHARGE_JUNCTION,
             "inbound", NodeType.INBOUND,
             "outbound", NodeType.OUTBOUND,
-            "charging_slot", NodeType.CHARGING_SLOT
+            "charging_slot", NodeType.CHARGING_SLOT,
+            "inbound_access", NodeType.ROUTE,
+            "outbound_access", NodeType.ROUTE
     );
 
     /** 노드 타입 -> 구역 이름 */
@@ -100,6 +118,10 @@ public class WarehouseImportService {
     private static final int DEFAULT_ROBOT_COUNT = 6;
     private static final double DEFAULT_CHARGING_POWER = 50.0;
 
+    /** 초기 재고를 넣을 랙 수와 랙당 수량. 기본 창고 3개의 시드와 같은 값이다. */
+    private static final int INITIAL_STOCK_LOCATIONS = 10;
+    private static final int INITIAL_STOCK_QUANTITY = 50;
+
     private final WarehouseRepository warehouseRepository;
     private final WarehouseNodeRepository warehouseNodeRepository;
     private final WarehouseEdgeRepository warehouseEdgeRepository;
@@ -110,6 +132,8 @@ public class WarehouseImportService {
     private final RobotSpecRepository robotSpecRepository;
     private final ScenarioRepository scenarioRepository;
     private final UserRepository userRepository;
+    private final ProductRepository productRepository;
+    private final WarehouseItemRepository warehouseItemRepository;
 
     @Transactional
     public WarehouseImportResponse importWarehouse(WarehouseImportRequest request, Long loginUserId) {
@@ -150,15 +174,17 @@ public class WarehouseImportService {
         List<WarehouseNode> racks = nodesOf(nodes, NodeType.RACK_STORAGE);
 
         createChargingStations(warehouse, chargingSlots);
-        createStorageLocations(warehouse, racks);
+        List<StorageLocation> locations = createStorageLocations(warehouse, racks);
+        int stockedCount = createInitialInventory(warehouse, locations);
         int robotCount = createRobots(warehouse, chargingSlots, request.robotCount());
         createScenarioPresets(warehouse, robotCount);
 
         int skipped = request.map().nodes().size() - nodes.size();
 
-        log.info("[창고 가져오기] {} (id={}) 노드 {}, 간선 {}, 랙 {}, 충전소 {}, 로봇 {} (제외 {})",
+        log.info("[창고 가져오기] {} (id={}) 노드 {}, 간선 {}, 랙 {}, 충전소 {}, 로봇 {}, 초기 재고 {}곳 (제외 {})",
                 warehouse.getName(), warehouse.getId(),
-                nodes.size(), edgeCount, racks.size(), chargingSlots.size(), robotCount, skipped);
+                nodes.size(), edgeCount, racks.size(), chargingSlots.size(),
+                robotCount, stockedCount, skipped);
 
         return new WarehouseImportResponse(
                 warehouse.getId(),
@@ -426,7 +452,7 @@ public class WarehouseImportService {
     }
 
     /** 랙마다 보관 자리를 하나씩 만든다. 재고는 여기에 붙는다. */
-    private void createStorageLocations(Warehouse warehouse, List<WarehouseNode> racks) {
+    private List<StorageLocation> createStorageLocations(Warehouse warehouse, List<WarehouseNode> racks) {
         LocalDateTime now = LocalDateTime.now();
         List<StorageLocation> locations = new ArrayList<>();
 
@@ -442,7 +468,53 @@ public class WarehouseImportService {
             locations.add(location);
         }
 
-        storageLocationRepository.saveAll(locations);
+        return storageLocationRepository.saveAll(locations);
+    }
+
+    /**
+     * 앞쪽 랙 몇 곳에 초기 재고를 넣는다.
+     *
+     * <p>출고 작업은 재고가 있는 랙에서만 만들어진다
+     * ({@code ScenarioTaskPlanner.planOutbound}).
+     * 재고가 하나도 없으면 출고 30건을 요청해도 0건이 나오고
+     * 입고 작업만 남는다. 그래서 창고를 만들 때 씨앗 재고를 같이 넣는다.
+     *
+     * <p>기본 창고 3개에 {@code V05_inventory.sql} 이 넣는 값과 같은 규칙이다.
+     * 랙 10곳에 품목을 돌아가며 50개씩.
+     */
+    private int createInitialInventory(Warehouse warehouse, List<StorageLocation> locations) {
+        List<Long> productIds = productRepository.findAllByOrderByProductCodeAsc()
+                .stream()
+                .map(Product::getId)
+                .toList();
+
+        if (productIds.isEmpty() || locations.isEmpty()) {
+            log.warn("[창고 가져오기] 초기 재고 생략 - 품목 {}종, 보관위치 {}곳",
+                    productIds.size(), locations.size());
+            return 0;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        int count = Math.min(INITIAL_STOCK_LOCATIONS, locations.size());
+
+        List<WarehouseItem> items = new ArrayList<>();
+
+        for (int index = 0; index < count; index++) {
+            StorageLocation location = locations.get(index);
+
+            items.add(WarehouseItem.create(
+                    warehouse,
+                    location,
+                    location.getNode(),
+                    productIds.get(index % productIds.size()),
+                    null,
+                    now,
+                    INITIAL_STOCK_QUANTITY
+            ));
+        }
+
+        warehouseItemRepository.saveAll(items);
+        return items.size();
     }
 
     /** 로봇은 충전 슬롯에서 시작한다. */
