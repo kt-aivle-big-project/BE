@@ -64,7 +64,15 @@ public record WarehouseImportRequest(
             Double y,
 
             /** 랙 접근 노드가 가리키는 랙 코드 */
-            String rack_id
+            String rack_id,
+            String handoff_id,
+            String station_id,
+            String buffer_id,
+            String resource_id,
+            String side,
+            Boolean service_only,
+            Boolean transit_allowed,
+            String adjacent_route_node
     ) {}
 
     /**
@@ -78,6 +86,10 @@ public record WarehouseImportRequest(
             String id,
             @NotBlank String source,
             @NotBlank String target,
-            Double distance_m
+            String type,
+            Double distance_m,
+            Double speed_limit_mps,
+            Long nominal_travel_time_ms,
+            Double cost
     ) {}
 }

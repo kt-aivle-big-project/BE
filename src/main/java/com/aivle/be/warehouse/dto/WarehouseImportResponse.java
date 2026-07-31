@@ -8,6 +8,7 @@ package com.aivle.be.warehouse.dto;
  */
 public record WarehouseImportResponse(
         Long warehouseId,
+        String aiWarehouseId,
         String name,
 
         int nodeCount,

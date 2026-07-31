@@ -4,6 +4,7 @@ import com.aivle.be.chargingstation.entity.ChargingStation;
 import com.aivle.be.chargingstation.repository.ChargingStationRepository;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.graph.service.AiRouteGraphSyncService;
 import com.aivle.be.product.entity.Product;
 import com.aivle.be.product.repository.ProductRepository;
 import com.aivle.be.robot.entity.Robot;
@@ -134,6 +135,7 @@ public class WarehouseImportService {
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
     private final WarehouseItemRepository warehouseItemRepository;
+    private final AiRouteGraphSyncService aiRouteGraphSyncService;
 
     @Transactional
     public WarehouseImportResponse importWarehouse(WarehouseImportRequest request, Long loginUserId) {
@@ -180,6 +182,10 @@ public class WarehouseImportService {
         createScenarioPresets(warehouse, robotCount);
 
         int skipped = request.map().nodes().size() - nodes.size();
+        String aiWarehouseId = aiRouteGraphSyncService.sync(
+                warehouse.getId(),
+                request.map()
+        );
 
         log.info("[창고 가져오기] {} (id={}) 노드 {}, 간선 {}, 랙 {}, 충전소 {}, 로봇 {}, 초기 재고 {}곳 (제외 {})",
                 warehouse.getName(), warehouse.getId(),
@@ -188,6 +194,7 @@ public class WarehouseImportService {
 
         return new WarehouseImportResponse(
                 warehouse.getId(),
+                aiWarehouseId,
                 warehouse.getName(),
                 nodes.size(),
                 edgeCount,
