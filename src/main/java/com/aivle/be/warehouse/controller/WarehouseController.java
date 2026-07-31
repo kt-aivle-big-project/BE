@@ -6,12 +6,17 @@ import com.aivle.be.warehouse.service.WarehouseLayoutService;
 import com.aivle.be.warehouse.dto.WarehouseUpdateRequest;
 import com.aivle.be.warehouse.dto.WarehouseCreateRequest;
 import com.aivle.be.warehouse.dto.WarehouseGraphResponse;
+import com.aivle.be.warehouse.dto.WarehouseImportRequest;
+import com.aivle.be.warehouse.dto.WarehouseImportResponse;
+import com.aivle.be.warehouse.service.WarehouseImportService;
 import com.aivle.be.warehouse.dto.WarehouseResponse;
 import com.aivle.be.warehouse.service.WarehouseGraphService;
 import com.aivle.be.warehouse.service.WarehouseService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -22,6 +27,7 @@ public class WarehouseController {
     private final WarehouseService warehouseService;
     private final WarehouseLayoutService warehouseLayoutService;
     private final WarehouseGraphService warehouseGraphService;
+    private final WarehouseImportService warehouseImportService;
 
     /**
      * 창고 그래프(맵) 전체를 내려준다.
@@ -46,6 +52,40 @@ public class WarehouseController {
                 .status(HttpStatus.CREATED)
                 .body(response);
     }
+
+    /**
+     * 지도 JSON 으로 창고를 만든다.
+     *
+     * <p>일반 생성({@code POST /api/warehouses})은 이름·크기만 저장해
+     * 노드가 없는 빈 창고가 된다. 시뮬레이션을 돌리려면 지도가 필요하므로
+     * 화면에서 창고를 추가할 때는 이 엔드포인트를 쓴다.
+     *
+     * <p>노드·간선뿐 아니라 랙·충전소·보관위치·로봇·시나리오까지 함께 만들어진다.
+     */
+    @PostMapping("/import")
+    public ResponseEntity<WarehouseImportResponse> importWarehouse(
+            @Valid @RequestBody WarehouseImportRequest request,
+            @AuthenticationPrincipal String userId
+    ) {
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(warehouseImportService.importWarehouse(request, parseUserId(userId)));
+    }
+
+    /**
+     * 인증 정보에서 사용자 ID 를 꺼낸다. 없으면 null 로 두고 요청 값을 쓴다.
+     */
+    private Long parseUserId(String principal) {
+        if (principal == null || principal.isBlank()) {
+            return null;
+        }
+
+        try {
+            return Long.valueOf(principal);
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
     @GetMapping("/{warehouseId}")
     public ResponseEntity<WarehouseResponse> getWarehouse(
             @PathVariable Long warehouseId
@@ -54,11 +94,17 @@ public class WarehouseController {
 
         return ResponseEntity.ok(response);
     }
+    /**
+     * 볼 수 있는 창고 목록.
+     * 공용 창고와 본인이 만든 창고만 나온다.
+     */
     @GetMapping
-    public ResponseEntity<List<WarehouseResponse>> getWarehouses() {
-        List<WarehouseResponse> responses = warehouseService.getWarehouses();
-
-        return ResponseEntity.ok(responses);
+    public ResponseEntity<List<WarehouseResponse>> getWarehouses(
+            @AuthenticationPrincipal String userId
+    ) {
+        return ResponseEntity.ok(
+                warehouseService.getWarehouses(parseUserId(userId))
+        );
     }
     @PatchMapping("/{warehouseId}")
     public ResponseEntity<WarehouseResponse> updateWarehouse(

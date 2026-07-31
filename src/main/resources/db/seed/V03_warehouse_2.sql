@@ -5,8 +5,8 @@
 -- 지도를 바꾸려면 JSON 을 고치고 스크립트를 다시 돌리세요.
 
 -- 창고
-INSERT INTO warehouse_layout (id, name, width, height, user_id)
-VALUES (2, '대전 물류센터 B (순환형)', 19, 12, 1)
+INSERT INTO warehouse_layout (id, name, width, height, user_id, location, description, status, is_shared, created_at, updated_at)
+VALUES (2, '대전 물류센터 B (순환형)', 19, 12, 1, '대전광역시 유성구', '자동창고 노드-엣지 구조 - 순환형 창고 맵', 'ACTIVE', true, NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
 
 -- 구역 (노드 좌표에서 범위를 계산)

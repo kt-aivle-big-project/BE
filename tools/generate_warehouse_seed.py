@@ -67,9 +67,16 @@ def parse_args():
     parser.add_argument("--json", required=True, help="창고 지도 JSON 경로")
     parser.add_argument("--warehouse-id", type=int, required=True)
     parser.add_argument("--name", required=True, help="창고 이름")
+    parser.add_argument("--location", default="대전광역시 유성구", help="소재지")
+    parser.add_argument("--description", default="", help="설명")
     parser.add_argument("--out", required=True, help="출력 SQL 경로")
     parser.add_argument("--user-id", type=int, default=1, help="창고 소유자")
     parser.add_argument("--robots", type=int, default=6, help="로봇 대수")
+    parser.add_argument(
+        "--shared",
+        action="store_true",
+        help="공용 창고로 표시한다. 모두에게 보이고 수정·삭제할 수 없다.",
+    )
     parser.add_argument(
         "--mode",
         choices=["insert", "reset"],
@@ -265,9 +272,14 @@ def build_sql(args, graph, nodes, edges) -> str:
 
     # 창고
     add("-- 창고")
-    add("INSERT INTO warehouse_layout (id, name, width, height, user_id)")
+    add("INSERT INTO warehouse_layout "
+        "(id, name, width, height, user_id, location, description, status, "
+        "is_shared, created_at, updated_at)")
     add(f"VALUES ({wid}, {sql_literal(args.name)}, "
-        f"{round(max(xs) + 1)}, {round(max(ys) + 1)}, {args.user_id})")
+        f"{round(max(xs) + 1)}, {round(max(ys) + 1)}, {args.user_id}, "
+        f"{sql_literal(args.location)}, "
+        f"{sql_literal(args.description or graph.get('title', ''))}, "
+        f"'ACTIVE', {str(args.shared).lower()}, NOW(), NOW())")
     add("ON CONFLICT (id) DO UPDATE SET name = excluded.name, "
         "width = excluded.width, height = excluded.height;"
         if args.mode == "reset" else "ON CONFLICT (id) DO NOTHING;")
