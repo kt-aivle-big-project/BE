@@ -30,4 +30,22 @@ public class LaroPlanningController {
                 )
         );
     }
+
+    @PostMapping(
+            "/simulation-runs/{simulationRunId}"
+                    + "/warehouses/{warehouseId}/missions/plan"
+    )
+    public ResponseEntity<LaroPlanResponse> createAndInstallPlan(
+            @PathVariable Long simulationRunId,
+            @PathVariable String warehouseId,
+            @RequestBody LaroPlanRequest request
+    ) {
+        return ResponseEntity.ok(
+                laroPlanningService.createAndInstallPlan(
+                        simulationRunId,
+                        warehouseId,
+                        request
+                )
+        );
+    }
 }

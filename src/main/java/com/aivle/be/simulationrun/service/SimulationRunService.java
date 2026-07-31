@@ -192,10 +192,8 @@ public class SimulationRunService {
                     messagingTemplate.convertAndSend(robotTopic(simulationRunId), RobotStateResponse.from(state));
                 });
 
-        // 대기 중인 작업을 로봇에게 배정하고 이동 계획을 만든다.
-        // 이후 스케줄러가 계획을 한 단계씩 재생한다.
-        simulationPlaybackService.buildPlan(simulationRunId, robots);
-
+        // 시작 시에는 참여 로봇의 초기 상태만 준비한다.
+        // 이동은 검증된 LARO Plan이 설치된 뒤 스케줄러가 재생한다.
         return broadcastRun(run);
     }
 

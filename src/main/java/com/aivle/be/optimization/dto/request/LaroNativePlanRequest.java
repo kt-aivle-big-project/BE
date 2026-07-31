@@ -8,6 +8,8 @@ import java.util.Map;
 public record LaroNativePlanRequest(
         @JsonProperty("warehouse_id")
         String warehouseId,
+        @JsonProperty("simulation_run_id")
+        Long simulationRunId,
         @JsonProperty("simulation_id")
         String simulationId,
         @JsonProperty("optimization_backend")
@@ -36,6 +38,14 @@ public record LaroNativePlanRequest(
             String warehouseId,
             LaroPlanRequest request
     ) {
+        return from(warehouseId, null, request);
+    }
+
+    public static LaroNativePlanRequest from(
+            String warehouseId,
+            Long simulationRunId,
+            LaroPlanRequest request
+    ) {
         List<EventInput> events = request.events() == null
                 ? List.of()
                 : request.events().stream()
@@ -46,14 +56,13 @@ public record LaroNativePlanRequest(
                         event.robotId(),
                         event.edgeId(),
                         event.nodeId(),
-                        event.payload() == null
-                                ? Map.of()
-                                : event.payload()
+                        event.payload() == null ? Map.of() : event.payload()
                 ))
                 .toList();
 
         return new LaroNativePlanRequest(
                 warehouseId,
+                simulationRunId,
                 request.simulationId(),
                 request.optimizationBackend(),
                 events,

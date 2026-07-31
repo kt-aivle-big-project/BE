@@ -4,6 +4,7 @@ import com.aivle.be.optimization.client.LaroPlanningClient;
 import com.aivle.be.optimization.dto.request.LaroNativePlanRequest;
 import com.aivle.be.optimization.dto.request.LaroPlanRequest;
 import com.aivle.be.optimization.dto.response.LaroPlanResponse;
+import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 public class LaroPlanningService {
 
     private final LaroPlanningClient laroPlanningClient;
+    private final SimulationPlaybackService simulationPlaybackService;
 
     public LaroPlanResponse createPlan(
             String warehouseId,
@@ -24,5 +26,25 @@ public class LaroPlanningService {
                 warehouseId,
                 nativeRequest
         );
+    }
+
+    public LaroPlanResponse createAndInstallPlan(
+            Long simulationRunId,
+            String warehouseId,
+            LaroPlanRequest request
+    ) {
+        LaroPlanResponse response = laroPlanningClient.createPlan(
+                warehouseId,
+                LaroNativePlanRequest.from(
+                        warehouseId,
+                        simulationRunId,
+                        request
+                )
+        );
+        simulationPlaybackService.installLaroPlan(
+                simulationRunId,
+                response
+        );
+        return response;
     }
 }

@@ -1,24 +1,15 @@
 package com.aivle.be.simulationrun.playback;
 
-import com.aivle.be.chargingstation.entity.ChargingStation;
-import com.aivle.be.chargingstation.repository.ChargingStationRepository;
+import com.aivle.be.optimization.dto.response.LaroPlanResponse;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.controller.response.RobotStateResponse;
 import com.aivle.be.robotstate.domain.RobotState;
 import com.aivle.be.robotstate.domain.RobotStatus;
-import com.aivle.be.scenario.entity.Scenario;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
-import com.aivle.be.task.controller.response.TaskResponse;
-import com.aivle.be.task.entity.Task;
-import com.aivle.be.task.entity.TaskStatus;
-import com.aivle.be.task.entity.TaskType;
-import com.aivle.be.task.repository.TaskRepository;
-import com.aivle.be.task.service.TaskService;
-import com.aivle.be.warehousenode.domain.NodeType;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import lombok.RequiredArgsConstructor;
@@ -29,614 +20,322 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.LinkedHashMap;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-/**
- * 시뮬레이션 재생 엔진 (시간 기반).
- *
- * 내부 시계를 두고, 작업은 지정된 발생 시각(releaseAtMillis)에 투입된다.
- * 유휴 로봇이 대기 중인 작업을 집어가고, 이동/집품/적재에 각각 소요 시간이 걸린다.
- *
- * 지금은 백엔드가 BFS로 경로를 계산하지만,
- * cuOpt 연동 후에는 AI가 만든 경로를 그대로 사용하도록 교체하면 된다.
- */
 @Service
 @RequiredArgsConstructor
 public class SimulationPlaybackService {
 
-    private static final Logger log = LoggerFactory.getLogger(SimulationPlaybackService.class);
-
+    private static final Logger log =
+            LoggerFactory.getLogger(SimulationPlaybackService.class);
     private static final String RUN_TOPIC = "/topic/simulation-runs";
-    private static final String TASK_TOPIC = "/topic/tasks";
-
-    // 한 tick 에서 로봇 한 대가 처리할 수 있는 최대 동작 수.
-    // 배속이 높거나 동작 시간이 짧을 때 밀리지 않게 하되,
-    // 예기치 못한 무한 루프는 막는다.
-    private static final int MAX_STEPS_PER_TICK = 50;
-
-    // 계획 대상 작업 상태
-    private static final List<TaskStatus> PLANNABLE_STATUSES =
-            List.of(TaskStatus.PENDING, TaskStatus.ASSIGNED);
 
     private final SimulationRunRepository simulationRunRepository;
     private final SimulationRunStateStore simulationRunStateStore;
-    private final TaskRepository taskRepository;
     private final RobotRepository robotRepository;
-    private final ChargingStationRepository chargingStationRepository;
     private final WarehouseNodeRepository warehouseNodeRepository;
-    private final TaskService taskService;
-    private final WarehousePathFinder pathFinder;
     private final SimpMessagingTemplate messagingTemplate;
 
-    // 진행 중인 재생 (simulationRunId -> 상태)
-    private final Map<Long, PlaybackContext> contexts = new ConcurrentHashMap<>();
+    private final Map<Long, LaroPlaybackContext> contexts =
+            new ConcurrentHashMap<>();
+    private final Map<Long, String> nodeCodeCache =
+            new ConcurrentHashMap<>();
 
-    // 노드 코드 캐시 (nodeId -> nodeCode)
-    private final Map<Long, String> nodeCodeCache = new ConcurrentHashMap<>();
-
-    /* =========================================================
-       계획 수립
-    ========================================================= */
-
-    /**
-     * 시뮬레이션 시작 시 호출.
-     * 작업을 발생 시각 순으로 예약하고 로봇 실행 상태를 초기화한다.
-     */
-    @Transactional
-    public void buildPlan(Long simulationRunId, List<Robot> robots) {
-        SimulationRun run = simulationRunRepository.findById(simulationRunId).orElse(null);
-        if (run == null || robots.isEmpty()) {
-            return;
+    @Transactional(readOnly = true)
+    public void installLaroPlan(
+            Long simulationRunId,
+            LaroPlanResponse response
+    ) {
+        SimulationRun run = simulationRunRepository.findById(simulationRunId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Simulation run not found: " + simulationRunId
+                ));
+        if (run.getStatus() != SimulationRunStatus.RUNNING
+                && run.getStatus() != SimulationRunStatus.PAUSED) {
+            throw new IllegalStateException(
+                    "LARO plan can only be installed on a running or paused simulation"
+            );
+        }
+        if (response == null || !response.isValidated()
+                || response.plan().robots() == null
+                || response.plan().robots().isEmpty()) {
+            throw new IllegalArgumentException("Validated LARO plan is required");
         }
 
         Long warehouseId = run.getWarehouse().getId();
+        Map<Long, Robot> robotsById = robotRepository
+                .findAllByWarehouse_Id(warehouseId)
+                .stream()
+                .collect(Collectors.toMap(Robot::getId, robot -> robot));
+        Map<String, Long> robotIds = new HashMap<>();
+        Map<Long, RobotRuntime> robotRuntimes = new HashMap<>();
 
-        List<Task> tasks = taskRepository
-                .findAllBySimulationRun_IdAndStatusInOrderByRequestedAtAsc(
-                        simulationRunId, PLANNABLE_STATUSES);
-
-        if (tasks.isEmpty()) {
-            log.info("[재생] runId={} 실행할 작업이 없습니다.", simulationRunId);
-            return;
+        for (LaroPlanResponse.RobotPlan robotPlan : response.plan().robots()) {
+            Long robotId = parseBeRobotId(robotPlan.robotId());
+            Robot robot = robotsById.get(robotId);
+            if (robot == null) {
+                throw new IllegalArgumentException(
+                        "LARO robot does not exist in BE warehouse: "
+                                + robotPlan.robotId()
+                );
+            }
+            robotIds.put(robotPlan.robotId(), robotId);
+            int battery = simulationRunStateStore
+                    .findByRobotId(simulationRunId, robotId)
+                    .map(RobotState::batteryLevel)
+                    .orElse(robot.getBattery());
+            robotRuntimes.put(
+                    robotId,
+                    new RobotRuntime(
+                            robotId,
+                            robot.getNodeId(),
+                            battery,
+                            robot.getRobotSpec().getBaseBatteryRate(),
+                            robot.getRobotSpec().getWorkBatteryRate()
+                    )
+            );
         }
 
+        Map<String, Long> nodeIds = warehouseNodeRepository
+                .findAllByWarehouse_Id(warehouseId)
+                .stream()
+                .filter(node -> node.getNodeCode() != null)
+                .collect(Collectors.toMap(
+                        WarehouseNode::getNodeCode,
+                        WarehouseNode::getId
+                ));
+        addLaroNodeAliases(response.plan().robots(), nodeIds);
+        validateLaroNodes(response.plan().robots(), nodeIds);
         cacheNodeCodes(warehouseId);
 
-        // 발생 시각 순으로 예약
-        List<PlaybackContext.ScheduledTask> scheduled = tasks.stream()
-                .map(task -> new PlaybackContext.ScheduledTask(
-                        task.getId(),
-                        task.effectiveReleaseAtSeconds() * 1000L))
-                .sorted(Comparator.comparingLong(PlaybackContext.ScheduledTask::releaseAtMillis))
-                .toList();
-
-        List<RobotRuntime> runtimes = robots.stream()
-                .map(robot -> new RobotRuntime(
-                        robot.getId(),
-                        robot.getNodeId(),
-                        robot.getBattery(),
-                        robot.getRobotSpec().getBaseBatteryRate(),
-                        robot.getRobotSpec().getWorkBatteryRate()
-                ))
-                .toList();
-
-        Scenario scenario = run.getScenario();
-        double moveSeconds = scenario == null || scenario.getMoveSecondsPerNode() == null
-                ? 2.0 : scenario.getMoveSecondsPerNode();
-        double pickingSeconds = scenario == null || scenario.getPickingSeconds() == null
-                ? 5.0 : scenario.getPickingSeconds();
-        double loadingSeconds = scenario == null || scenario.getLoadingSeconds() == null
-                ? 5.0 : scenario.getLoadingSeconds();
-        Map<Long, Double> chargingPowerByNode = new LinkedHashMap<>();
-        chargingStationRepository.findAllByWarehouse_Id(warehouseId).stream()
-                .filter(station ->
-                        station.getStatus() == ChargingStation.ChargingStationStatus.AVAILABLE
-                                && station.getChargingPower() != null
-                                && station.getChargingPower() > 0)
-                .forEach(station ->
-                        chargingPowerByNode.put(
-                                station.getNode().getId(),
-                                station.getChargingPower()
-                        ));
-
-        double speed = run.getSimulationSpeed() == null ? 1.0 : run.getSimulationSpeed();
-
-        Map<Long, Set<Long>> adjacency = pathFinder.loadAdjacency(warehouseId);
-
-        PlaybackContext context = new PlaybackContext(
+        List<LaroPlaybackContext.ScheduledStep> steps =
+                LaroPlaybackContext.flatten(response.plan().robots());
+        double speed = run.getSimulationSpeed() == null
+                ? 1.0
+                : run.getSimulationSpeed();
+        contexts.put(
                 simulationRunId,
-                warehouseId,
-                adjacency,
-                buildAccessNodes(warehouseId, adjacency),
-                new ArrayList<>(runtimes),
-                scheduled,
-                speed,
-                moveSeconds,
-                pickingSeconds,
-                loadingSeconds,
-                chargingPowerByNode
+                new LaroPlaybackContext(
+                        simulationRunId,
+                        warehouseId,
+                        response.plan().planId(),
+                        steps,
+                        robotIds,
+                        nodeIds,
+                        robotRuntimes,
+                        speed
+                )
         );
 
-        contexts.put(simulationRunId, context);
-
-        log.info("[재생] runId={} 시작 (로봇 {}대, 작업 {}건, 배속 {}x, 이동 {}초/칸)",
-                simulationRunId, runtimes.size(), scheduled.size(), speed, moveSeconds);
+        log.info(
+                "[LARO playback] runId={} planId={} robots={} steps={}",
+                simulationRunId,
+                response.plan().planId(),
+                response.plan().robots().size(),
+                steps.size()
+        );
     }
 
-    /* =========================================================
-       재생 진행
-    ========================================================= */
-
-    /**
-     * 스케줄러가 주기적으로 호출한다.
-     *
-     * @param tickMillis 실제 경과 시간(ms)
-     */
     @Transactional
     public void tick(long tickMillis) {
-        if (contexts.isEmpty()) {
-            return;
-        }
-
         for (Long runId : List.copyOf(contexts.keySet())) {
-            PlaybackContext context = contexts.get(runId);
+            LaroPlaybackContext context = contexts.get(runId);
             if (context == null) {
                 continue;
             }
 
             SimulationRun run = simulationRunRepository.findById(runId).orElse(null);
-
             if (run == null || isTerminated(run.getStatus())) {
                 contexts.remove(runId);
                 continue;
             }
-
-            // 일시정지 중에는 시계도 멈춘다
             if (run.getStatus() != SimulationRunStatus.RUNNING) {
                 continue;
             }
 
-            advance(context, tickMillis);
+            context.advanceClock(tickMillis);
+            for (LaroPlaybackContext.StepEvent event : context.pollDueEvents()) {
+                publishEvent(context, event);
+            }
 
             if (context.isFinished()) {
                 contexts.remove(runId);
-                log.info("[재생] runId={} 모든 작업 수행 완료 (시뮬 시각 {}초)",
-                        runId, context.clockSeconds());
+                log.info(
+                        "[LARO playback] runId={} planId={} completed at {}ms",
+                        runId,
+                        context.getPlanId(),
+                        context.getClockMillis()
+                );
             }
         }
     }
 
-    private void advance(PlaybackContext context, long tickMillis) {
-        long simulatedMillis = context.advanceClock(tickMillis);
-
-        // 1) 발생 시각이 된 작업 투입
-        for (Long taskId : context.releaseDueTasks()) {
-            log.info("[재생] 시뮬 {}초 - 작업 {} 발생",
-                    context.clockSeconds(), taskId);
-        }
-
-        // 2) 로봇별 진행
-        for (RobotRuntime robot : context.getRobots()) {
-            step(context, robot, simulatedMillis);
-        }
-    }
-
-    /**
-     * 로봇 한 대를 현재 시각까지 진행시킨다.
-     *
-     * 한 tick 사이에 여러 동작이 끝날 수 있으므로
-     * (예: tick 500ms 인데 이동 1칸이 200ms) 시계가 지난 동작은 모두 소진한다.
-     * 그렇지 않으면 tick 마다 동작 하나씩만 처리되어 계획보다 점점 뒤처진다.
-     */
-    private void step(
-            PlaybackContext context,
-            RobotRuntime robot,
-            long simulatedMillis
+    private void publishEvent(
+            LaroPlaybackContext context,
+            LaroPlaybackContext.StepEvent event
     ) {
-        if (robot.getPhase() == RobotRuntime.Phase.CHARGING) {
-            charge(context, robot, simulatedMillis);
+        LaroPlaybackContext.ScheduledStep scheduled = event.scheduledStep();
+        LaroPlanResponse.PlanStep step = scheduled.step();
+        Long robotId = context.getRobotIds().get(scheduled.robotExternalId());
+        if (robotId == null) {
             return;
         }
 
-        // 무한 루프 방지 (동작이 시간을 전혀 소비하지 않는 경우 대비)
-        int guard = 0;
-
-        while (context.getClockMillis() >= robot.getBusyUntilMillis()
-                && robot.getPhase() != RobotRuntime.Phase.CHARGING
-                && guard++ < MAX_STEPS_PER_TICK) {
-
-            long busyBefore = robot.getBusyUntilMillis();
-            RobotRuntime.Phase phaseBefore = robot.getPhase();
-
-            try {
-                switch (robot.getPhase()) {
-                    case IDLE -> tryStartNextTask(context, robot);
-                    case MOVING_TO_START -> moveOrArrive(context, robot, true);
-                    case PICKING -> beginMoveToEnd(context, robot);
-                    case MOVING_TO_END -> moveOrArrive(context, robot, false);
-                    case DROPPING -> finishTask(context, robot);
-                    case CHARGING -> charge(context, robot, simulatedMillis);
-                }
-            } catch (Exception exception) {
-                log.warn("[재생] 로봇 {} 처리 실패: {}",
-                        robot.getRobotId(), exception.getMessage());
-                context.releaseChargingNode(robot.getChargingNodeId());
-                robot.clearChargingStation();
-                robot.setPhase(RobotRuntime.Phase.IDLE);
-                robot.setCurrentTaskId(null);
-                return;
-            }
-
-            // 아무 진전이 없으면(대기 중인 작업이 없는 유휴 상태 등) 이번 tick 은 종료
-            if (robot.getBusyUntilMillis() == busyBefore
-                    && robot.getPhase() == phaseBefore) {
-                return;
-            }
-        }
+        RobotState state = "MOVE".equals(step.stepType())
+                ? moveState(context, robotId, step, event.start())
+                : serviceState(context, robotId, step, event.start());
+        publish(context.getSimulationRunId(), state);
     }
 
-    /** 유휴 로봇이 대기 중인 작업을 집어간다. */
-    private void tryStartNextTask(PlaybackContext context, RobotRuntime robot) {
-        if (robot.getStatus() == RobotStatus.ERROR) {
-            return;
-        }
-
-        if (!context.hasReadyTask()) {
-            return;
-        }
-
-        Long taskId = context.pollReadyTask();
-        Task task = taskRepository.findById(taskId).orElse(null);
-        if (task == null) {
-            return;
-        }
-
-        if (task.getTaskType() == TaskType.CHARGE) {
-            Long chargingNodeId = task.getEndNode().getId();
-            Double chargingPower = context.getChargingPowerByNode().get(chargingNodeId);
-
-            if (chargingPower == null) {
-                if (task.getStatus() == TaskStatus.PENDING) {
-                    task.assignRobot(robotRepository.getReferenceById(robot.getRobotId()));
-                }
-                task.fail();
-                broadcastTask(task);
-                log.warn("[재생] AI 충전 작업 {} 거부: 노드 {}는 사용 가능한 충전소가 아닙니다.",
-                        taskId, chargingNodeId);
-                return;
-            }
-
-            if (!context.reserveChargingNode(chargingNodeId)) {
-                if (task.getStatus() == TaskStatus.PENDING) {
-                    task.assignRobot(robotRepository.getReferenceById(robot.getRobotId()));
-                }
-                task.fail();
-                broadcastTask(task);
-                log.warn("[재생] AI 충전 작업 {} 거부: 충전소 노드 {}가 이미 점유 중입니다.",
-                        taskId, chargingNodeId);
-                return;
-            }
-
-            robot.assignChargingStation(chargingNodeId, chargingPower);
-        }
-
-        // DB에 배정 반영
-        if (task.getStatus() == TaskStatus.PENDING) {
-            task.assignRobot(robotRepository.getReferenceById(robot.getRobotId()));
-            broadcastTask(task);
-        }
-
-        // 출발지가 랙이면 랙 앞 통로까지만 이동한다
-        List<Long> path = pathToWorkPosition(
-                context, robot, task.getStartNode().getId());
-
-        robot.setCurrentTaskId(taskId);
-        robot.setPath(path);
-        robot.setPhase(RobotRuntime.Phase.MOVING_TO_START);
-        robot.setStatus(RobotStatus.ASSIGNED);
-
-        publish(context, robot);
-
-        log.info("[재생] 시뮬 {}초 - 로봇 {} 이 작업 {} 시작 (경로 {}칸)",
-                context.clockSeconds(), robot.getRobotId(), taskId, path.size());
-    }
-
-    private void charge(
-            PlaybackContext context,
-            RobotRuntime robot,
-            long simulatedMillis
+    private RobotState moveState(
+            LaroPlaybackContext context,
+            Long robotId,
+            LaroPlanResponse.PlanStep step,
+            boolean start
     ) {
-        robot.charge(simulatedMillis);
-
-        if (robot.isFullyCharged()) {
-            Long taskId = robot.getCurrentTaskId();
-            if (taskId != null) {
-                try {
-                    taskService.completeTask(taskId);
-                } catch (Exception exception) {
-                    log.warn("[재생] 충전 작업 {} 완료 처리 실패: {}", taskId, exception.getMessage());
-                }
+        String externalCurrentCode = start
+                ? step.fromNode()
+                : step.toNode();
+        Long currentNodeId = context.getNodeIds().get(externalCurrentCode);
+        String currentNodeCode = nodeCodeCache.get(currentNodeId);
+        Long nextNodeId = start
+                ? context.getNodeIds().get(step.toNode())
+                : null;
+        String nextNodeCode = start
+                ? nodeCodeCache.get(nextNodeId)
+                : null;
+        double durationSeconds = Math.max(
+                0,
+                step.endAtMs() - step.startAtMs()
+        ) / 1000.0 / context.getSpeed();
+        RobotRuntime runtime = context.getRobotRuntimes().get(robotId);
+        if (start) {
+            if (!runtime.canMove()) {
+                return stationaryError(
+                        context,
+                        robotId,
+                        currentNodeId,
+                        currentNodeCode
+                );
             }
-            context.releaseChargingNode(robot.getChargingNodeId());
-            robot.clearChargingStation();
-            robot.setCurrentTaskId(null);
-            robot.setPhase(RobotRuntime.Phase.IDLE);
-            robot.setStatus(RobotStatus.IDLE);
+            runtime.consumeMoveBattery();
         }
 
-        publish(context, robot);
-    }
-
-    /** 경로를 한 칸 이동하거나, 도착했으면 다음 단계로 넘어간다. */
-    private void moveOrArrive(PlaybackContext context, RobotRuntime robot, boolean towardStart) {
-        if (robot.hasRemainingPath()) {
-            if (!robot.canMove()) {
-                failBatteryDepletedTask(context, robot);
-                return;
-            }
-
-            Long nextNode = robot.pollNextNode();
-
-            robot.moveTo(nextNode);
-            robot.setStatus(RobotStatus.MOVING);
-            robot.consumeMoveBattery();
-            robot.setBusyUntilMillis(
-                    context.getClockMillis() + context.getMoveMillisPerNode());
-
-            publish(context, robot);
-            return;
-        }
-
-        // 도착 - 더 이상 이동하지 않으므로 보간 정보를 지운다
-        robot.stopMoving();
-
-        if (towardStart) {
-            Task task = taskRepository.findById(robot.getCurrentTaskId()).orElse(null);
-            if (task != null && task.getTaskType() == TaskType.CHARGE) {
-                startTask(robot.getCurrentTaskId());
-                beginMoveToEnd(context, robot);
-                return;
-            }
-
-            robot.setPhase(RobotRuntime.Phase.PICKING);
-            robot.setStatus(RobotStatus.PICKING);
-            robot.consumeWorkBattery();
-            robot.setBusyUntilMillis(
-                    context.getClockMillis() + context.getPickingMillis());
-
-            startTask(robot.getCurrentTaskId());
-            publish(context, robot);
-        } else {
-            Task task = taskRepository.findById(robot.getCurrentTaskId()).orElse(null);
-            if (task != null && task.getTaskType() == TaskType.CHARGE) {
-                robot.setPhase(RobotRuntime.Phase.CHARGING);
-                robot.setStatus(RobotStatus.CHARGING);
-                publish(context, robot);
-                return;
-            }
-
-            RobotStatus dropStatus = task != null && task.getTaskType() == TaskType.INBOUND
-                    ? RobotStatus.PUTAWAY
-                    : RobotStatus.RELOCATION;
-
-            robot.setPhase(RobotRuntime.Phase.DROPPING);
-            robot.setStatus(dropStatus);
-            robot.consumeWorkBattery();
-            robot.setBusyUntilMillis(
-                    context.getClockMillis() + context.getLoadingMillis());
-
-            publish(context, robot);
-        }
-    }
-
-    private void failBatteryDepletedTask(PlaybackContext context, RobotRuntime robot) {
-        Long taskId = robot.getCurrentTaskId();
-        if (taskId != null) {
-            taskRepository.findById(taskId).ifPresent(task -> {
-                if (task.getStatus() == TaskStatus.ASSIGNED
-                        || task.getStatus() == TaskStatus.IN_PROGRESS) {
-                    task.fail();
-                    broadcastTask(task);
-                }
-            });
-        }
-
-        context.releaseChargingNode(robot.getChargingNodeId());
-        robot.clearChargingStation();
-        robot.setCurrentTaskId(null);
-        robot.setPhase(RobotRuntime.Phase.IDLE);
-        robot.setStatus(RobotStatus.ERROR);
-        robot.stopMoving();
-
-        publish(context, robot);
-        log.warn("[재생] 로봇 {} 배터리 방전으로 작업 {} 이동 실패",
-                robot.getRobotId(), taskId);
-    }
-
-    /** 집품이 끝나면 도착지로 향한다. */
-    private void beginMoveToEnd(PlaybackContext context, RobotRuntime robot) {
-        Task task = taskRepository.findById(robot.getCurrentTaskId()).orElse(null);
-        if (task == null) {
-            robot.setPhase(RobotRuntime.Phase.IDLE);
-            robot.setCurrentTaskId(null);
-            return;
-        }
-
-        // 도착지가 랙이면 랙 앞 통로까지만 이동한다
-        List<Long> path = pathToWorkPosition(
-                context, robot, task.getEndNode().getId());
-
-        robot.setPath(path);
-        robot.setPhase(RobotRuntime.Phase.MOVING_TO_END);
-
-        moveOrArrive(context, robot, false);
-    }
-
-    /** 적재가 끝나면 작업을 완료 처리하고 대기 상태로 돌아간다. */
-    private void finishTask(PlaybackContext context, RobotRuntime robot) {
-        Long taskId = robot.getCurrentTaskId();
-
-        if (taskId != null) {
-            try {
-                taskService.completeTask(taskId);
-                log.info("[재생] 시뮬 {}초 - 작업 {} 완료 (로봇 {})",
-                        context.clockSeconds(), taskId, robot.getRobotId());
-            } catch (Exception exception) {
-                log.warn("[재생] 작업 {} 완료 처리 실패: {}", taskId, exception.getMessage());
-            }
-        }
-
-        robot.setCurrentTaskId(null);
-        robot.setPhase(RobotRuntime.Phase.IDLE);
-        robot.setStatus(RobotStatus.IDLE);
-        robot.stopMoving();
-
-        publish(context, robot);
-    }
-
-    private void startTask(Long taskId) {
-        if (taskId == null) {
-            return;
-        }
-        taskRepository.findById(taskId).ifPresent(task -> {
-            if (task.getStatus() == TaskStatus.ASSIGNED) {
-                task.start();
-                broadcastTask(task);
-            }
-        });
-    }
-
-    /* =========================================================
-       상태 전송
-    ========================================================= */
-
-    /**
-     * 로봇 상태를 Redis에 저장하고 WebSocket으로 브로드캐스트한다.
-     *
-     * 이동 중이면 다음 노드와 도착까지 남은 시간을 함께 보낸다.
-     * 프론트는 이 값으로 두 노드 사이를 보간해 부드럽게 그린다.
-     */
-    private void publish(PlaybackContext context, RobotRuntime robot) {
-        Long nextNodeId = null;
-        String nextNodeCode = null;
-        Double arrivalInSeconds = null;
-
-        if (robot.getStatus() == RobotStatus.MOVING) {
-            // 현재 이동이 끝나기까지 남은 시간
-            long remainingMillis = robot.getBusyUntilMillis() - context.getClockMillis();
-
-            if (remainingMillis > 0) {
-                // 지금 향하고 있는 노드는 방금 진입한 currentNode 이므로,
-                // 화면에서는 "직전 노드 -> 현재 노드" 구간을 보간한다.
-                nextNodeId = robot.getCurrentNodeId();
-                nextNodeCode = nodeCodeCache.get(nextNodeId);
-                // 배속을 반영한 실제 경과 시간(초)으로 환산
-                arrivalInSeconds = remainingMillis / 1000.0 / context.getSpeed();
-            }
-        }
-
-        RobotState state = new RobotState(
-                robot.getRobotId(),
+        return new RobotState(
+                robotId,
                 context.getWarehouseId(),
-                robot.getPreviousNodeId() == null
-                        ? robot.getCurrentNodeId()
-                        : robot.getPreviousNodeId(),
-                nodeCodeCache.get(
-                        robot.getPreviousNodeId() == null
-                                ? robot.getCurrentNodeId()
-                                : robot.getPreviousNodeId()),
+                currentNodeId,
+                currentNodeCode,
                 nextNodeId,
                 nextNodeCode,
-                arrivalInSeconds,
-                robot.batteryPercent(),
-                robot.getStatus(),
-                robot.getCurrentTaskId(),
+                start ? durationSeconds : null,
+                runtime.batteryPercent(),
+                start ? RobotStatus.MOVING : RobotStatus.IDLE,
+                null,
                 LocalDateTime.now()
-        );
-
-        simulationRunStateStore.save(context.getSimulationRunId(), state);
-        messagingTemplate.convertAndSend(
-                robotTopic(context.getSimulationRunId()),
-                RobotStateResponse.from(state)
         );
     }
 
-    /* =========================================================
-       정리 / 유틸
-    ========================================================= */
+    private RobotState serviceState(
+            LaroPlaybackContext context,
+            Long robotId,
+            LaroPlanResponse.PlanStep step,
+            boolean start
+    ) {
+        Long nodeId = context.getNodeIds().get(step.nodeId());
+        String nodeCode = nodeCodeCache.get(nodeId);
+        RobotRuntime runtime = context.getRobotRuntimes().get(robotId);
+        if (start) {
+            runtime.consumeWorkBattery();
+        }
+
+        return RobotState.stationary(
+                robotId,
+                context.getWarehouseId(),
+                nodeId,
+                nodeCode,
+                runtime.batteryPercent(),
+                start
+                        ? serviceStatus(step.serviceKind())
+                        : RobotStatus.IDLE,
+                null,
+                LocalDateTime.now()
+        );
+    }
+
+    private RobotState stationaryError(
+            LaroPlaybackContext context,
+            Long robotId,
+            Long nodeId,
+            String nodeCode
+    ) {
+        return RobotState.stationary(
+                robotId,
+                context.getWarehouseId(),
+                nodeId,
+                nodeCode,
+                0,
+                RobotStatus.ERROR,
+                null,
+                LocalDateTime.now()
+        );
+    }
+
+    private RobotStatus serviceStatus(String serviceKind) {
+        if ("PICKUP".equals(serviceKind)) {
+            return RobotStatus.PICKING;
+        }
+        if ("RETURN".equals(serviceKind)) {
+            return RobotStatus.RELOCATION;
+        }
+        return RobotStatus.WORKING;
+    }
 
     public void clear(Long simulationRunId) {
         contexts.remove(simulationRunId);
     }
 
-    /**
-     * 로봇을 고장(ERROR) 상태로 만든다.
-     *
-     * 재생 엔진이 로봇 상태의 주인이므로, 외부에서 Redis를 직접 고치면
-     * 다음 tick 에 덮어써져 화면이 한 번 튄다. 반드시 이 메서드를 통해야 한다.
-     *
-     * ERROR 로봇은 tick 에서 건너뛰므로 더 이상 움직이지 않는다.
-     *
-     * @return 재생 중이어서 실제로 반영했으면 true
-     */
     public boolean markRobotError(Long simulationRunId, Long robotId) {
-        PlaybackContext context = contexts.get(simulationRunId);
-
+        LaroPlaybackContext context = contexts.get(simulationRunId);
         if (context == null || robotId == null) {
             return false;
         }
 
-        for (RobotRuntime robot : context.getRobots()) {
-            if (!robotId.equals(robot.getRobotId())) {
-                continue;
-            }
-
-            context.releaseChargingNode(robot.getChargingNodeId());
-            robot.clearChargingStation();
-            robot.setCurrentTaskId(null);
-            robot.setPhase(RobotRuntime.Phase.IDLE);
-            robot.setStatus(RobotStatus.ERROR);
-            robot.stopMoving();
-
-            publish(context, robot);
-
-            log.info("[재생] runId={} 로봇 {} 고장 처리", simulationRunId, robotId);
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * 재생 중인 시뮬레이션의 배속을 즉시 변경한다.
-     *
-     * 배속이 바뀌면 화면 보간에 쓰이는 "도착까지 남은 시간"도 달라지므로,
-     * 이동 중인 로봇의 상태를 다시 내보내 화면이 바로 반응하게 한다.
-     *
-     * @return 재생 중이어서 실제로 반영했으면 true
-     */
-    public boolean changeSpeed(Long simulationRunId, double newSpeed) {
-        PlaybackContext context = contexts.get(simulationRunId);
-
-        if (context == null) {
+        RobotState current = simulationRunStateStore
+                .findByRobotId(simulationRunId, robotId)
+                .orElse(null);
+        if (current == null) {
             return false;
         }
 
-        context.changeSpeed(newSpeed);
+        publish(
+                simulationRunId,
+                RobotState.stationary(
+                        robotId,
+                        context.getWarehouseId(),
+                        current.currentNodeId(),
+                        current.currentNodeCode(),
+                        current.batteryLevel(),
+                        RobotStatus.ERROR,
+                        current.currentTaskId(),
+                        LocalDateTime.now()
+                )
+        );
+        return true;
+    }
 
-        for (RobotRuntime robot : context.getRobots()) {
-            publish(context, robot);
+    public boolean changeSpeed(Long simulationRunId, double newSpeed) {
+        LaroPlaybackContext context = contexts.get(simulationRunId);
+        if (context == null) {
+            return false;
         }
-
-        log.info("[재생] runId={} 배속 변경 -> {}x", simulationRunId, newSpeed);
+        context.changeSpeed(newSpeed);
         return true;
     }
 
@@ -644,10 +343,120 @@ public class SimulationPlaybackService {
         return contexts.containsKey(simulationRunId);
     }
 
-    /** 현재 시뮬레이션 시각(ms). 진행 중이 아니면 0. */
     public long currentClockMillis(Long simulationRunId) {
-        PlaybackContext context = contexts.get(simulationRunId);
+        LaroPlaybackContext context = contexts.get(simulationRunId);
         return context == null ? 0 : context.getClockMillis();
+    }
+
+    private void publish(Long simulationRunId, RobotState state) {
+        simulationRunStateStore.save(simulationRunId, state);
+        messagingTemplate.convertAndSend(
+                robotTopic(simulationRunId),
+                RobotStateResponse.from(state)
+        );
+    }
+
+    private Long parseBeRobotId(String robotId) {
+        try {
+            return Long.valueOf(robotId);
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(
+                    "LARO plan must return the BE numeric robot ID: " + robotId,
+                    exception
+            );
+        }
+    }
+
+    private void validateLaroNodes(
+            List<LaroPlanResponse.RobotPlan> robotPlans,
+            Map<String, Long> nodeIds
+    ) {
+        for (LaroPlanResponse.RobotPlan robotPlan : robotPlans) {
+            requireNode(robotPlan.initialNode(), nodeIds);
+            for (LaroPlanResponse.PlanStep step : robotPlan.steps()) {
+                if ("MOVE".equals(step.stepType())) {
+                    requireNode(step.fromNode(), nodeIds);
+                    requireNode(step.toNode(), nodeIds);
+                } else {
+                    requireNode(step.nodeId(), nodeIds);
+                }
+            }
+        }
+    }
+
+    private void requireNode(
+            String nodeCode,
+            Map<String, Long> nodeIds
+    ) {
+        if (nodeCode == null || !nodeIds.containsKey(nodeCode)) {
+            throw new IllegalArgumentException(
+                    "Unknown LARO node: " + nodeCode
+            );
+        }
+    }
+
+    private void addLaroNodeAliases(
+            List<LaroPlanResponse.RobotPlan> robotPlans,
+            Map<String, Long> nodeIds
+    ) {
+        List<Map.Entry<String, Long>> outboundNodes = nodeIds.entrySet()
+                .stream()
+                .filter(entry -> entry.getKey().matches("O_[A-Z]"))
+                .sorted(Map.Entry.comparingByKey())
+                .toList();
+        Set<String> externalCodes = new HashSet<>();
+
+        for (LaroPlanResponse.RobotPlan robotPlan : robotPlans) {
+            externalCodes.add(robotPlan.initialNode());
+            for (LaroPlanResponse.PlanStep step : robotPlan.steps()) {
+                externalCodes.add(step.fromNode());
+                externalCodes.add(step.toNode());
+                externalCodes.add(step.nodeId());
+            }
+        }
+
+        for (String externalCode : externalCodes) {
+            if (externalCode == null || nodeIds.containsKey(externalCode)) {
+                continue;
+            }
+
+            String rackCode = externalCode.replaceFirst(
+                    "^(K\\d+_\\d+)_ACCESS_[A-Z]+$",
+                    "$1"
+            );
+            if (!rackCode.equals(externalCode)
+                    && nodeIds.containsKey(rackCode)) {
+                nodeIds.put(externalCode, nodeIds.get(rackCode));
+                continue;
+            }
+
+            if (externalCode.matches(
+                    "OUT_STATION_\\d+_ACCESS_[A-Z]+"
+            )) {
+                int stationNumber = Integer.parseInt(
+                        externalCode.replaceFirst(
+                                "^OUT_STATION_(\\d+)_.*$",
+                                "$1"
+                        )
+                );
+                if (stationNumber > 0
+                        && stationNumber <= outboundNodes.size()) {
+                    nodeIds.put(
+                            externalCode,
+                            outboundNodes.get(stationNumber - 1).getValue()
+                    );
+                }
+            }
+        }
+    }
+
+    private void cacheNodeCodes(Long warehouseId) {
+        for (WarehouseNode node :
+                warehouseNodeRepository.findAllByWarehouse_Id(warehouseId)) {
+            if (node.getNodeCode() != null) {
+                nodeCodeCache.put(node.getId(), node.getNodeCode());
+            }
+        }
     }
 
     private boolean isTerminated(SimulationRunStatus status) {
@@ -657,98 +466,7 @@ public class SimulationPlaybackService {
                 || status == SimulationRunStatus.CREATED;
     }
 
-    /**
-     * 랙 노드마다 "앞에 설 수 있는 통로 노드"를 찾아둔다.
-     *
-     * 로봇은 랙 안으로 들어가지 않고 인접한 통로에 서서 집품·적재한다.
-     * 랙 하나에 통로가 여러 개 붙어 있으면(위/아래 통로) 모두 후보로 둔다.
-     */
-    private Map<Long, List<Long>> buildAccessNodes(
-            Long warehouseId,
-            Map<Long, Set<Long>> adjacency
-    ) {
-        Set<Long> rackNodeIds = warehouseNodeRepository
-                .findAllByWarehouse_IdAndNodeType(warehouseId, NodeType.RACK_STORAGE)
-                .stream()
-                .map(WarehouseNode::getId)
-                .collect(Collectors.toSet());
-
-        Map<Long, List<Long>> accessNodes = new HashMap<>();
-
-        // 엣지는 방향이 있을 수 있으므로 양쪽 방향을 모두 훑어
-        // "랙과 맞닿은 통로 노드"를 모은다.
-        for (Map.Entry<Long, Set<Long>> entry : adjacency.entrySet()) {
-            Long from = entry.getKey();
-
-            for (Long to : entry.getValue()) {
-                if (rackNodeIds.contains(to) && !rackNodeIds.contains(from)) {
-                    accessNodes.computeIfAbsent(to, key -> new ArrayList<>()).add(from);
-                }
-                if (rackNodeIds.contains(from) && !rackNodeIds.contains(to)) {
-                    accessNodes.computeIfAbsent(from, key -> new ArrayList<>()).add(to);
-                }
-            }
-        }
-
-        return accessNodes;
-    }
-
-    /**
-     * 목적지까지의 경로를 만든다.
-     *
-     * 목적지가 랙이면 랙 안이 아니라 "앞 통로"까지만 간다.
-     * 통로가 여러 개면 더 가까운 쪽을 고른다.
-     */
-    private List<Long> pathToWorkPosition(
-            PlaybackContext context,
-            RobotRuntime robot,
-            Long targetNodeId
-    ) {
-        List<Long> candidates = context.getAccessNodes().get(targetNodeId);
-
-        // 랙이 아니면(입고구역·출고구역 등) 그 노드까지 그대로 간다
-        if (candidates == null || candidates.isEmpty()) {
-            return pathFinder.findPath(
-                    context.getAdjacency(), robot.getCurrentNodeId(), targetNodeId);
-        }
-
-        // 이미 작업 가능한 통로에 서 있으면 이동하지 않는다
-        if (candidates.contains(robot.getCurrentNodeId())) {
-            return List.of();
-        }
-
-        List<Long> shortest = null;
-
-        for (Long access : candidates) {
-            List<Long> path = pathFinder.findPath(
-                    context.getAdjacency(), robot.getCurrentNodeId(), access);
-
-            if (path.isEmpty()) {
-                continue;
-            }
-
-            if (shortest == null || path.size() < shortest.size()) {
-                shortest = path;
-            }
-        }
-
-        return shortest == null ? List.of() : shortest;
-    }
-
-    private void cacheNodeCodes(Long warehouseId) {
-        for (WarehouseNode node : warehouseNodeRepository.findAllByWarehouse_Id(warehouseId)) {
-            if (node.getNodeCode() != null) {
-                nodeCodeCache.put(node.getId(), node.getNodeCode());
-            }
-        }
-    }
-
-    private void broadcastTask(Task task) {
-        messagingTemplate.convertAndSend(TASK_TOPIC, new TaskResponse(task));
-    }
-
     private String robotTopic(Long simulationRunId) {
         return RUN_TOPIC + "/" + simulationRunId + "/robots";
     }
-
 }
