@@ -41,7 +41,7 @@ class LoginServiceTest {
         when(userRepository.findByEmail("user@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("Password123!", "encoded-password")).thenReturn(true);
         when(jwtTokenProvider.createAccessToken(user)).thenReturn("access-token");
-        when(jwtTokenProvider.getAccessTokenExpirationSeconds()).thenReturn(3600L);
+        when(jwtTokenProvider.getAccessTokenExpirationSeconds()).thenReturn(900L);
 
         LoginResponse response = authService.login(
                 new LoginRequest(" User@Example.com ", "Password123!")
@@ -49,7 +49,7 @@ class LoginServiceTest {
 
         assertThat(response.accessToken()).isEqualTo("access-token");
         assertThat(response.tokenType()).isEqualTo("Bearer");
-        assertThat(response.expiresIn()).isEqualTo(3600L);
+        assertThat(response.expiresIn()).isEqualTo(900L);
     }
 
     @Test
