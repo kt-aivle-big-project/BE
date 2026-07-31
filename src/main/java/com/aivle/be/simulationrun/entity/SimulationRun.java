@@ -51,6 +51,9 @@ public class SimulationRun {
     @JoinColumn(name = "user_id")
     private User user;
 
+    @Column(name = "guest_session_id", length = 36)
+    private String guestSessionId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private SimulationRunStatus status;
@@ -146,6 +149,23 @@ public class SimulationRun {
      */
     public void assignUser(User user) {
         this.user = user;
+        this.guestSessionId = null;
+    }
+
+    public void assignGuestSession(String guestSessionId) {
+        this.user = null;
+        this.guestSessionId = guestSessionId;
+    }
+
+    public boolean isOwnedByUser(Long userId) {
+        return userId != null
+                && user != null
+                && userId.equals(user.getId());
+    }
+
+    public boolean isOwnedByGuest(String guestSessionId) {
+        return guestSessionId != null
+                && guestSessionId.equals(this.guestSessionId);
     }
 
     /**
