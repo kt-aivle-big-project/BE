@@ -119,12 +119,12 @@ class SimulationRunServiceTest {
     @Test
     void guestCreationStoresSessionWithoutUser() {
         Scenario scenario = org.mockito.Mockito.mock(Scenario.class);
-        when(scenarioRepository.findById(1L)).thenReturn(Optional.of(scenario));
+        when(scenarioRepository.findById(101L)).thenReturn(Optional.of(scenario));
         when(scenario.getWarehouse()).thenReturn(warehouse);
         prepareCreatePersistence();
 
         simulationRunService.create(
-                createRequest(1L, 1L),
+                createRequest(1L, 101L),
                 AuthenticatedRequester.guest(GUEST_A)
         );
 

@@ -15,6 +15,7 @@ import com.aivle.be.simulationrun.controller.SimulationRunController;
 import com.aivle.be.simulationrun.service.SimulationRunService;
 import com.aivle.be.task.service.TaskService;
 import com.aivle.be.warehouse.service.WarehouseGraphService;
+import com.aivle.be.warehouse.service.WarehouseImportService;
 import com.aivle.be.warehouse.service.WarehouseLayoutService;
 import com.aivle.be.warehouse.service.WarehouseService;
 import org.junit.jupiter.api.Test;
@@ -71,6 +72,8 @@ class GuestResourceAccessWebMvcTest {
     @MockitoBean
     private WarehouseGraphService warehouseGraphService;
     @MockitoBean
+    private WarehouseImportService warehouseImportService;
+    @MockitoBean
     private ScenarioService scenarioService;
     @MockitoBean
     private JwtTokenProvider jwtTokenProvider;
@@ -87,7 +90,7 @@ class GuestResourceAccessWebMvcTest {
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/warehouses/1/layout").with(guest()))
                 .andExpect(status().isOk());
-        mockMvc.perform(get("/api/scenarios/1").with(guest()))
+        mockMvc.perform(get("/api/scenarios/101").with(guest()))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/warehouses/2").with(guest()))
@@ -124,12 +127,12 @@ class GuestResourceAccessWebMvcTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(patch("/api/scenarios/1")
+        mockMvc.perform(patch("/api/scenarios/101")
                         .with(guest())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(delete("/api/scenarios/1").with(guest()))
+        mockMvc.perform(delete("/api/scenarios/101").with(guest()))
                 .andExpect(status().isForbidden());
     }
 

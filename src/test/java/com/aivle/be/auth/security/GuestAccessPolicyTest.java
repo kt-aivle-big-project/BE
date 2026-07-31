@@ -16,14 +16,14 @@ class GuestAccessPolicyTest {
 
     @Test
     void guestCanUseOnlyDemoWarehouseAndScenario() {
-        assertThatCode(() -> policy.validateSimulationRunCreate(guest, 1L, 1L))
+        assertThatCode(() -> policy.validateSimulationRunCreate(guest, 1L, 101L))
                 .doesNotThrowAnyException();
         assertThatCode(() -> policy.validateWarehouseRead(guest, 1L))
                 .doesNotThrowAnyException();
-        assertThatCode(() -> policy.validateScenarioRead(guest, 1L))
+        assertThatCode(() -> policy.validateScenarioRead(guest, 101L))
                 .doesNotThrowAnyException();
 
-        assertAccessDenied(() -> policy.validateSimulationRunCreate(guest, 2L, 1L));
+        assertAccessDenied(() -> policy.validateSimulationRunCreate(guest, 2L, 101L));
         assertAccessDenied(() -> policy.validateSimulationRunCreate(guest, 1L, 2L));
         assertAccessDenied(() -> policy.validateSimulationRunCreate(guest, 1L, null));
         assertAccessDenied(() -> policy.validateWarehouseRead(guest, 2L));
