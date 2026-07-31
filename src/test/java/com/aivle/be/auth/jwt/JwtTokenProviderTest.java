@@ -6,6 +6,8 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Encoders;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -15,7 +17,7 @@ class JwtTokenProviderTest {
     @Test
     void createsAndParsesSignedAccessToken() {
         String testSecret = Encoders.BASE64.encode(Jwts.SIG.HS256.key().build().getEncoded());
-        JwtTokenProvider provider = new JwtTokenProvider(testSecret, 3_600_000L);
+        JwtTokenProvider provider = new JwtTokenProvider(testSecret, 900_000L, 3_600_000L);
         User user = mock(User.class);
         when(user.getId()).thenReturn(1L);
         when(user.getEmail()).thenReturn("user@example.com");
@@ -25,6 +27,29 @@ class JwtTokenProviderTest {
 
         assertThat(claims.getSubject()).isEqualTo("1");
         assertThat(claims.get("email", String.class)).isEqualTo("user@example.com");
-        assertThat(claims.getExpiration()).isAfter(claims.getIssuedAt());
+        assertThat(claims.get("role", String.class)).isEqualTo("USER");
+        assertThat(Duration.between(
+                claims.getIssuedAt().toInstant(),
+                claims.getExpiration().toInstant()
+        )).isEqualTo(Duration.ofSeconds(900));
+        assertThat(provider.getAccessTokenExpirationSeconds()).isEqualTo(900L);
+    }
+
+    @Test
+    void createsGuestAccessTokenWithoutUserClaims() {
+        String testSecret = Encoders.BASE64.encode(Jwts.SIG.HS256.key().build().getEncoded());
+        JwtTokenProvider provider = new JwtTokenProvider(testSecret, 900_000L, 3_600_000L);
+
+        String token = provider.createGuestAccessToken();
+        Claims claims = provider.parseClaims(token);
+
+        assertThat(claims.getSubject()).isNotBlank();
+        assertThat(claims.get("email")).isNull();
+        assertThat(claims.get("role", String.class)).isEqualTo("GUEST");
+        assertThat(Duration.between(
+                claims.getIssuedAt().toInstant(),
+                claims.getExpiration().toInstant()
+        )).isEqualTo(Duration.ofSeconds(3_600));
+        assertThat(provider.getGuestAccessTokenExpirationSeconds()).isEqualTo(3_600L);
     }
 }

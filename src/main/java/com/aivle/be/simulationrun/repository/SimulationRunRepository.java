@@ -9,8 +9,14 @@ import java.util.List;
 
 public interface SimulationRunRepository extends JpaRepository<SimulationRun, Long> {
 
-    boolean existsByWarehouse_IdAndStatusInAndIdNot(
+    boolean existsByWarehouse_IdAndGuestSessionIdIsNullAndStatusInAndIdNot(
             Long warehouseId,
+            Collection<SimulationRunStatus> statuses,
+            Long simulationRunId
+    );
+
+    boolean existsByGuestSessionIdAndStatusInAndIdNot(
+            String guestSessionId,
             Collection<SimulationRunStatus> statuses,
             Long simulationRunId
     );
@@ -24,4 +30,6 @@ public interface SimulationRunRepository extends JpaRepository<SimulationRun, Lo
      * 특정 사용자가 실행한 시뮬레이션 목록 (최신순).
      */
     List<SimulationRun> findAllByUser_IdOrderByIdDesc(Long userId);
+
+    List<SimulationRun> findAllByGuestSessionIdOrderByIdDesc(String guestSessionId);
 }

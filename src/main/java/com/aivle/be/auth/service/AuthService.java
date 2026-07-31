@@ -2,8 +2,10 @@ package com.aivle.be.auth.service;
 
 import com.aivle.be.auth.dto.request.SignupRequest;
 import com.aivle.be.auth.dto.request.LoginRequest;
+import com.aivle.be.auth.dto.response.GuestLoginResponse;
 import com.aivle.be.auth.dto.response.LoginResponse;
 import com.aivle.be.auth.dto.response.SignupResponse;
+import com.aivle.be.auth.jwt.AuthRole;
 import com.aivle.be.auth.jwt.JwtTokenProvider;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
@@ -93,6 +95,15 @@ public class AuthService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_REFRESH_TOKEN));
         return createLoginResponse(user);
+    }
+
+    public GuestLoginResponse guestLogin() {
+        return new GuestLoginResponse(
+                "Bearer",
+                jwtTokenProvider.createGuestAccessToken(),
+                jwtTokenProvider.getGuestAccessTokenExpirationSeconds(),
+                AuthRole.GUEST
+        );
     }
 
     private LoginResponse createLoginResponse(User user) {

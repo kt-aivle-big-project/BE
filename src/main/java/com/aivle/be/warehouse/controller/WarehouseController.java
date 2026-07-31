@@ -1,6 +1,8 @@
 package com.aivle.be.warehouse.controller;
 
 import java.util.List;
+import com.aivle.be.auth.security.AuthenticatedRequesterResolver;
+import com.aivle.be.auth.security.GuestAccessPolicy;
 import com.aivle.be.warehouse.dto.WarehouseLayoutResponse;
 import com.aivle.be.warehouse.service.WarehouseLayoutService;
 import com.aivle.be.warehouse.dto.WarehouseUpdateRequest;
@@ -16,6 +18,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -27,6 +30,8 @@ public class WarehouseController {
     private final WarehouseService warehouseService;
     private final WarehouseLayoutService warehouseLayoutService;
     private final WarehouseGraphService warehouseGraphService;
+    private final AuthenticatedRequesterResolver requesterResolver;
+    private final GuestAccessPolicy guestAccessPolicy;
     private final WarehouseImportService warehouseImportService;
 
     /**
@@ -37,8 +42,10 @@ public class WarehouseController {
      */
     @GetMapping("/{warehouseId}/graph")
     public ResponseEntity<WarehouseGraphResponse> getGraph(
-            @PathVariable Long warehouseId
+            @PathVariable Long warehouseId,
+            Authentication authentication
     ) {
+        validateReadAccess(authentication, warehouseId);
         return ResponseEntity.ok(warehouseGraphService.getGraph(warehouseId));
     }
 
@@ -88,8 +95,10 @@ public class WarehouseController {
     }
     @GetMapping("/{warehouseId}")
     public ResponseEntity<WarehouseResponse> getWarehouse(
-            @PathVariable Long warehouseId
+            @PathVariable Long warehouseId,
+            Authentication authentication
     ) {
+        validateReadAccess(authentication, warehouseId);
         WarehouseResponse response = warehouseService.getWarehouse(warehouseId);
 
         return ResponseEntity.ok(response);
@@ -126,10 +135,19 @@ public class WarehouseController {
     }
     @GetMapping("/{warehouseId}/layout")
     public ResponseEntity<WarehouseLayoutResponse> getWarehouseLayout(
-            @PathVariable Long warehouseId
+            @PathVariable Long warehouseId,
+            Authentication authentication
     ) {
+        validateReadAccess(authentication, warehouseId);
         return ResponseEntity.ok(
                 warehouseLayoutService.getLayout(warehouseId)
+        );
+    }
+
+    private void validateReadAccess(Authentication authentication, Long warehouseId) {
+        guestAccessPolicy.validateWarehouseRead(
+                requesterResolver.resolve(authentication),
+                warehouseId
         );
     }
 }
