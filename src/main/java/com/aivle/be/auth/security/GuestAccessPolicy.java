@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 public class GuestAccessPolicy {
 
     public static final long DEMO_WAREHOUSE_ID = 1L;
-    public static final long DEMO_SCENARIO_ID = 1L;
+    public static final long DEMO_SCENARIO_ID = 101L;
 
     public void validateSimulationRunCreate(
             AuthenticatedRequester requester,
