@@ -515,12 +515,12 @@ ON CONFLICT DO NOTHING;
 
 -- 로봇 6대 (충전 슬롯에서 시작)
 INSERT INTO robot (robot_id, robot_spec_id, warehouse_id, node_id, battery, status) VALUES
-  (20001, 1, 2, 20111, 100, 'AVAILABLE'),
-  (20002, 1, 2, 20112, 100, 'AVAILABLE'),
-  (20003, 1, 2, 20113, 100, 'AVAILABLE'),
-  (20004, 1, 2, 20114, 100, 'AVAILABLE'),
-  (20005, 1, 2, 20115, 100, 'AVAILABLE'),
-  (20006, 1, 2, 20116, 100, 'AVAILABLE')
+  (20001, 1, 2, 20111, 100, 'IDLE'),
+  (20002, 1, 2, 20112, 100, 'IDLE'),
+  (20003, 1, 2, 20113, 100, 'IDLE'),
+  (20004, 1, 2, 20114, 100, 'IDLE'),
+  (20005, 1, 2, 20115, 100, 'IDLE'),
+  (20006, 1, 2, 20116, 100, 'IDLE')
 ON CONFLICT DO NOTHING;
 
 -- 자동 증가 값을 최대 ID 뒤로 옮긴다
