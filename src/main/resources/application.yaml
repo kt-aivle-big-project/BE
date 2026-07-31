@@ -5,6 +5,29 @@ spring:
   profiles:
     default: local
 
+  # 시작할 때 기본 데이터를 자동으로 넣는다.
+  #
+  # 없으면 창고·노드가 비어 있어서 화면도 시뮬레이션도 동작하지 않는다.
+  # 조원마다 수동으로 SQL 을 넣어야 했던 문제를 없앤다.
+  #
+  # 모든 파일은 "이미 있으면 건너뛴다"(ON CONFLICT DO NOTHING)로 쓰여 있어
+  # 매번 실행돼도 기존 데이터를 덮어쓰지 않는다.
+  sql:
+    init:
+      mode: ${SQL_INIT_MODE:always}
+      continue-on-error: false
+      data-locations:
+        - classpath:db/seed/V01_base.sql
+        - classpath:db/seed/V02_warehouse_1.sql
+        - classpath:db/seed/V03_warehouse_2.sql
+        - classpath:db/seed/V04_warehouse_3.sql
+        - classpath:db/seed/V05_inventory.sql
+
+  jpa:
+    # Hibernate 가 테이블을 만든 뒤에 위 SQL 이 실행되도록 미룬다.
+    # 이 설정이 없으면 테이블이 없는 상태에서 INSERT 가 돌아 실패한다.
+    defer-datasource-initialization: true
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
