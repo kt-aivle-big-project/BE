@@ -102,8 +102,10 @@ public class SimulationRunController {
             @RequestParam Long warehouseId,
             Authentication authentication
     ) {
-        guestAccessPolicy.requireUser(requester(authentication));
-        simulationRunService.stopActiveRuns(warehouseId);
+        simulationRunService.stopActiveRuns(
+                warehouseId,
+                requester(authentication)
+        );
         return ResponseEntity.noContent().build();
     }
 

@@ -76,10 +76,14 @@ public class SecurityConfig {
                         .requestMatchers(PUBLIC_PATHS).permitAll()
                         .requestMatchers(
                                 HttpMethod.GET,
-                                "/api/warehouses/*",
-                                "/api/warehouses/*/graph",
-                                "/api/warehouses/*/layout",
-                                "/api/scenarios/*"
+                                "/api/warehouses",
+                                "/api/warehouses/**",
+                                "/api/scenarios",
+                                "/api/scenarios/**",
+                                "/api/robots",
+                                "/api/robots/**",
+                                "/api/products",
+                                "/api/products/**"
                         ).hasAnyRole("USER", "GUEST")
                         .requestMatchers(
                                 HttpMethod.POST,
@@ -88,7 +92,9 @@ public class SecurityConfig {
                                 "/api/simulation-runs/*/pause",
                                 "/api/simulation-runs/*/resume",
                                 "/api/simulation-runs/*/reset",
-                                "/api/simulation-runs/*/stop"
+                                "/api/simulation-runs/*/stop",
+                                "/api/simulation-runs/stop-active",
+                                "/api/optimizations/simulation-runs/*/reoptimize"
                         ).hasAnyRole("USER", "GUEST")
                         .requestMatchers(
                                 HttpMethod.PATCH,
@@ -100,7 +106,8 @@ public class SecurityConfig {
                                 "/api/simulation-runs/*/status",
                                 "/api/simulation-runs/*/robots",
                                 "/api/simulation-runs/*/tasks",
-                                "/api/simulation-runs/*/robots/states"
+                                "/api/simulation-runs/*/robots/states",
+                                "/api/optimizations/simulation-runs/*/reoptimization-histories"
                         ).hasAnyRole("USER", "GUEST")
                         .anyRequest().hasRole("USER")
                 )

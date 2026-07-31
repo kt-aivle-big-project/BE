@@ -1,5 +1,7 @@
 package com.aivle.be.optimization.controller;
 
+import com.aivle.be.auth.security.AuthenticatedRequester;
+import com.aivle.be.auth.security.AuthenticatedRequesterResolver;
 import com.aivle.be.optimization.dto.request.OptimizationRequest;
 import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
 import com.aivle.be.optimization.dto.response.OptimizationResponse;
@@ -9,8 +11,10 @@ import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import com.aivle.be.optimization.service.OptimizationService;
 import com.aivle.be.optimization.service.ReoptimizationQueryService;
 import com.aivle.be.optimization.service.ReoptimizationService;
+import com.aivle.be.simulationrun.service.SimulationRunService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -23,6 +27,8 @@ public class OptimizationController {
     private final OptimizationService optimizationService;
     private final ReoptimizationService reoptimizationService;
     private final ReoptimizationQueryService reoptimizationQueryService;
+    private final AuthenticatedRequesterResolver requesterResolver;
+    private final SimulationRunService simulationRunService;
 
     @PostMapping
     public ResponseEntity<OptimizationResponse> optimize(
@@ -55,8 +61,14 @@ public class OptimizationController {
     @PostMapping("/simulation-runs/{simulationRunId}/reoptimize")
     public ResponseEntity<ReoptimizationResponse> reoptimize(
             @PathVariable Long simulationRunId,
-            @RequestBody ReoptimizationRequest request
+            @RequestBody ReoptimizationRequest request,
+            Authentication authentication
     ) {
+        simulationRunService.validateOwnership(
+                simulationRunId,
+                requester(authentication)
+        );
+
         return ResponseEntity.ok(
                 reoptimizationService.reoptimize(
                         simulationRunId,
@@ -68,12 +80,22 @@ public class OptimizationController {
     @GetMapping("/simulation-runs/{simulationRunId}/reoptimization-histories")
     public ResponseEntity<List<ReoptimizationHistoryResponse>>
     getReoptimizationHistories(
-            @PathVariable Long simulationRunId
+            @PathVariable Long simulationRunId,
+            Authentication authentication
     ) {
+        simulationRunService.validateOwnership(
+                simulationRunId,
+                requester(authentication)
+        );
+
         return ResponseEntity.ok(
                 reoptimizationQueryService.getHistories(
                         simulationRunId
                 )
         );
+    }
+
+    private AuthenticatedRequester requester(Authentication authentication) {
+        return requesterResolver.resolve(authentication);
     }
 }

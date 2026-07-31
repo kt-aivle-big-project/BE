@@ -356,9 +356,23 @@ public class SimulationRunService {
      * @return 중지된 실행 수
      */
     @Transactional
-    public int stopActiveRuns(Long warehouseId) {
+    public int stopActiveRuns(
+            Long warehouseId,
+            AuthenticatedRequester requester
+    ) {
         List<SimulationRun> activeRuns = simulationRunRepository
-                .findAllByWarehouse_IdAndStatusIn(warehouseId, ACTIVE_STATUSES);
+                .findAllByWarehouse_IdAndStatusIn(
+                        warehouseId,
+                        ACTIVE_STATUSES
+                );
+
+        if (requester.isGuest()) {
+            activeRuns = activeRuns.stream()
+                    .filter(run -> run.isOwnedByGuest(
+                            requester.guestSessionId()
+                    ))
+                    .toList();
+        }
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -371,7 +385,6 @@ public class SimulationRunService {
 
         return activeRuns.size();
     }
-
     @Transactional
     public SimulationRunResponse complete(Long simulationRunId) {
         SimulationRun run = findById(simulationRunId);
@@ -464,6 +477,14 @@ public class SimulationRunService {
     private SimulationRun findById(Long simulationRunId) {
         return simulationRunRepository.findById(simulationRunId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND));
+    }
+
+    @Transactional(readOnly = true)
+    public void validateOwnership(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        findOwnedBy(simulationRunId, requester);
     }
 
     private SimulationRun findOwnedBy(
