@@ -200,20 +200,25 @@ public class SimulationRunService {
             throw new BusinessException(ErrorCode.SIMULATION_RUN_ALREADY_ACTIVE);
         }
 
-        List<Robot> availableRobots =
+        // 창고에 등록된 로봇을 전부 투입한다.
+        //
+        // 예전에는 시나리오 프리셋의 robot_count 만큼 잘라서 썼는데,
+        // 창고에 로봇을 추가해도 화면에 안 나타나 혼란스러웠다.
+        // 투입 대수는 "창고에 로봇을 몇 대 등록했는가"로 정한다.
+        List<Robot> robots =
                 robotRepository.findAllByWarehouse_IdAndStatusAndNodeIdIsNotNullOrderById(
                         warehouseId,
                         RobotAvailabilityStatus.AVAILABLE
                 );
-        int robotCount = run.getRobotCount() == null
-                ? availableRobots.size()
-                : Math.max(0, run.getRobotCount());
-        List<Robot> robots = availableRobots.stream()
-                .limit(robotCount)
-                .toList();
+
         if (robots.isEmpty()) {
             throw new BusinessException(ErrorCode.NO_AVAILABLE_ROBOTS);
         }
+
+        // 실제 참가 대수를 기록해 둔다 (실행 이력 조회용)
+        run.recordRobotCount(robots.size());
+
+        log.info("[실행] runId={} 창고 {} 로봇 {}대 투입", simulationRunId, warehouseId, robots.size());
 
         LocalDateTime now = LocalDateTime.now();
         run.start(now);

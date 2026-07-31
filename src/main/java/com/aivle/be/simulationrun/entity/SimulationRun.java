@@ -158,10 +158,15 @@ public class SimulationRun {
     /**
      * 시나리오 프리셋과 실행 배속을 적용한다. (생성 직후 1회)
      */
+    /**
+     * 시나리오 프리셋을 적용한다.
+     *
+     * <p>프리셋의 robot_count 는 쓰지 않는다.
+     * 투입 로봇은 시작 시점에 창고에 등록된 로봇으로 정한다.
+     */
     public void applyScenario(Scenario scenario, Double simulationSpeed) {
         this.scenario = scenario;
         if (scenario != null) {
-            this.robotCount = scenario.getRobotCount();
             this.chargingThreshold = scenario.getChargingThreshold();
             this.autoReplan = scenario.getAutoReplan();
             this.obstacleEnabled = scenario.getObstacleEnabled();
@@ -173,6 +178,16 @@ public class SimulationRun {
         if (this.simulationSpeed == null) {
             this.simulationSpeed = 1.0;
         }
+    }
+
+    /**
+     * 실제로 투입된 로봇 대수를 기록한다.
+     *
+     * <p>시작 시점에 창고에 등록된 사용 가능 로봇을 모두 투입하므로,
+     * 이 값은 실행 조건이 아니라 결과 기록이다.
+     */
+    public void recordRobotCount(int robotCount) {
+        this.robotCount = robotCount;
     }
 
     /**
