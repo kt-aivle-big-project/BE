@@ -37,11 +37,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (authorization != null && authorization.startsWith(BEARER_PREFIX)) {
             try {
                 Claims claims = jwtTokenProvider.parseClaims(authorization.substring(BEARER_PREFIX.length()));
+                String roleClaim = claims.get("role", String.class);
+                AuthRole role = roleClaim == null
+                        ? AuthRole.USER
+                        : AuthRole.valueOf(roleClaim);
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(
                                 claims.getSubject(),
                                 null,
-                                List.of(new SimpleGrantedAuthority("ROLE_USER"))
+                                List.of(new SimpleGrantedAuthority(role.authority()))
                         );
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (JwtException | IllegalArgumentException exception) {

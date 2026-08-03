@@ -1,5 +1,7 @@
 package com.aivle.be.simulationrun.service;
 
+import com.aivle.be.auth.security.AuthenticatedRequester;
+import com.aivle.be.auth.security.GuestAccessPolicy;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.robot.entity.Robot;
@@ -83,6 +85,7 @@ public class SimulationRunService {
     private final ScenarioTaskPlanner scenarioTaskPlanner;
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final GuestAccessPolicy guestAccessPolicy;
 
     private static final Logger log =
             LoggerFactory.getLogger(SimulationRunService.class);
@@ -91,7 +94,7 @@ public class SimulationRunService {
 
     @Transactional
     public SimulationRunResponse create(SimulationRunCreateRequest request) {
-        return create(request, null);
+        return create(request, (Long) null);
     }
 
     /**
@@ -101,6 +104,24 @@ public class SimulationRunService {
      */
     @Transactional
     public SimulationRunResponse create(SimulationRunCreateRequest request, Long userId) {
+        AuthenticatedRequester requester = userId == null
+                ? null
+                : AuthenticatedRequester.user(userId);
+        return create(request, requester);
+    }
+
+    @Transactional
+    public SimulationRunResponse create(
+            SimulationRunCreateRequest request,
+            AuthenticatedRequester requester
+    ) {
+        if (requester != null) {
+            guestAccessPolicy.validateSimulationRunCreate(
+                    requester,
+                    request.warehouseId(),
+                    request.scenarioId()
+            );
+        }
         Warehouse warehouse = warehouseRepository.findById(request.warehouseId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
         ScenarioConfigRequest scenario = request.scenario();
@@ -128,8 +149,10 @@ public class SimulationRunService {
         validateInboundRatio(request.inbound());
 
         // 실행자 기록 (내 실행 이력 조회용)
-        if (userId != null) {
-            run.assignUser(userRepository.getReferenceById(userId));
+        if (requester != null && requester.isUser()) {
+            run.assignUser(userRepository.getReferenceById(requester.userId()));
+        } else if (requester != null && requester.isGuest()) {
+            run.assignGuestSession(requester.guestSessionId());
         }
 
         // 작업을 만든 설정을 그대로 보관해 같은 설정으로 다시 실행할 수 있게 한다
@@ -158,10 +181,19 @@ public class SimulationRunService {
     public List<SimulationRunHistoryResponse> getMyRuns(Long userId) {
         return simulationRunRepository.findAllByUser_IdOrderByIdDesc(userId)
                 .stream()
-                .map(run -> SimulationRunHistoryResponse.of(
-                        run,
-                        taskRepository.countBySimulationRun_Id(run.getId())
-                ))
+                .map(this::toHistoryResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<SimulationRunHistoryResponse> getMyRuns(AuthenticatedRequester requester) {
+        List<SimulationRun> runs = requester.isUser()
+                ? simulationRunRepository.findAllByUser_IdOrderByIdDesc(requester.userId())
+                : simulationRunRepository.findAllByGuestSessionIdOrderByIdDesc(
+                        requester.guestSessionId()
+                );
+        return runs.stream()
+                .map(this::toHistoryResponse)
                 .toList();
     }
 
@@ -169,8 +201,11 @@ public class SimulationRunService {
      * 시뮬레이션 초기화. 로봇 실시간 상태(Redis)를 비우고 대기 상태로 되돌린다.
      */
     @Transactional
-    public SimulationRunResponse reset(Long simulationRunId) {
-        SimulationRun run = findById(simulationRunId);
+    public SimulationRunResponse reset(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        SimulationRun run = findOwnedBy(simulationRunId, requester);
         run.reset();
         simulationRunStateStore.deleteAll(simulationRunId);
         simulationPlaybackService.clear(simulationRunId);
@@ -188,32 +223,48 @@ public class SimulationRunService {
     }
 
     @Transactional
-    public SimulationRunResponse start(Long simulationRunId) {
-        SimulationRun run = findById(simulationRunId);
+    public SimulationRunResponse start(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        SimulationRun run = findOwnedBy(simulationRunId, requester);
         Long warehouseId = run.getWarehouse().getId();
 
-        if (simulationRunRepository.existsByWarehouse_IdAndStatusInAndIdNot(
-                warehouseId,
-                ACTIVE_STATUSES,
-                simulationRunId
-        )) {
+        boolean alreadyActive = requester.isGuest()
+                ? simulationRunRepository.existsByGuestSessionIdAndStatusInAndIdNot(
+                        requester.guestSessionId(),
+                        ACTIVE_STATUSES,
+                        simulationRunId
+                )
+                : simulationRunRepository
+                        .existsByWarehouse_IdAndGuestSessionIdIsNullAndStatusInAndIdNot(
+                                warehouseId,
+                                ACTIVE_STATUSES,
+                                simulationRunId
+                        );
+        if (alreadyActive) {
             throw new BusinessException(ErrorCode.SIMULATION_RUN_ALREADY_ACTIVE);
         }
 
-        List<Robot> availableRobots =
+        // 창고에 등록된 로봇을 전부 투입한다.
+        //
+        // 예전에는 시나리오 프리셋의 robot_count 만큼 잘라서 썼는데,
+        // 창고에 로봇을 추가해도 화면에 안 나타나 혼란스러웠다.
+        // 투입 대수는 "창고에 로봇을 몇 대 등록했는가"로 정한다.
+        List<Robot> robots =
                 robotRepository.findAllByWarehouse_IdAndStatusAndNodeIdIsNotNullOrderById(
                         warehouseId,
                         RobotAvailabilityStatus.AVAILABLE
                 );
-        int robotCount = run.getRobotCount() == null
-                ? availableRobots.size()
-                : Math.max(0, run.getRobotCount());
-        List<Robot> robots = availableRobots.stream()
-                .limit(robotCount)
-                .toList();
+
         if (robots.isEmpty()) {
             throw new BusinessException(ErrorCode.NO_AVAILABLE_ROBOTS);
         }
+
+        // 실제 참가 대수를 기록해 둔다 (실행 이력 조회용)
+        run.recordRobotCount(robots.size());
+
+        log.info("[실행] runId={} 창고 {} 로봇 {}대 투입", simulationRunId, warehouseId, robots.size());
 
         LocalDateTime now = LocalDateTime.now();
         run.start(now);
@@ -242,8 +293,11 @@ public class SimulationRunService {
     }
 
     @Transactional
-    public SimulationRunResponse pause(Long simulationRunId) {
-        SimulationRun run = findById(simulationRunId);
+    public SimulationRunResponse pause(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        SimulationRun run = findOwnedBy(simulationRunId, requester);
         run.pause(LocalDateTime.now());
         return broadcastRun(run);
     }
@@ -257,9 +311,10 @@ public class SimulationRunService {
     @Transactional
     public SimulationRunResponse changeSpeed(
             Long simulationRunId,
-            SimulationSpeedUpdateRequest request
+            SimulationSpeedUpdateRequest request,
+            AuthenticatedRequester requester
     ) {
-        SimulationRun run = findById(simulationRunId);
+        SimulationRun run = findOwnedBy(simulationRunId, requester);
         run.changeSpeed(request.simulationSpeed());
 
         simulationPlaybackService.changeSpeed(
@@ -269,15 +324,21 @@ public class SimulationRunService {
     }
 
     @Transactional
-    public SimulationRunResponse resume(Long simulationRunId) {
-        SimulationRun run = findById(simulationRunId);
+    public SimulationRunResponse resume(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        SimulationRun run = findOwnedBy(simulationRunId, requester);
         run.resume();
         return broadcastRun(run);
     }
 
     @Transactional
-    public SimulationRunResponse stop(Long simulationRunId) {
-        SimulationRun run = findById(simulationRunId);
+    public SimulationRunResponse stop(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        SimulationRun run = findOwnedBy(simulationRunId, requester);
         run.stop(LocalDateTime.now());
         simulationRunStateStore.deleteAll(simulationRunId);
         simulationPlaybackService.clear(simulationRunId);
@@ -293,9 +354,23 @@ public class SimulationRunService {
      * @return 중지된 실행 수
      */
     @Transactional
-    public int stopActiveRuns(Long warehouseId) {
+    public int stopActiveRuns(
+            Long warehouseId,
+            AuthenticatedRequester requester
+    ) {
         List<SimulationRun> activeRuns = simulationRunRepository
-                .findAllByWarehouse_IdAndStatusIn(warehouseId, ACTIVE_STATUSES);
+                .findAllByWarehouse_IdAndStatusIn(
+                        warehouseId,
+                        ACTIVE_STATUSES
+                );
+
+        if (requester.isGuest()) {
+            activeRuns = activeRuns.stream()
+                    .filter(run -> run.isOwnedByGuest(
+                            requester.guestSessionId()
+                    ))
+                    .toList();
+        }
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -308,7 +383,6 @@ public class SimulationRunService {
 
         return activeRuns.size();
     }
-
     @Transactional
     public SimulationRunResponse complete(Long simulationRunId) {
         SimulationRun run = findById(simulationRunId);
@@ -328,13 +402,19 @@ public class SimulationRunService {
     }
 
     @Transactional(readOnly = true)
-    public SimulationRunResponse getStatus(Long simulationRunId) {
-        return SimulationRunResponse.from(findById(simulationRunId));
+    public SimulationRunResponse getStatus(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        return SimulationRunResponse.from(findOwnedBy(simulationRunId, requester));
     }
 
     @Transactional(readOnly = true)
-    public SimulationRunParticipantsResponse getParticipants(Long simulationRunId) {
-        findById(simulationRunId);
+    public SimulationRunParticipantsResponse getParticipants(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        findOwnedBy(simulationRunId, requester);
         List<Long> robotIds = simulationRunRobotRepository
                 .findAllBySimulationRun_IdOrderByRobot_Id(simulationRunId)
                 .stream()
@@ -344,8 +424,11 @@ public class SimulationRunService {
     }
 
     @Transactional(readOnly = true)
-    public SimulationRunRobotStatesResponse getRobotStates(Long simulationRunId) {
-        SimulationRun run = findById(simulationRunId);
+    public SimulationRunRobotStatesResponse getRobotStates(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        SimulationRun run = findOwnedBy(simulationRunId, requester);
         List<RobotStateResponse> states = simulationRunStateStore.findAll(simulationRunId)
                 .stream()
                 .map(RobotStateResponse::from)
@@ -392,6 +475,35 @@ public class SimulationRunService {
     private SimulationRun findById(Long simulationRunId) {
         return simulationRunRepository.findById(simulationRunId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND));
+    }
+
+    @Transactional(readOnly = true)
+    public void validateOwnership(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        findOwnedBy(simulationRunId, requester);
+    }
+
+    private SimulationRun findOwnedBy(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        SimulationRun run = findById(simulationRunId);
+        boolean owned = requester.isUser()
+                ? run.isOwnedByUser(requester.userId())
+                : run.isOwnedByGuest(requester.guestSessionId());
+        if (!owned) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
+        return run;
+    }
+
+    private SimulationRunHistoryResponse toHistoryResponse(SimulationRun run) {
+        return SimulationRunHistoryResponse.of(
+                run,
+                taskRepository.countBySimulationRun_Id(run.getId())
+        );
     }
 
     private RobotState initialState(Robot robot, Long warehouseId, LocalDateTime now) {

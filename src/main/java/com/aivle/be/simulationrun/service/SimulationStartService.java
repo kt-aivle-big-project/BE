@@ -1,5 +1,6 @@
 package com.aivle.be.simulationrun.service;
 
+import com.aivle.be.auth.security.AuthenticatedRequester;
 import com.aivle.be.graph.service.AiRouteGraphSyncService;
 import com.aivle.be.optimization.dto.request.LaroPlanRequest;
 import com.aivle.be.optimization.dto.response.LaroPlanResponse;
@@ -25,9 +26,13 @@ public class SimulationStartService {
 
     public SimulationStartResponse startAndInstall(
             Long simulationRunId,
-            SimulationStartRequest request
+            SimulationStartRequest request,
+            AuthenticatedRequester requester
     ) {
-        SimulationRunResponse started = simulationRunService.start(simulationRunId);
+        SimulationRunResponse started = simulationRunService.start(
+                simulationRunId,
+                requester
+        );
         AiPostgresContractSyncService.ContractEvents contractEvents =
                 aiPostgresContractSyncService.syncSimulationTasks(
                         simulationRunId,

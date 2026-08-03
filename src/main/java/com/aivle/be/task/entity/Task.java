@@ -108,6 +108,18 @@ public class Task {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
+    /**
+     * AI 계획상 이 작업이 끝나기로 되어 있던 시각.
+     *
+     * <p>계획 응답의 마지막 단계 {@code end_at_ms} 를 실행 시작 시각에 더해 저장한다.
+     * 마감 시각(SLA)이 아니라 "이대로 가면 언제 끝나는가"이며,
+     * 실제 완료 시각과 비교해 지연을 계산한다.
+     *
+     * <p>계획을 받지 못한 작업(수동 생성 등)은 null 이고 지연도 계산하지 않는다.
+     */
+    @Column(name = "planned_completed_at")
+    private LocalDateTime plannedCompletedAt;
+
     public Task(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
                 TaskType taskType, WarehouseItem warehouseItem) {
         this(warehouse, startNode, endNode, taskType, warehouseItem, null, null, null);
@@ -192,6 +204,35 @@ public class Task {
         this.assignedAt = null;
         this.startedAt = null;
         this.completedAt = null;
+        this.plannedCompletedAt = null;
+    }
+
+    /**
+     * AI 계획상 이 작업의 예정 종료 시각을 기록한다.
+     *
+     * <p>계획을 받은 직후에 호출한다.
+     * 재계획으로 예정 시각이 바뀌면 다시 호출해 덮어쓴다.
+     */
+    public void recordPlannedCompletion(LocalDateTime plannedCompletedAt) {
+        this.plannedCompletedAt = plannedCompletedAt;
+    }
+
+    /**
+     * 계획보다 얼마나 늦게 끝났는지(분).
+     *
+     * <p>계획이 없거나 아직 안 끝났으면 null.
+     * 계획보다 빨리 끝났으면 0 으로 본다.
+     */
+    public Long delayMinutes() {
+        if (plannedCompletedAt == null || completedAt == null) {
+            return null;
+        }
+
+        long minutes = java.time.Duration
+                .between(plannedCompletedAt, completedAt)
+                .toMinutes();
+
+        return Math.max(0, minutes);
     }
 
     public void assignRobot(Robot robot) {

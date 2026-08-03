@@ -6,7 +6,6 @@
 
 BEGIN;
 
-ALTER TABLE scenario DROP COLUMN IF EXISTS initial_battery;
 ALTER TABLE simulation_runs DROP COLUMN IF EXISTS initial_battery;
 
 -- ============================================================
@@ -482,22 +481,22 @@ INSERT INTO charging_station (charging_station_id, warehouse_id, node_id, name, 
 INSERT INTO robot_specs (id, robot_code, task_code, base_battery_rate, work_battery_rate, failure_rate)
 VALUES (1, 'AGV-100', 'GENERAL', 0.05, 0.15, 0.01);
 
--- 8) 로봇 (충전소 위치에서 시작, AVAILABLE) --------------------
+-- 8) 로봇 (충전소 위치에서 시작, 대기 상태 IDLE; Java에서는 AVAILABLE로 매핑)
 INSERT INTO robot (robot_id, robot_spec_id, warehouse_id, node_id, battery, status) VALUES
-  (1, 1, 1, 150, 100, 'AVAILABLE'),
-  (2, 1, 1, 151, 100, 'AVAILABLE'),
-  (3, 1, 1, 152, 100, 'AVAILABLE'),
-  (4, 1, 1, 153, 100, 'AVAILABLE'),
-  (5, 1, 1, 154, 100, 'AVAILABLE'),
-  (6, 1, 1, 155, 100, 'AVAILABLE');
+  (1, 1, 1, 150, 100, 'IDLE'),
+  (2, 1, 1, 151, 100, 'IDLE'),
+  (3, 1, 1, 152, 100, 'IDLE'),
+  (4, 1, 1, 153, 100, 'IDLE'),
+  (5, 1, 1, 154, 100, 'IDLE'),
+  (6, 1, 1, 155, 100, 'IDLE');
 
 -- 9) 시나리오 프리셋 ------------------------------------------
 INSERT INTO scenario (scenario_id, warehouse_id, scenario_code, scenario_name,
-                      robot_count, simulation_speed,
+                      robot_count, initial_battery, simulation_speed,
                       charging_threshold, auto_replan, obstacle_enabled) VALUES
-  (1, 1, 'S1', '시나리오 v1', 5, 1.0, 20, true,  false),
-  (2, 1, 'S2', '시나리오 v2', 5, 1.0, 20, true,  false),
-  (3, 1, 'S3', '시나리오 v3', 5, 2.0, 20, true,  true);
+  (1, 1, 'S1', '시나리오 v1', 5, 100, 1.0, 20, true,  false),
+  (2, 1, 'S2', '시나리오 v2', 5, 100, 1.0, 20, true,  false),
+  (3, 1, 'S3', '시나리오 v3', 5, 100, 2.0, 20, true,  true);
 
 -- 10) 품목 마스터 ---------------------------------------------
 INSERT INTO product (product_id, product_code, product_name) VALUES

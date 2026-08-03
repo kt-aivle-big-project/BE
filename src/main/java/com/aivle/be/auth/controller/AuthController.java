@@ -2,6 +2,7 @@ package com.aivle.be.auth.controller;
 
 import com.aivle.be.auth.dto.request.SignupRequest;
 import com.aivle.be.auth.dto.request.LoginRequest;
+import com.aivle.be.auth.dto.response.GuestLoginResponse;
 import com.aivle.be.auth.dto.response.LoginResponse;
 import com.aivle.be.auth.dto.response.SignupResponse;
 import com.aivle.be.auth.service.AuthService;
@@ -55,6 +56,13 @@ public class AuthController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, refreshCookie(refreshToken).toString())
                 .body(response);
+    }
+
+    @Operation(summary = "Guest login", description = "Issues an Access Token for a guest without creating a user.")
+    @ApiResponse(responseCode = "200", description = "Guest login successful")
+    @PostMapping("/guest")
+    public ResponseEntity<GuestLoginResponse> guest() {
+        return ResponseEntity.ok(authService.guestLogin());
     }
 
     @Operation(summary = "토큰 재발급", description = "Refresh Token을 회전하고 새 Access Token을 발급합니다.")
