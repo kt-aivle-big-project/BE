@@ -6,6 +6,7 @@ import com.aivle.be.optimization.dto.response.LaroPlanResponse;
 import com.aivle.be.optimization.service.LaroPlanningService;
 import com.aivle.be.optimization.service.AiPostgresContractSyncService;
 import com.aivle.be.simulationrun.controller.request.SimulationLaunchRequest;
+import com.aivle.be.simulationrun.controller.request.SimulationStartRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationLaunchResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import lombok.RequiredArgsConstructor;
@@ -29,25 +30,38 @@ public class SimulationLaunchService {
     ) {
         SimulationRunResponse created =
                 simulationRunService.create(request.simulation(), userId);
-        Long runId = created.simulationRunId();
+        return startAndInstall(
+                created.simulationRunId(),
+                new SimulationStartRequest(
+                        request.optimizationBackend(),
+                        request.userCommand()
+                )
+        );
+    }
 
-        SimulationRunResponse started = simulationRunService.start(runId);
+    public SimulationLaunchResponse startAndInstall(
+            Long simulationRunId,
+            SimulationStartRequest request
+    ) {
+        SimulationRunResponse started = simulationRunService.start(simulationRunId);
         AiPostgresContractSyncService.ContractEvents contractEvents =
                 aiPostgresContractSyncService.syncSimulationTasks(
-                runId,
+                simulationRunId,
                 started.warehouseId()
         );
         String aiWarehouseId =
                 AiRouteGraphSyncService.toAiWarehouseId(started.warehouseId());
 
-        String backend = request.optimizationBackend() == null
-                || request.optimizationBackend().isBlank()
+        String requestedBackend = request == null ? null : request.optimizationBackend();
+        String requestedCommand = request == null ? null : request.userCommand();
+        String backend = requestedBackend == null
+                || requestedBackend.isBlank()
                 ? "ortools"
-                : request.optimizationBackend();
-        String command = request.userCommand() == null
-                || request.userCommand().isBlank()
+                : requestedBackend;
+        String command = requestedCommand == null
+                || requestedCommand.isBlank()
                 ? null
-                : request.userCommand();
+                : requestedCommand;
 
         List<LaroPlanRequest.EventInput> events = new ArrayList<>();
         contractEvents.orderIds().forEach(orderId -> events.add(
@@ -57,15 +71,15 @@ public class SimulationLaunchService {
         ));
         contractEvents.inboundIds().forEach(inboundId -> events.add(
                 new LaroPlanRequest.EventInput(
-                        "inbound_receipt", null, inboundId, null, null, null, Map.of()
+                        "inbound_item_arrived", null, inboundId, null, null, null, Map.of()
                 )
         ));
 
         LaroPlanResponse plan = laroPlanningService.createAndInstallPlan(
-                runId,
+                simulationRunId,
                 aiWarehouseId,
                 new LaroPlanRequest(
-                        "SIM-RUN-" + runId,
+                        "SIM-RUN-" + simulationRunId,
                         backend,
                         List.copyOf(events),
                         command

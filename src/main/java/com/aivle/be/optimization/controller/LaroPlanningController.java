@@ -1,9 +1,12 @@
 package com.aivle.be.optimization.controller;
 
 import com.aivle.be.optimization.dto.request.LaroPlanRequest;
+import com.aivle.be.optimization.dto.request.LaroHitlResponseRequest;
+import com.aivle.be.optimization.dto.response.LaroHitlResponse;
 import com.aivle.be.optimization.dto.response.LaroPlanResponse;
 import com.aivle.be.optimization.service.LaroPlanningService;
 import lombok.RequiredArgsConstructor;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -44,6 +47,24 @@ public class LaroPlanningController {
                 laroPlanningService.createAndInstallPlan(
                         simulationRunId,
                         warehouseId,
+                        request
+                )
+        );
+    }
+
+    @PostMapping(
+            "/simulation-runs/{simulationRunId}"
+                    + "/hitl/{interactionId}/respond"
+    )
+    public ResponseEntity<LaroHitlResponse> respondToHumanInteraction(
+            @PathVariable Long simulationRunId,
+            @PathVariable String interactionId,
+            @Valid @RequestBody LaroHitlResponseRequest request
+    ) {
+        return ResponseEntity.ok(
+                laroPlanningService.respondAndInstallPlan(
+                        simulationRunId,
+                        interactionId,
                         request
                 )
         );

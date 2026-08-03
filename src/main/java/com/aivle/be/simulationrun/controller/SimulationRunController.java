@@ -3,6 +3,7 @@ package com.aivle.be.simulationrun.controller;
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationLaunchRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateRequest;
+import com.aivle.be.simulationrun.controller.request.SimulationStartRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunRobotStatesResponse;
 import com.aivle.be.global.exception.BusinessException;
@@ -66,8 +67,13 @@ public class SimulationRunController {
 
     @Operation(summary = "시뮬레이션 시작")
     @PostMapping("/{simulationRunId}/start")
-    public ResponseEntity<SimulationRunResponse> start(@PathVariable Long simulationRunId) {
-        return ResponseEntity.ok(simulationRunService.start(simulationRunId));
+    public ResponseEntity<SimulationLaunchResponse> start(
+            @PathVariable Long simulationRunId,
+            @RequestBody(required = false) SimulationStartRequest request
+    ) {
+        return ResponseEntity.ok(
+                simulationLaunchService.startAndInstall(simulationRunId, request)
+        );
     }
 
     @Operation(summary = "시뮬레이션 일시정지")

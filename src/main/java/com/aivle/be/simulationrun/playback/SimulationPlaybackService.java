@@ -35,6 +35,13 @@ public class SimulationPlaybackService {
     private static final Logger log =
             LoggerFactory.getLogger(SimulationPlaybackService.class);
     private static final String RUN_TOPIC = "/topic/simulation-runs";
+    private static final Set<String> SUPPORTED_STEP_TYPES = Set.of(
+            "MOVE", "WAIT", "SERVICE"
+    );
+    private static final Set<String> SUPPORTED_SERVICE_KINDS = Set.of(
+            "PICKUP", "DROP", "STATION", "RETURN",
+            "EMPTY_TOTE_BUFFER", "PARK", "CHARGE"
+    );
 
     private final SimulationRunRepository simulationRunRepository;
     private final SimulationRunStateStore simulationRunStateStore;
@@ -197,10 +204,38 @@ public class SimulationPlaybackService {
             return;
         }
 
-        RobotState state = "MOVE".equals(step.stepType())
-                ? moveState(context, robotId, step, event.start())
-                : serviceState(context, robotId, step, event.start());
+        RobotState state = switch (step.stepType()) {
+            case "MOVE" -> moveState(context, robotId, step, event.start());
+            case "WAIT" -> waitState(context, robotId, step);
+            case "SERVICE" -> serviceState(
+                    context,
+                    robotId,
+                    step,
+                    event.start()
+            );
+            default -> throw new IllegalArgumentException(
+                    "Unsupported LARO step type: " + step.stepType()
+            );
+        };
         publish(context.getSimulationRunId(), state);
+    }
+
+    private RobotState waitState(
+            LaroPlaybackContext context,
+            Long robotId,
+            LaroPlanResponse.PlanStep step
+    ) {
+        Long nodeId = context.getNodeIds().get(step.nodeId());
+        return RobotState.stationary(
+                robotId,
+                context.getWarehouseId(),
+                nodeId,
+                nodeCodeCache.get(nodeId),
+                context.getRobotRuntimes().get(robotId).batteryPercent(),
+                RobotStatus.IDLE,
+                null,
+                LocalDateTime.now()
+        );
     }
 
     private RobotState moveState(
@@ -298,13 +333,17 @@ public class SimulationPlaybackService {
     }
 
     private RobotStatus serviceStatus(String serviceKind) {
-        if ("PICKUP".equals(serviceKind)) {
-            return RobotStatus.PICKING;
-        }
-        if ("RETURN".equals(serviceKind)) {
-            return RobotStatus.RELOCATION;
-        }
-        return RobotStatus.WORKING;
+        return switch (serviceKind) {
+            case "PICKUP" -> RobotStatus.PICKING;
+            case "DROP" -> RobotStatus.PUTAWAY;
+            case "RETURN", "EMPTY_TOTE_BUFFER" -> RobotStatus.RELOCATION;
+            case "CHARGE" -> RobotStatus.CHARGING;
+            case "PARK" -> RobotStatus.IDLE;
+            case "STATION" -> RobotStatus.WORKING;
+            default -> throw new IllegalArgumentException(
+                    "Unsupported LARO service kind: " + serviceKind
+            );
+        };
     }
 
     public void clear(Long simulationRunId) {
@@ -386,11 +425,27 @@ public class SimulationPlaybackService {
         for (LaroPlanResponse.RobotPlan robotPlan : robotPlans) {
             requireNode(robotPlan.initialNode(), nodeIds);
             for (LaroPlanResponse.PlanStep step : robotPlan.steps()) {
+                if (step.stepType() == null
+                        || !SUPPORTED_STEP_TYPES.contains(step.stepType())) {
+                    throw new IllegalArgumentException(
+                            "Unsupported LARO step type: " + step.stepType()
+                    );
+                }
                 if ("MOVE".equals(step.stepType())) {
                     requireNode(step.fromNode(), nodeIds);
                     requireNode(step.toNode(), nodeIds);
                 } else {
                     requireNode(step.nodeId(), nodeIds);
+                }
+                if ("SERVICE".equals(step.stepType())
+                        && (step.serviceKind() == null
+                        || !SUPPORTED_SERVICE_KINDS.contains(
+                                step.serviceKind()
+                        ))) {
+                    throw new IllegalArgumentException(
+                            "Unsupported LARO service kind: "
+                                    + step.serviceKind()
+                    );
                 }
             }
         }
@@ -411,7 +466,12 @@ public class SimulationPlaybackService {
             List<LaroPlanResponse.RobotPlan> robotPlans,
             Map<String, Long> nodeIds
     ) {
-        List<Map.Entry<String, Long>> outboundNodes = nodeIds.entrySet()
+        List<Map.Entry<String, Long>> outboundAccessNodes = nodeIds.entrySet()
+                .stream()
+                .filter(entry -> entry.getKey().matches("O_\\d+"))
+                .sorted(Map.Entry.comparingByKey())
+                .toList();
+        List<Map.Entry<String, Long>> logicalOutboundNodes = nodeIds.entrySet()
                 .stream()
                 .filter(entry -> entry.getKey().matches("O_[A-Z]"))
                 .sorted(Map.Entry.comparingByKey())
@@ -442,6 +502,23 @@ public class SimulationPlaybackService {
                 continue;
             }
 
+            // Some service-only access nodes are intentionally not persisted
+            // by the BE warehouse importer. Bind those AI node codes to the
+            // adjacent physical node found in the validated MOVE timeline.
+            // This covers empty-tote buffers and future facility access nodes
+            // without silently accepting arbitrary unknown route nodes.
+            if (isVirtualAccessCode(externalCode)) {
+                Long adjacentNodeId = findAdjacentPhysicalNodeId(
+                        externalCode,
+                        robotPlans,
+                        nodeIds
+                );
+                if (adjacentNodeId != null) {
+                    nodeIds.put(externalCode, adjacentNodeId);
+                    continue;
+                }
+            }
+
             if (externalCode.matches(
                     "OUT_STATION_\\d+_ACCESS_[A-Z]+"
             )) {
@@ -451,15 +528,49 @@ public class SimulationPlaybackService {
                                 "$1"
                         )
                 );
+                List<Map.Entry<String, Long>> stationNodes =
+                        outboundAccessNodes.isEmpty()
+                                ? logicalOutboundNodes
+                                : outboundAccessNodes;
                 if (stationNumber > 0
-                        && stationNumber <= outboundNodes.size()) {
+                        && stationNumber <= stationNodes.size()) {
                     nodeIds.put(
                             externalCode,
-                            outboundNodes.get(stationNumber - 1).getValue()
+                            stationNodes.get(stationNumber - 1).getValue()
                     );
                 }
             }
         }
+    }
+
+    private boolean isVirtualAccessCode(String nodeCode) {
+        return !nodeCode.startsWith("OUT_STATION_")
+                && (nodeCode.endsWith("_ACCESS")
+                || nodeCode.matches(".*_ACCESS_[A-Z]+")
+                || nodeCode.matches("ETB_\\d+"));
+    }
+
+    private Long findAdjacentPhysicalNodeId(
+            String virtualNodeCode,
+            List<LaroPlanResponse.RobotPlan> robotPlans,
+            Map<String, Long> nodeIds
+    ) {
+        for (LaroPlanResponse.RobotPlan robotPlan : robotPlans) {
+            for (LaroPlanResponse.PlanStep step : robotPlan.steps()) {
+                if (!"MOVE".equals(step.stepType())) {
+                    continue;
+                }
+                if (virtualNodeCode.equals(step.toNode())
+                        && nodeIds.containsKey(step.fromNode())) {
+                    return nodeIds.get(step.fromNode());
+                }
+                if (virtualNodeCode.equals(step.fromNode())
+                        && nodeIds.containsKey(step.toNode())) {
+                    return nodeIds.get(step.toNode());
+                }
+            }
+        }
+        return null;
     }
 
     private void cacheNodeCodes(Long warehouseId) {

@@ -1,6 +1,8 @@
 package com.aivle.be.optimization.client;
 
 import com.aivle.be.optimization.dto.request.LaroNativePlanRequest;
+import com.aivle.be.optimization.dto.request.LaroHitlResponseRequest;
+import com.aivle.be.optimization.dto.response.LaroHitlResponse;
 import com.aivle.be.optimization.dto.response.LaroPlanResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -34,5 +36,17 @@ public class LaroPlanningClient {
                 .body(request)
                 .retrieve()
                 .body(LaroPlanResponse.class);
+    }
+
+    public LaroHitlResponse respondToHumanInteraction(
+            String interactionId,
+            LaroHitlResponseRequest request
+    ) {
+        return restClient.post()
+                .uri("/hitl/{interactionId}/respond", interactionId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve()
+                .body(LaroHitlResponse.class);
     }
 }
