@@ -115,13 +115,40 @@ public class OperationDashboardService {
 
         return new OperationDashboardResponse(
                 buildSummary(tasks, robots, runtimeStates, statusCounts),
-                bucketByHour(tasks.stream().map(Task::getRequestedAt).toList()),
+                buildHourlyTaskVolume(tasks),
                 bucketByHour(events.stream().map(Event::getOccurredAt).toList()),
                 toStatusCounts(statusCounts),
                 buildWarehouseThroughput(tasksForComparison, warehouseNames),
                 buildRecentTasks(tasks, warehouseNames),
                 LocalDateTime.now().format(TIMESTAMP)
         );
+    }
+
+    /**
+     * 같은 조건의 작업을 자르지 않고 전부 돌려준다.
+     *
+     * <p>대시보드는 화면이 무거워지지 않게 최근 10건만 담는데,
+     * 「전체 보기」 팝업은 기간 안의 모든 작업을 보여줘야 해서 따로 둔다.
+     *
+     * @param warehouseId 창고 하나만 볼 때. null 이면 전체 창고
+     * @param startDate   조회 시작일 (포함)
+     * @param endDate     조회 종료일 (포함)
+     */
+    public List<OperationDashboardResponse.RecentTask> getTasks(
+            Long warehouseId,
+            LocalDate startDate,
+            LocalDate endDate
+    ) {
+        LocalDate from = startDate == null ? LocalDate.now() : startDate;
+        LocalDate to = endDate == null ? from : endDate;
+
+        List<Task> tasks = findTasks(
+                warehouseId,
+                from.atStartOfDay(),
+                to.plusDays(1).atStartOfDay()
+        );
+
+        return toRecentTasks(tasks, loadWarehouseNames());
     }
 
     /* =========================================================
@@ -281,7 +308,41 @@ public class OperationDashboardService {
                 .toList();
     }
 
-    /** 시각 목록을 2시간 단위 12칸으로 센다. */
+    /**
+     * 시간대별 작업량.
+     *
+     * <p>발생 건수와 그중 완료된 건수를 함께 담는다.
+     * 화면에서 "작업 수 / 완료 작업" 을 골라 그릴 수 있게 하기 위해서다.
+     * 두 값 모두 요청 시각(requestedAt) 기준으로 같은 칸에 넣는다.
+     */
+    private List<OperationDashboardResponse.HourlyCount> buildHourlyTaskVolume(List<Task> tasks) {
+        long[] totals = new long[HOUR_SLOTS.size()];
+        long[] completed = new long[HOUR_SLOTS.size()];
+
+        for (Task task : tasks) {
+            if (task.getRequestedAt() == null) {
+                continue;
+            }
+
+            int slot = task.getRequestedAt().getHour() / 2;
+            totals[slot]++;
+
+            if (task.getStatus() == TaskStatus.DONE) {
+                completed[slot]++;
+            }
+        }
+
+        List<OperationDashboardResponse.HourlyCount> result = new ArrayList<>();
+
+        for (int index = 0; index < HOUR_SLOTS.size(); index++) {
+            result.add(new OperationDashboardResponse.HourlyCount(
+                    HOUR_SLOTS.get(index), totals[index], completed[index]));
+        }
+
+        return result;
+    }
+
+    /** 시각 목록을 2시간 단위 12칸으로 센다. 이벤트처럼 완료 개념이 없는 값에 쓴다. */
     private List<OperationDashboardResponse.HourlyCount> bucketByHour(
             List<LocalDateTime> timestamps
     ) {
@@ -298,7 +359,7 @@ public class OperationDashboardService {
 
         for (int index = 0; index < HOUR_SLOTS.size(); index++) {
             result.add(new OperationDashboardResponse.HourlyCount(
-                    HOUR_SLOTS.get(index), buckets[index]));
+                    HOUR_SLOTS.get(index), buckets[index], 0L));
         }
 
         return result;
@@ -348,8 +409,17 @@ public class OperationDashboardService {
             List<Task> tasks,
             Map<Long, String> warehouseNames
     ) {
+        return toRecentTasks(
+                tasks.stream().limit(RECENT_TASK_LIMIT).toList(),
+                warehouseNames
+        );
+    }
+
+    private List<OperationDashboardResponse.RecentTask> toRecentTasks(
+            List<Task> tasks,
+            Map<Long, String> warehouseNames
+    ) {
         return tasks.stream()
-                .limit(RECENT_TASK_LIMIT)
                 .map(task -> new OperationDashboardResponse.RecentTask(
                         task.getId(),
                         "T-" + task.getId(),
@@ -357,7 +427,8 @@ public class OperationDashboardService {
                         task.getTaskType() == null ? null : task.getTaskType().name(),
                         task.getStatus() == null ? null : task.getStatus().name(),
                         format(task.getStartedAt()),
-                        format(task.getCompletedAt())
+                        format(task.getCompletedAt()),
+                        task.delayMinutes()
                 ))
                 .toList();
     }
