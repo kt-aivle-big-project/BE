@@ -1,7 +1,6 @@
 package com.aivle.be.simulationrun.controller;
 
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
-import com.aivle.be.simulationrun.controller.request.SimulationLaunchRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationStartRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
@@ -10,8 +9,8 @@ import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.simulationrun.controller.response.SimulationRunHistoryResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
-import com.aivle.be.simulationrun.controller.response.SimulationLaunchResponse;
-import com.aivle.be.simulationrun.service.SimulationLaunchService;
+import com.aivle.be.simulationrun.controller.response.SimulationStartResponse;
+import com.aivle.be.simulationrun.service.SimulationStartService;
 import com.aivle.be.simulationrun.service.SimulationRunService;
 import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.service.TaskService;
@@ -42,18 +41,8 @@ import java.util.List;
 public class SimulationRunController {
 
     private final SimulationRunService simulationRunService;
-    private final SimulationLaunchService simulationLaunchService;
+    private final SimulationStartService simulationStartService;
     private final TaskService taskService;
-
-    @Operation(summary = "시뮬레이션 생성, 시작, AI 계획 설치")
-    @PostMapping("/launch")
-    public ResponseEntity<SimulationLaunchResponse> launch(
-            @Valid @RequestBody SimulationLaunchRequest request,
-            @AuthenticationPrincipal String userId
-    ) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(simulationLaunchService.launch(request, parseUserId(userId)));
-    }
 
     @Operation(summary = "시뮬레이션 실행 생성")
     @PostMapping
@@ -67,12 +56,12 @@ public class SimulationRunController {
 
     @Operation(summary = "시뮬레이션 시작")
     @PostMapping("/{simulationRunId}/start")
-    public ResponseEntity<SimulationLaunchResponse> start(
+    public ResponseEntity<SimulationStartResponse> start(
             @PathVariable Long simulationRunId,
             @RequestBody(required = false) SimulationStartRequest request
     ) {
         return ResponseEntity.ok(
-                simulationLaunchService.startAndInstall(simulationRunId, request)
+                simulationStartService.startAndInstall(simulationRunId, request)
         );
     }
 
