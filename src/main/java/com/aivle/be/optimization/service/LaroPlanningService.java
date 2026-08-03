@@ -41,10 +41,12 @@ public class LaroPlanningService {
                         request
                 )
         );
-        simulationPlaybackService.installLaroPlan(
-                simulationRunId,
-                response
-        );
+        if (response != null && response.isValidated()) {
+            simulationPlaybackService.installLaroPlan(
+                    simulationRunId,
+                    response
+            );
+        }
         return response;
     }
 }

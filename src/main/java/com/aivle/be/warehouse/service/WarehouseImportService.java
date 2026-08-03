@@ -5,6 +5,7 @@ import com.aivle.be.chargingstation.repository.ChargingStationRepository;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.graph.service.AiRouteGraphSyncService;
+import com.aivle.be.optimization.service.AiPostgresContractSyncService;
 import com.aivle.be.product.entity.Product;
 import com.aivle.be.product.repository.ProductRepository;
 import com.aivle.be.robot.entity.Robot;
@@ -136,6 +137,7 @@ public class WarehouseImportService {
     private final ProductRepository productRepository;
     private final WarehouseItemRepository warehouseItemRepository;
     private final AiRouteGraphSyncService aiRouteGraphSyncService;
+    private final AiPostgresContractSyncService aiPostgresContractSyncService;
 
     @Transactional
     public WarehouseImportResponse importWarehouse(WarehouseImportRequest request, Long loginUserId) {
@@ -173,17 +175,34 @@ public class WarehouseImportService {
 
         // 4) 설비
         List<WarehouseNode> chargingSlots = nodesOf(nodes, NodeType.CHARGING_SLOT);
+        List<WarehouseNode> chargingJunctions =
+                nodesOf(nodes, NodeType.ROUTE_CHARGE_JUNCTION);
         List<WarehouseNode> racks = nodesOf(nodes, NodeType.RACK_STORAGE);
 
         createChargingStations(warehouse, chargingSlots);
         List<StorageLocation> locations = createStorageLocations(warehouse, racks);
         int stockedCount = createInitialInventory(warehouse, locations);
-        int robotCount = createRobots(warehouse, chargingSlots, request.robotCount());
+        // Charging slots are terminal one-way destinations in the AI route
+        // graph. A robot initialized there cannot leave the slot. Start robots
+        // on the adjacent route/charge junctions instead.
+        List<WarehouseNode> robotStartNodes = chargingJunctions.isEmpty()
+                ? chargingSlots
+                : chargingJunctions;
+        int robotCount = createRobots(
+                warehouse,
+                robotStartNodes,
+                request.robotCount()
+        );
         createScenarioPresets(warehouse, robotCount);
 
         int skipped = request.map().nodes().size() - nodes.size();
         String aiWarehouseId = aiRouteGraphSyncService.sync(
                 warehouse.getId(),
+                request.map()
+        );
+        aiPostgresContractSyncService.syncImportedWarehouse(
+                warehouse.getId(),
+                warehouse.getName(),
                 request.map()
         );
 

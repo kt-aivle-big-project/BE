@@ -54,6 +54,25 @@ public class Task {
     @Column(name = "item_id")
     private Long itemId;
 
+    /** AI 주문 계약과 연결되는 내부 식별자. 사용자에게 직접 입력받지 않는다. */
+    @Column(name = "order_id", length = 100)
+    private String orderId;
+
+    @Column(name = "operation_id", length = 100)
+    private String operationId;
+
+    @Column(name = "inbound_id", length = 100)
+    private String inboundId;
+
+    @Column(name = "operation_type", length = 30)
+    private String operationType;
+
+    @Column(name = "handling_unit_id", length = 100)
+    private String handlingUnitId;
+
+    @Column(name = "priority", length = 20)
+    private String priority;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "start_node_id", nullable = false)
     private WarehouseNode startNode;
@@ -130,6 +149,32 @@ public class Task {
         return releaseAtSeconds == null ? 0 : releaseAtSeconds;
     }
 
+    public void attachAiContract(
+            String operationId,
+            String orderId,
+            String inboundId,
+            String operationType,
+            String handlingUnitId,
+            String priority
+    ) {
+        if (operationId == null || operationId.isBlank()
+                || operationType == null || operationType.isBlank()) {
+            throw new IllegalArgumentException("AI operation contract is required.");
+        }
+        if (taskType == TaskType.OUTBOUND && (orderId == null || orderId.isBlank())) {
+            throw new IllegalArgumentException("Outbound task requires order_id.");
+        }
+        if (taskType == TaskType.INBOUND && (inboundId == null || inboundId.isBlank())) {
+            throw new IllegalArgumentException("Inbound task requires inbound_id.");
+        }
+        this.operationId = operationId;
+        this.orderId = orderId;
+        this.inboundId = inboundId;
+        this.operationType = operationType;
+        this.handlingUnitId = handlingUnitId;
+        this.priority = priority;
+    }
+
     /**
      * 시뮬레이션 내 작업 발생 시각을 지정한다. (시나리오 타임라인용)
      */
@@ -191,6 +236,20 @@ public class Task {
         }
         this.status = TaskStatus.DONE;
         this.completedAt = LocalDateTime.now();
+    }
+
+    /**
+     * Installs the assignment selected by a validated external plan.
+     * A solver may queue multiple tasks for the same robot, so this transition
+     * intentionally does not apply the interactive assignment availability rule.
+     */
+    public void assignFromValidatedPlan(Robot robot) {
+        if (this.status != TaskStatus.PENDING) {
+            throw new BusinessException(ErrorCode.TASK_ALREADY_PROCESSED);
+        }
+        this.robot = robot;
+        this.status = TaskStatus.ASSIGNED;
+        this.assignedAt = LocalDateTime.now();
     }
 
     public void fail() {

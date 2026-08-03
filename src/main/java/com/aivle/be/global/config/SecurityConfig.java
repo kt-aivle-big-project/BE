@@ -48,8 +48,11 @@ public class SecurityConfig {
             "/swagger-ui/**",
             "/v3/api-docs/**",
             "/actuator/health",
+            "/websocket-test.html",
             "/ws",
-            "/ws/**"
+            "/ws/**",
+            "/ws-native",
+            "/ws-native/**"
     };
 
     @Bean

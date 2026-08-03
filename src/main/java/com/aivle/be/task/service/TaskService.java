@@ -13,6 +13,7 @@ import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.optimization.service.AiPostgresContractSyncService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ public class TaskService {
     private final SimulationRunRobotRepository simulationRunRobotRepository;
     private final SimulationRunProgressService simulationRunProgressService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final AiPostgresContractSyncService aiPostgresContractSyncService;
 
     @Transactional
     public TaskResponse createTask(TaskCreateRequest request) {
@@ -113,6 +115,7 @@ public class TaskService {
         Task task = findTaskOrThrow(taskId);
         task.complete();
         taskInventoryService.applyCompletion(task);
+        aiPostgresContractSyncService.syncTaskCompletion(task);
         TaskResponse response = broadcast(task);
         evaluateRun(task);
         return response;

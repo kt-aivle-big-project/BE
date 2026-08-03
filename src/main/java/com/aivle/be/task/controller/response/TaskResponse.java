@@ -18,6 +18,12 @@ public record TaskResponse(
         Long itemId,
         Long robotId,
         Integer quantity,
+        String operationId,
+        String orderId,
+        String inboundId,
+        String operationType,
+        String handlingUnitId,
+        String priority,
         LocalDateTime requestedAt,
         LocalDateTime assignedAt
 ) {
@@ -34,6 +40,12 @@ public record TaskResponse(
                 task.getEffectiveItemId(),
                 task.getRobot() != null ? task.getRobot().getId() : null,
                 task.getQuantity(),
+                task.getOperationId(),
+                task.getOrderId(),
+                task.getInboundId(),
+                task.getOperationType(),
+                task.getHandlingUnitId(),
+                task.getPriority(),
                 task.getRequestedAt(),
                 task.getAssignedAt()
         );

@@ -41,13 +41,16 @@ public class SimulationPlaybackService {
     private final RobotRepository robotRepository;
     private final WarehouseNodeRepository warehouseNodeRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final PlanTaskLifecycleService planTaskLifecycleService;
 
     private final Map<Long, LaroPlaybackContext> contexts =
             new ConcurrentHashMap<>();
     private final Map<Long, String> nodeCodeCache =
             new ConcurrentHashMap<>();
+    private final Map<Long, Long> completedClockMillis =
+            new ConcurrentHashMap<>();
 
-    @Transactional(readOnly = true)
+    @Transactional
     public void installLaroPlan(
             Long simulationRunId,
             LaroPlanResponse response
@@ -113,6 +116,10 @@ public class SimulationPlaybackService {
         addLaroNodeAliases(response.plan().robots(), nodeIds);
         validateLaroNodes(response.plan().robots(), nodeIds);
         cacheNodeCodes(warehouseId);
+        planTaskLifecycleService.installAssignments(
+                simulationRunId,
+                response.plan().logicalOperations()
+        );
 
         List<LaroPlaybackContext.ScheduledStep> steps =
                 LaroPlaybackContext.flatten(response.plan().robots());
@@ -132,6 +139,7 @@ public class SimulationPlaybackService {
                         speed
                 )
         );
+        completedClockMillis.remove(simulationRunId);
 
         log.info(
                 "[LARO playback] runId={} planId={} robots={} steps={}",
@@ -165,6 +173,8 @@ public class SimulationPlaybackService {
             }
 
             if (context.isFinished()) {
+                completedClockMillis.put(runId, context.getClockMillis());
+                planTaskLifecycleService.completeAssignedTasks(runId);
                 contexts.remove(runId);
                 log.info(
                         "[LARO playback] runId={} planId={} completed at {}ms",
@@ -345,7 +355,9 @@ public class SimulationPlaybackService {
 
     public long currentClockMillis(Long simulationRunId) {
         LaroPlaybackContext context = contexts.get(simulationRunId);
-        return context == null ? 0 : context.getClockMillis();
+        return context == null
+                ? completedClockMillis.getOrDefault(simulationRunId, 0L)
+                : context.getClockMillis();
     }
 
     private void publish(Long simulationRunId, RobotState state) {

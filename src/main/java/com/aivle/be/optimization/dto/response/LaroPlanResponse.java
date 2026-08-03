@@ -70,11 +70,21 @@ public record LaroPlanResponse(
             @JsonProperty("station_reservations")
             List<JsonNode> stationReservations,
             @JsonProperty("logical_operations")
-            List<JsonNode> logicalOperations,
+            List<LogicalOperation> logicalOperations,
             @JsonProperty("handover_points")
             List<JsonNode> handoverPoints,
             @JsonProperty("supersedes_plan_id")
             String supersedesPlanId
+    ) {
+    }
+
+    public record LogicalOperation(
+            @JsonProperty("operation_id")
+            String operationId,
+            @JsonProperty("operation_type")
+            String operationType,
+            @JsonProperty("assigned_robot_id")
+            String assignedRobotId
     ) {
     }
 
