@@ -48,6 +48,12 @@ public class RobotRuntime {
     private Phase phase = Phase.IDLE;
     private RobotStatus status = RobotStatus.IDLE;
 
+    // 재계획을 위해 안전 정지한 상태인지 여부
+    private boolean pausedForReplanning = false;
+
+    // 재계획 종료 후 복구할 화면 표시 상태
+    private RobotStatus statusBeforeReplanningPause;
+
     // 이 시뮬레이션 시각(ms)까지는 현재 동작을 수행 중.
     // 시계가 이 값을 넘어야 다음 동작으로 넘어간다.
     private long busyUntilMillis = 0L;
@@ -117,6 +123,56 @@ public class RobotRuntime {
     public void stopMoving() {
         this.previousNodeId = null;
     }
+    /**
+     * 재계획을 위해 현재 안전 위치에서 정지한다.
+     * phase와 remainingPath는 유지해 기존 진행 단계를 보존한다.
+     */
+    public void pauseForReplanning() {
+        if (pausedForReplanning
+                || status == RobotStatus.ERROR
+                || status == RobotStatus.OFFLINE) {
+            return;
+        }
+
+        statusBeforeReplanningPause = status;
+        pausedForReplanning = true;
+        status = RobotStatus.PAUSED;
+        stopMoving();
+    }
+
+    /**
+     * 재계획이 끝난 뒤 정지 전 상태로 복귀한다.
+     */
+    public void resumeAfterReplanning() {
+        if (!pausedForReplanning) {
+            return;
+        }
+
+        pausedForReplanning = false;
+
+        // 재계획 대기 중 고장·오프라인이 됐다면 해당 상태를 유지한다.
+        if (status == RobotStatus.ERROR
+                || status == RobotStatus.OFFLINE) {
+            statusBeforeReplanningPause = null;
+            return;
+        }
+
+        status = statusBeforeReplanningPause == null
+                ? RobotStatus.IDLE
+                : statusBeforeReplanningPause;
+
+        statusBeforeReplanningPause = null;
+    }
+    /**
+     * 재계획을 시작할 수 있을 만큼 정지된 상태인지 확인한다.
+     * 고장·오프라인 로봇은 이미 정지된 것으로 본다.
+     */
+    public boolean isStoppedForReplanning() {
+        return pausedForReplanning
+                || status == RobotStatus.ERROR
+                || status == RobotStatus.OFFLINE;
+    }
+
 
     public void consumeMoveBattery() {
         consumeBattery(moveBatteryRate);

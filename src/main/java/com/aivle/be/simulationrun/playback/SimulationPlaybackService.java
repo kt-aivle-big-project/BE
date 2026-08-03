@@ -204,7 +204,9 @@ public class SimulationPlaybackService {
                 continue;
             }
 
-            advance(context, tickMillis);
+            synchronized (context) {
+                advance(context, tickMillis);
+            }
 
             if (context.isFinished()) {
                 contexts.remove(runId);
@@ -215,6 +217,13 @@ public class SimulationPlaybackService {
     }
 
     private void advance(PlaybackContext context, long tickMillis) {
+        // 모든 로봇의 안전 정지가 완료되면 DB 상태 전환 전이라도
+        // 시뮬레이션 시계와 작업 발생을 즉시 멈춘다.
+        if (context.isReplanRequested()
+                && context.areAllRobotsStoppedForReplanning()) {
+            return;
+        }
+
         long simulatedMillis = context.advanceClock(tickMillis);
 
         // 1) 발생 시각이 된 작업 투입
@@ -241,6 +250,14 @@ public class SimulationPlaybackService {
             RobotRuntime robot,
             long simulatedMillis
     ) {
+        if (robot.getStatus() == RobotStatus.ERROR
+                || robot.getStatus() == RobotStatus.OFFLINE) {
+            return;
+        }
+
+        if (pauseIfReadyForReplanning(context, robot)) {
+            return;
+        }
         if (robot.getPhase() == RobotRuntime.Phase.CHARGING) {
             charge(context, robot, simulatedMillis);
             return;
@@ -281,6 +298,49 @@ public class SimulationPlaybackService {
                 return;
             }
         }
+    }
+
+    /**
+     * 재계획 요청 시 로봇을 현재 동작의 안전한 종료 지점에서 멈춘다.
+     */
+    private boolean pauseIfReadyForReplanning(
+            PlaybackContext context,
+            RobotRuntime robot
+    ) {
+        if (!context.isReplanRequested()) {
+            return false;
+        }
+
+        if (robot.isStoppedForReplanning()) {
+            return true;
+        }
+
+        switch (robot.getPhase()) {
+            case IDLE, CHARGING -> {
+                robot.pauseForReplanning();
+                publish(context, robot);
+                return true;
+            }
+
+            case MOVING_TO_START, MOVING_TO_END, PICKING -> {
+                if (context.getClockMillis() >= robot.getBusyUntilMillis()) {
+                    robot.pauseForReplanning();
+                    publish(context, robot);
+                    return true;
+                }
+            }
+
+            case DROPPING -> {
+                if (context.getClockMillis() >= robot.getBusyUntilMillis()) {
+                    finishTask(context, robot);
+                    robot.pauseForReplanning();
+                    publish(context, robot);
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /** 유휴 로봇이 대기 중인 작업을 집어간다. */
@@ -573,6 +633,73 @@ public class SimulationPlaybackService {
        정리 / 유틸
     ========================================================= */
 
+    /**
+     * 실행 중인 모든 정상 로봇에 재계획 안전 정지를 요청한다.
+     *
+     * 로봇은 현재 이동 한 칸 또는 진행 중인 짧은 작업을 마친 뒤 정지한다.
+     *
+     * @return 재생 중인 실행에 요청을 등록했으면 true
+     */
+    public boolean requestReplanningStop(Long simulationRunId) {
+        PlaybackContext context = contexts.get(simulationRunId);
+
+        if (context == null) {
+            return false;
+        }
+
+        synchronized (context) {
+            context.requestReplanning();
+
+            for (RobotRuntime robot : context.getRobots()) {
+                if (robot.getPhase() == RobotRuntime.Phase.IDLE) {
+                    robot.pauseForReplanning();
+                    publish(context, robot);
+                }
+            }
+
+            return true;
+        }
+    }
+
+    /**
+     * 모든 정상 로봇이 재계획을 위한 안전 정지를 완료했는지 확인한다.
+     */
+    public boolean areAllRobotsStoppedForReplanning(Long simulationRunId) {
+        PlaybackContext context = contexts.get(simulationRunId);
+
+        if (context == null) {
+            return false;
+        }
+
+        synchronized (context) {
+            return context.areAllRobotsStoppedForReplanning();
+        }
+    }
+
+    /**
+     * 재계획 완료 후 정상 로봇들의 정지를 해제한다.
+     */
+    public boolean finishReplanning(Long simulationRunId) {
+        PlaybackContext context = contexts.get(simulationRunId);
+
+        if (context == null) {
+            return false;
+        }
+
+        synchronized (context) {
+            context.finishReplanning();
+
+            for (RobotRuntime robot : context.getRobots()) {
+                if (robot.getStatus() != RobotStatus.ERROR
+                        && robot.getStatus() != RobotStatus.OFFLINE) {
+                    publish(context, robot);
+                }
+            }
+
+            return true;
+        }
+    }
+
     public void clear(Long simulationRunId) {
         contexts.remove(simulationRunId);
     }
@@ -584,6 +711,7 @@ public class SimulationPlaybackService {
      * 다음 tick 에 덮어써져 화면이 한 번 튄다. 반드시 이 메서드를 통해야 한다.
      *
      * ERROR 로봇은 tick 에서 건너뛰므로 더 이상 움직이지 않는다.
+     * 현재 task/phase/path는 AI 입력 및 향후 복구를 위해 보존한다.
      *
      * @return 재생 중이어서 실제로 반영했으면 true
      */
@@ -594,25 +722,28 @@ public class SimulationPlaybackService {
             return false;
         }
 
-        for (RobotRuntime robot : context.getRobots()) {
-            if (!robotId.equals(robot.getRobotId())) {
-                continue;
+        synchronized (context) {
+            for (RobotRuntime robot : context.getRobots()) {
+                if (!robotId.equals(robot.getRobotId())) {
+                    continue;
+                }
+
+                robot.setStatus(RobotStatus.ERROR);
+                robot.stopMoving();
+
+                publish(context, robot);
+
+                log.info(
+                        "[재생] runId={} 로봇 {} 고장 처리",
+                        simulationRunId,
+                        robotId
+                );
+
+                return true;
             }
 
-            context.releaseChargingNode(robot.getChargingNodeId());
-            robot.clearChargingStation();
-            robot.setCurrentTaskId(null);
-            robot.setPhase(RobotRuntime.Phase.IDLE);
-            robot.setStatus(RobotStatus.ERROR);
-            robot.stopMoving();
-
-            publish(context, robot);
-
-            log.info("[재생] runId={} 로봇 {} 고장 처리", simulationRunId, robotId);
-            return true;
+            return false;
         }
-
-        return false;
     }
 
     /**

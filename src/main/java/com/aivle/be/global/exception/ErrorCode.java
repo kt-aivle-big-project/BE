@@ -58,6 +58,26 @@ public enum ErrorCode {
 
     INVALID_INBOUND_RATIO(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_011", "입고 품목 구성 비율의 합계는 100%여야 합니다."),
     INVALID_SIMULATION_SPEED(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_012", "허용되지 않는 실행 배속입니다."),
+    REPLANNING_STOP_TIMEOUT(
+            HttpStatus.REQUEST_TIMEOUT,
+            "SIMULATION_RUN_013",
+            "재계획을 위한 로봇 안전 정지가 제한 시간 내 완료되지 않았습니다."
+    ),
+    REOPTIMIZATION_AI_FAILED(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "SIMULATION_RUN_014",
+            "AI 재계획 요청을 처리하지 못했습니다."
+    ),
+    REOPTIMIZATION_ALREADY_IN_PROGRESS(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_015",
+            "해당 시뮬레이션 실행의 재계획이 이미 진행 중입니다."
+    ),
+    REOPTIMIZATION_PLAN_CONTRACT_INCOMPLETE(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_016",
+            "현재 AI 응답 계약으로는 작업별 실행 계획을 적용할 수 없습니다."
+    ),
 
     STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),
 

@@ -19,9 +19,13 @@ import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.Map;
@@ -30,6 +34,9 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class EventService {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(EventService.class);
 
     private static final Set<EventType> PATH_OVERLAP_CHECK_TYPES =
             Set.of(EventType.COLLISION_RISK, EventType.PATH_BLOCKED);
@@ -79,7 +86,7 @@ public class EventService {
 
         messagingTemplate.convertAndSend(TOPIC, response);
 
-        triggerReoptimizationIfNeeded(saved);
+        triggerReoptimizationAfterCommitIfNeeded(saved);
 
         return response;
     }
@@ -103,7 +110,7 @@ public class EventService {
         return response;
     }
 
-    private void triggerReoptimizationIfNeeded(Event event) {
+    private void triggerReoptimizationAfterCommitIfNeeded(Event event) {
         ReoptimizationReason reason = REOPT_TRIGGERS.get(event.getEventType());
         if (reason == null) {
             return;
@@ -114,16 +121,49 @@ public class EventService {
 
         Long simulationRunId = event.getTask().getSimulationRun().getId();
         Long triggerRobotId = event.getRobot() == null ? null : event.getRobot().getId();
-
-        reoptimizationService.reoptimize(
-                simulationRunId,
+        ReoptimizationRequest reoptimizationRequest =
                 new ReoptimizationRequest(
                         reason,
                         triggerRobotId,
                         List.of(),
                         event.getDescription()
-                )
-        );
+                );
+
+        Runnable trigger = () -> {
+            try {
+                reoptimizationService.reoptimize(
+                        simulationRunId,
+                        reoptimizationRequest
+                );
+            } catch (BusinessException exception) {
+                log.warn(
+                        "이벤트 후 재계획이 정지 상태로 종료됨: runId={}, errorCode={}",
+                        simulationRunId,
+                        exception.getErrorCode().getCode()
+                );
+            } catch (RuntimeException exception) {
+                log.error(
+                        "이벤트 후 재계획 처리 실패: runId={}",
+                        simulationRunId,
+                        exception
+                );
+            }
+        };
+
+        if (TransactionSynchronizationManager
+                .isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                    new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            trigger.run();
+                        }
+                    }
+            );
+            return;
+        }
+
+        trigger.run();
     }
 
     private Event findEventOrThrow(Long eventId) {

@@ -8,6 +8,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
+import org.springframework.web.client.RestClientException;
 
 @Component
 public class OptimizationClient {
@@ -36,11 +39,28 @@ public class OptimizationClient {
     public ReoptimizationResponse reoptimize(
             ReoptimizationOptimizationRequest request
     ) {
-        return restClient.post()
-                .uri("/reoptimize")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(request)
-                .retrieve()
-                .body(ReoptimizationResponse.class);
+        try {
+            ReoptimizationResponse response = restClient.post()
+                    .uri("/reoptimize")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(ReoptimizationResponse.class);
+
+            if (response == null) {
+                throw new BusinessException(
+                        ErrorCode.REOPTIMIZATION_AI_FAILED
+                );
+            }
+
+            return response;
+        } catch (BusinessException exception) {
+            throw exception;
+        } catch (RestClientException exception) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_AI_FAILED,
+                    exception
+            );
+        }
     }
 }

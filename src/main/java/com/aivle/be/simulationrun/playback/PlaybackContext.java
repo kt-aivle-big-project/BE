@@ -51,6 +51,9 @@ public class PlaybackContext {
     // 실행 배속. 진행 중에도 변경할 수 있다.
     private double speed;
 
+    // 전역 재계획을 위해 로봇들의 안전 정지를 요청한 상태
+    private boolean replanRequested = false;
+
     // 동작별 소요 시간(ms)
     private final long moveMillisPerNode;
     private final long pickingMillis;
@@ -94,6 +97,29 @@ public class PlaybackContext {
      */
     public void changeSpeed(double newSpeed) {
         this.speed = newSpeed <= 0 ? 1.0 : newSpeed;
+    }
+
+    /**
+     * 전체 로봇에 재계획 안전 정지를 요청한다.
+     */
+    public void requestReplanning() {
+        this.replanRequested = true;
+    }
+
+    /**
+     * 정상 로봇이 모두 재계획 정지 상태가 되었는지 확인한다.
+     */
+    public boolean areAllRobotsStoppedForReplanning() {
+        return robots.stream()
+                .allMatch(RobotRuntime::isStoppedForReplanning);
+    }
+
+    /**
+     * 재계획 완료 후 모든 정상 로봇의 정지를 해제한다.
+     */
+    public void finishReplanning() {
+        robots.forEach(RobotRuntime::resumeAfterReplanning);
+        this.replanRequested = false;
     }
 
     /**
