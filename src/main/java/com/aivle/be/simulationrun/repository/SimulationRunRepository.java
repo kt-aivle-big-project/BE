@@ -26,6 +26,9 @@ public interface SimulationRunRepository extends JpaRepository<SimulationRun, Lo
             Collection<SimulationRunStatus> statuses
     );
 
+    /** 운영 대시보드에서 실행 중인 로봇 상태를 모을 때 쓴다. */
+    List<SimulationRun> findAllByStatusIn(Collection<SimulationRunStatus> statuses);
+
     /**
      * 특정 사용자가 실행한 시뮬레이션 목록 (최신순).
      */

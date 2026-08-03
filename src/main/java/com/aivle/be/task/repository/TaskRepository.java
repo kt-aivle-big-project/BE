@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 
@@ -37,4 +38,20 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     @Modifying(flushAutomatically = true)
     @Query("update Task task set task.robot = null where task.robot.id = :robotId")
     void clearRobotReference(@Param("robotId") Long robotId);
+
+    /* =========================================================
+       운영 대시보드 집계
+       요청 시각(requestedAt) 기준으로 기간을 자른다.
+    ========================================================= */
+
+    List<Task> findAllByRequestedAtGreaterThanEqualAndRequestedAtLessThanOrderByRequestedAtDesc(
+            LocalDateTime from,
+            LocalDateTime to
+    );
+
+    List<Task> findAllByWarehouse_IdAndRequestedAtGreaterThanEqualAndRequestedAtLessThanOrderByRequestedAtDesc(
+            Long warehouseId,
+            LocalDateTime from,
+            LocalDateTime to
+    );
 }

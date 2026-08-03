@@ -16,12 +16,11 @@ spring:
     init:
       mode: ${SQL_INIT_MODE:always}
       continue-on-error: false
+      # 창고 지도는 여기서 넣지 않는다.
+      # DefaultWarehouseSeeder 가 db/maps 의 JSON 을 읽어
+      # 화면 업로드와 똑같은 경로로 만든다.
       data-locations:
         - classpath:db/seed/V01_base.sql
-        - classpath:db/seed/V02_warehouse_1.sql
-        - classpath:db/seed/V03_warehouse_2.sql
-        - classpath:db/seed/V04_warehouse_3.sql
-        - classpath:db/seed/V05_inventory.sql
 
   jpa:
     # Hibernate 가 테이블을 만든 뒤에 위 SQL 이 실행되도록 미룬다.
