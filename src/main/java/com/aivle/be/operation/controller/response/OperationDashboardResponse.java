@@ -49,7 +49,20 @@ public record OperationDashboardResponse(
     /** key 는 화면의 상태 구분값(AVAILABLE, WORKING, ...)이다. */
     public record StatusCount(String key, long count) {}
 
-    public record WarehouseCount(Long warehouseId, String warehouseName, long count) {}
+    /**
+     * 창고별 처리량.
+     *
+     * @param count          완료 작업 수
+     * @param totalCount     기간 내 발생한 전체 작업 수
+     * @param completionRate 완료 비율(%)
+     */
+    public record WarehouseCount(
+            Long warehouseId,
+            String warehouseName,
+            long count,
+            long totalCount,
+            int completionRate
+    ) {}
 
     public record RecentTask(
             Long taskId,

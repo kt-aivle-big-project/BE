@@ -103,6 +103,12 @@ public class OperationDashboardService {
         List<Event> events = findEvents(warehouseId, fromTime, toTime);
         List<Robot> robots = findRobots(warehouseId);
 
+        // 창고별 처리량은 창고끼리 비교하는 그래프라 창고 필터를 걸지 않는다.
+        // 필터를 걸면 고르지 않은 창고가 0 으로 나와 "작업이 없다"처럼 보인다.
+        List<Task> tasksForComparison = warehouseId == null
+                ? tasks
+                : findTasks(null, fromTime, toTime);
+
         Map<Long, String> warehouseNames = loadWarehouseNames();
         Map<Long, RobotState> runtimeStates = loadRuntimeStates(warehouseId);
         Map<String, Long> statusCounts = countRobotStatus(robots, runtimeStates);
@@ -112,7 +118,7 @@ public class OperationDashboardService {
                 bucketByHour(tasks.stream().map(Task::getRequestedAt).toList()),
                 bucketByHour(events.stream().map(Event::getOccurredAt).toList()),
                 toStatusCounts(statusCounts),
-                buildWarehouseThroughput(tasks, warehouseNames),
+                buildWarehouseThroughput(tasksForComparison, warehouseNames),
                 buildRecentTasks(tasks, warehouseNames),
                 LocalDateTime.now().format(TIMESTAMP)
         );
@@ -298,27 +304,42 @@ public class OperationDashboardService {
         return result;
     }
 
-    /** 창고별 완료 작업 수. 작업이 없는 창고도 0 으로 보여 준다. */
+    /**
+     * 창고별 완료 작업 수.
+     *
+     * <p>창고를 하나 골라도 전체 창고를 함께 보여 준다. 비교가 목적이기 때문이다.
+     * 작업이 없는 창고는 0 으로 나온다.
+     */
     private List<OperationDashboardResponse.WarehouseCount> buildWarehouseThroughput(
             List<Task> tasks,
             Map<Long, String> warehouseNames
     ) {
-        Map<Long, Long> counts = new LinkedHashMap<>();
+        Map<Long, Long> doneCounts = new LinkedHashMap<>();
+        Map<Long, Long> totalCounts = new LinkedHashMap<>();
 
         for (Task task : tasks) {
-            if (task.getStatus() != TaskStatus.DONE) {
-                continue;
-            }
-
             Long id = task.getWarehouse().getId();
-            counts.merge(id, 1L, Long::sum);
+
+            totalCounts.merge(id, 1L, Long::sum);
+
+            if (task.getStatus() == TaskStatus.DONE) {
+                doneCounts.merge(id, 1L, Long::sum);
+            }
         }
 
         return warehouseNames.entrySet().stream()
-                .map(entry -> new OperationDashboardResponse.WarehouseCount(
-                        entry.getKey(),
-                        entry.getValue(),
-                        counts.getOrDefault(entry.getKey(), 0L)))
+                .map(entry -> {
+                    long done = doneCounts.getOrDefault(entry.getKey(), 0L);
+                    long total = totalCounts.getOrDefault(entry.getKey(), 0L);
+
+                    return new OperationDashboardResponse.WarehouseCount(
+                            entry.getKey(),
+                            entry.getValue(),
+                            done,
+                            total,
+                            total == 0 ? 0 : (int) Math.round(done * 100.0 / total)
+                    );
+                })
                 .sorted((left, right) -> Long.compare(left.warehouseId(), right.warehouseId()))
                 .toList();
     }
