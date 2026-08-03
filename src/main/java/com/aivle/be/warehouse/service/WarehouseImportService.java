@@ -33,6 +33,7 @@ import com.aivle.be.warehousezone.repository.WarehouseZoneRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -70,7 +71,8 @@ import java.util.Set;
  *   왕복 두 줄은 BOTH 한 줄로 합침
  * </pre>
  *
- * <p>이 변환은 {@code tools/generate_warehouse_seed.py} 와 같은 규칙이다.
+ * <p>기본 창고 3개도 {@link DefaultWarehouseSeeder} 를 통해 이 서비스로 만들어진다.
+ * 지도를 다루는 경로는 여기 하나뿐이다.
  * 기본 창고 3개는 그 스크립트로 미리 만들고, 사용자가 추가하는 창고는 여기서 만든다.
  */
 @Service
@@ -134,22 +136,34 @@ public class WarehouseImportService {
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
     private final WarehouseItemRepository warehouseItemRepository;
+    private final JdbcTemplate jdbcTemplate;
 
+    /** 화면에서 지도를 올려 창고를 만든다. 항상 개인 창고다. */
     @Transactional
     public WarehouseImportResponse importWarehouse(WarehouseImportRequest request, Long loginUserId) {
-        User owner = findOwner(request.userId(), loginUserId);
+        return importWarehouse(request, loginUserId, false, null);
+    }
 
-        Warehouse warehouse = warehouseRepository.save(
-                Warehouse.create(
-                        request.name(),
-                        request.width(),
-                        request.height(),
-                        owner,
-                        request.location(),
-                        request.description(),
-                        request.status()
-                )
-        );
+    /**
+     * 지도로 창고를 만든다.
+     *
+     * @param shared  공용 창고로 표시할지. 앱 시작 시 넣는 기본 창고에만 true.
+     * @param fixedId 창고 ID 를 못 박고 싶을 때. null 이면 자동 부여.
+     *                기본 창고는 화면과 저장된 선택값이 ID 를 기준으로 하므로 1·2·3 으로 고정한다.
+     */
+    @Transactional
+    public WarehouseImportResponse importWarehouse(
+            WarehouseImportRequest request,
+            Long loginUserId,
+            boolean shared,
+            Long fixedId
+    ) {
+        User owner = findOwner(request.userId(), loginUserId);
+        Warehouse warehouse = createWarehouse(request, owner, fixedId);
+
+        if (shared) {
+            warehouse.markShared();
+        }
 
         // 1) 노드
         List<WarehouseNode> nodes = createNodes(warehouse, request.map().nodes());
@@ -479,7 +493,7 @@ public class WarehouseImportService {
      * 재고가 하나도 없으면 출고 30건을 요청해도 0건이 나오고
      * 입고 작업만 남는다. 그래서 창고를 만들 때 씨앗 재고를 같이 넣는다.
      *
-     * <p>기본 창고 3개에 {@code V05_inventory.sql} 이 넣는 값과 같은 규칙이다.
+     * <p>랙 10곳에 품목을 돌아가며 50개씩 넣는다.
      * 랙 10곳에 품목을 돌아가며 50개씩.
      */
     private int createInitialInventory(Warehouse warehouse, List<StorageLocation> locations) {
@@ -564,6 +578,56 @@ public class WarehouseImportService {
     /* =========================================================
        보조
     ========================================================= */
+
+    /**
+     * 창고 행을 만든다.
+     *
+     * <p>ID 를 지정한 경우에는 JPA 가 아니라 SQL 로 직접 넣는다.
+     * 기본키가 자동 증가라 엔티티로는 ID 를 정할 수 없기 때문이다.
+     * 넣은 뒤에는 자동 증가 값을 최대 ID 뒤로 밀어 다음 창고와 겹치지 않게 한다.
+     */
+    private Warehouse createWarehouse(
+            WarehouseImportRequest request,
+            User owner,
+            Long fixedId
+    ) {
+        if (fixedId == null) {
+            return warehouseRepository.save(
+                    Warehouse.create(
+                            request.name(),
+                            request.width(),
+                            request.height(),
+                            owner,
+                            request.location(),
+                            request.description(),
+                            request.status()
+                    )
+            );
+        }
+
+        Warehouse.WarehouseStatus status = request.status() == null
+                ? Warehouse.WarehouseStatus.ACTIVE
+                : request.status();
+
+        jdbcTemplate.update("""
+                        INSERT INTO warehouse_layout
+                            (id, name, width, height, user_id, location, description,
+                             status, is_shared, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, false, NOW(), NOW())
+                        """,
+                fixedId, request.name(), request.width(), request.height(),
+                owner.getId(), request.location(), request.description(), status.name());
+
+        jdbcTemplate.execute("""
+                SELECT setval(
+                    pg_get_serial_sequence('warehouse_layout', 'id'),
+                    GREATEST((SELECT COALESCE(MAX(id), 1) FROM warehouse_layout), 1),
+                    true)
+                """);
+
+        return warehouseRepository.findById(fixedId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
+    }
 
     private User findOwner(Long requestedUserId, Long loginUserId) {
         Long userId = requestedUserId != null ? requestedUserId : loginUserId;
