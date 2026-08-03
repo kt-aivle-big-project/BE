@@ -8,6 +8,8 @@ import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
 import com.aivle.be.optimization.dto.response.ReoptimizationCompletedEvent;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
+import com.aivle.be.optimization.entity.ReoptimizationPlanStage;
+import com.aivle.be.optimization.staging.ReoptimizationActivationPlan;
 import com.aivle.be.optimization.staging.ReoptimizationPlanStageCommand;
 import com.aivle.be.optimization.validation.ReoptimizationPlanContractValidator;
 import com.aivle.be.optimization.validation.ReoptimizationPlanStalenessValidator;
@@ -66,6 +68,7 @@ public class ReoptimizationService {
     private final WarehouseEdgeRepository warehouseEdgeRepository;
     private final OptimizationClient optimizationClient;
     private final ReoptimizationPlanStagingService planStagingService;
+    private final ReoptimizationPlanApplicationService planApplicationService;
     private final SimulationPlaybackService simulationPlaybackService;
     private final SimpMessagingTemplate messagingTemplate;
     private final TransactionTemplate transactionTemplate;
@@ -186,13 +189,18 @@ public class ReoptimizationService {
                 runtimeSnapshot,
                 stagingSnapshot
         );
-        stageValidatedPlan(fastApiRequest, response);
-        throw rejectionUntilPlanApplicationIsImplemented(response);
+        stageAndApplyValidatedPlan(
+                fastApiRequest,
+                response,
+                runtimeSnapshot
+        );
+        throw rejectionUntilPlanActivationIsImplemented(response);
     }
 
-    private void stageValidatedPlan(
+    private void stageAndApplyValidatedPlan(
             ReoptimizationOptimizationRequest request,
-            ReoptimizationResponse response
+            ReoptimizationResponse response,
+            ReplanningSnapshot requestedSnapshot
     ) {
         if (response.status()
                 != ReoptimizationResponse.Status.SUCCEEDED) {
@@ -205,6 +213,28 @@ public class ReoptimizationService {
                         response
                 );
         planStagingService.stage(command);
+
+        ReplanningSnapshot applicationSnapshot =
+                captureCurrentSnapshotForValidation(
+                        request.simulationRunId()
+                );
+        validateSnapshotIsCurrent(
+                request,
+                response,
+                requestedSnapshot,
+                applicationSnapshot
+        );
+        ReoptimizationActivationPlan applied = planApplicationService.apply(
+                request.simulationRunId(),
+                request.replanId(),
+                request.snapshotVersion()
+        );
+        if (applied.status()
+                != ReoptimizationPlanStage.Status.DB_APPLIED) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_PLAN_APPLY_FAILED
+            );
+        }
     }
 
     private void validateRunningSimulation(Long simulationRunId) {
@@ -365,7 +395,7 @@ public class ReoptimizationService {
         }
     }
 
-    private BusinessException rejectionUntilPlanApplicationIsImplemented(
+    private BusinessException rejectionUntilPlanActivationIsImplemented(
             ReoptimizationResponse response
     ) {
         if (response.status() == null
@@ -384,11 +414,11 @@ public class ReoptimizationService {
         }
 
         /*
-         * Phase 2-3A에서는 검증된 계획을 staging 저장만 한다.
-         * DB 작업 배정, Runtime task/path, ready queue, resume는 변경하지 않는다.
+         * Phase 2-3B에서는 DB 작업 배정까지 반영한다.
+         * Runtime task/path, ready queue, resume는 변경하지 않는다.
          */
         return new BusinessException(
-                ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
+                ErrorCode.REOPTIMIZATION_PLAN_ACTIVATION_NOT_IMPLEMENTED
         );
     }
 

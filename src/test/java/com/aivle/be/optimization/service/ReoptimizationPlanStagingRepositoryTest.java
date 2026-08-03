@@ -3,6 +3,7 @@ package com.aivle.be.optimization.service;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.optimization.domain.ReoptimizationReason;
+import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.response.TaskPlan;
 import com.aivle.be.optimization.entity.ReoptimizationPlanStage;
 import com.aivle.be.optimization.repository.ReoptimizationPlanStageRepository;
@@ -110,6 +111,11 @@ class ReoptimizationPlanStagingRepositoryTest {
         assertThat(view.description()).isEqualTo("stage test");
         assertThat(view.responseMessage()).isEqualTo("validated plan");
         assertThat(view.blockedEdgeIds()).containsExactly(91L, 92L);
+        assertThat(view.robots()).singleElement()
+                .satisfies(robot -> {
+                    assertThat(robot.robotId()).isEqualTo(10L);
+                    assertThat(robot.status()).isEqualTo("PAUSED");
+                });
         assertThat(view.taskPlans())
                 .extracting(ReoptimizationPlanStageView.TaskPlanView::sequence)
                 .containsExactly(0, 1);
@@ -233,6 +239,7 @@ class ReoptimizationPlanStagingRepositoryTest {
                 "stage test",
                 "validated plan",
                 List.of(91L, 92L),
+                List.of(robotSnapshot()),
                 List.of(
                         taskPlan(100L, 0, 10L, 20L, 30L, 1_000L),
                         taskPlan(101L, 1, 30L, 40L, 50L, 5_000L)
@@ -253,6 +260,10 @@ class ReoptimizationPlanStagingRepositoryTest {
                 taskId,
                 sequence,
                 TaskPlan.ExecutionStage.FULL,
+                null,
+                "PENDING",
+                taskStart,
+                taskEnd,
                 startTime,
                 startTime + 3_000L,
                 List.of(
@@ -315,6 +326,10 @@ class ReoptimizationPlanStagingRepositoryTest {
                         100L,
                         0,
                         TaskPlan.ExecutionStage.FULL,
+                        null,
+                        "PENDING",
+                        20L,
+                        30L,
                         1_000L,
                         2_000L,
                         List.of(duplicateFirst, duplicateSecond)
@@ -330,7 +345,21 @@ class ReoptimizationPlanStagingRepositoryTest {
                 null,
                 "invalid child",
                 List.of(),
+                List.of(robotSnapshot()),
                 List.of(taskPlan)
+        );
+    }
+
+    private ReoptimizationPlanStageCommand.RobotSnapshotCommand
+    robotSnapshot() {
+        return new ReoptimizationPlanStageCommand.RobotSnapshotCommand(
+                10L,
+                10L,
+                100.0,
+                "PAUSED",
+                null,
+                "IDLE",
+                ReoptimizationOptimizationRequest.RemainingStage.IDLE
         );
     }
 

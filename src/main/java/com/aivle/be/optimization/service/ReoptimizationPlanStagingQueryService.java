@@ -9,6 +9,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -39,6 +41,28 @@ public class ReoptimizationPlanStagingQueryService {
                 )
                 .map(ReoptimizationPlanStageView::from)
                 .orElseThrow(this::notFound);
+    }
+
+    public ReoptimizationPlanStageView getCurrentDbApplied(
+            Long simulationRunId
+    ) {
+        return stageRepository
+                .findFirstBySimulationRun_IdAndStatusOrderByCreatedAtDescIdDesc(
+                        simulationRunId,
+                        ReoptimizationPlanStage.Status.DB_APPLIED
+                )
+                .map(ReoptimizationPlanStageView::from)
+                .orElseThrow(this::notFound);
+    }
+
+    public List<ReoptimizationPlanStageView> getAllDbApplied() {
+        return stageRepository
+                .findAllByStatusOrderById(
+                        ReoptimizationPlanStage.Status.DB_APPLIED
+                )
+                .stream()
+                .map(ReoptimizationPlanStageView::from)
+                .toList();
     }
 
     private BusinessException notFound() {

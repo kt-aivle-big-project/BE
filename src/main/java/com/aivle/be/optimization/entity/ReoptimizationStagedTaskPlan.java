@@ -67,6 +67,18 @@ public class ReoptimizationStagedTaskPlan {
     @Column(name = "execution_stage", nullable = false, length = 20)
     private TaskPlan.ExecutionStage executionStage;
 
+    @Column(name = "snapshot_assigned_robot_id")
+    private Long snapshotAssignedRobotId;
+
+    @Column(name = "snapshot_task_status", nullable = false, length = 30)
+    private String snapshotTaskStatus;
+
+    @Column(name = "start_node_id", nullable = false)
+    private Long startNodeId;
+
+    @Column(name = "end_node_id", nullable = false)
+    private Long endNodeId;
+
     @Column(name = "estimated_start_time_millis", nullable = false)
     private Long estimatedStartTimeMillis;
 
@@ -91,6 +103,11 @@ public class ReoptimizationStagedTaskPlan {
         taskPlan.taskId = command.taskId();
         taskPlan.sequence = command.sequence();
         taskPlan.executionStage = command.executionStage();
+        taskPlan.snapshotAssignedRobotId =
+                command.snapshotAssignedRobotId();
+        taskPlan.snapshotTaskStatus = command.snapshotTaskStatus();
+        taskPlan.startNodeId = command.startNodeId();
+        taskPlan.endNodeId = command.endNodeId();
         taskPlan.estimatedStartTimeMillis =
                 command.estimatedStartTimeMillis();
         taskPlan.estimatedCompletionTimeMillis =

@@ -33,6 +33,15 @@ class ReoptimizationPlanStageCommandTest {
         assertThat(command.description()).isEqualTo("blocked edge");
         assertThat(command.responseMessage()).isEqualTo("validated plan");
         assertThat(command.blockedEdgeIds()).containsExactly(9L, 10L);
+        assertThat(command.robots()).singleElement()
+                .satisfies(robot -> {
+                    assertThat(robot.robotId()).isEqualTo(10L);
+                    assertThat(robot.currentTaskId()).isEqualTo(100L);
+                    assertThat(robot.remainingStage()).isEqualTo(
+                            ReoptimizationOptimizationRequest
+                                    .RemainingStage.TO_START
+                    );
+                });
         assertThat(command.taskPlans()).singleElement()
                 .satisfies(plan -> {
                     assertThat(plan.robotId()).isEqualTo(10L);
@@ -40,6 +49,11 @@ class ReoptimizationPlanStageCommandTest {
                     assertThat(plan.sequence()).isZero();
                     assertThat(plan.executionStage())
                             .isEqualTo(TaskPlan.ExecutionStage.FULL);
+                    assertThat(plan.snapshotAssignedRobotId()).isNull();
+                    assertThat(plan.snapshotTaskStatus())
+                            .isEqualTo("PENDING");
+                    assertThat(plan.startNodeId()).isEqualTo(20L);
+                    assertThat(plan.endNodeId()).isEqualTo(30L);
                     assertThat(plan.estimatedStartTimeMillis())
                             .isEqualTo(1_000L);
                     assertThat(plan.estimatedCompletionTimeMillis())
@@ -108,8 +122,28 @@ class ReoptimizationPlanStageCommandTest {
                 10L,
                 List.of(9L, 10L),
                 "blocked edge",
-                List.of(),
-                List.of()
+                List.of(
+                        new ReoptimizationOptimizationRequest.RobotStateInput(
+                                10L,
+                                10L,
+                                90.0,
+                                "PAUSED",
+                                100L,
+                                "IDLE",
+                                ReoptimizationOptimizationRequest
+                                        .RemainingStage.TO_START
+                        )
+                ),
+                List.of(
+                        new ReoptimizationOptimizationRequest.TaskInput(
+                                100L,
+                                null,
+                                20L,
+                                30L,
+                                "OUTBOUND",
+                                "PENDING"
+                        )
+                )
         );
     }
 

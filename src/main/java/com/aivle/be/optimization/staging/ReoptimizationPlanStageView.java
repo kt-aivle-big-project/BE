@@ -4,6 +4,7 @@ import com.aivle.be.optimization.domain.ReoptimizationReason;
 import com.aivle.be.optimization.dto.response.TaskPlan;
 import com.aivle.be.optimization.entity.ReoptimizationPlanStage;
 import com.aivle.be.optimization.entity.ReoptimizationStagedPathStep;
+import com.aivle.be.optimization.entity.ReoptimizationStagedRobotSnapshot;
 import com.aivle.be.optimization.entity.ReoptimizationStagedTaskPlan;
 
 import java.time.LocalDateTime;
@@ -26,11 +27,13 @@ public record ReoptimizationPlanStageView(
         String responseMessage,
         LocalDateTime createdAt,
         List<Long> blockedEdgeIds,
+        List<RobotSnapshotView> robots,
         List<TaskPlanView> taskPlans
 ) {
 
     public ReoptimizationPlanStageView {
         blockedEdgeIds = List.copyOf(blockedEdgeIds);
+        robots = List.copyOf(robots);
         taskPlans = List.copyOf(taskPlans);
     }
 
@@ -51,6 +54,9 @@ public record ReoptimizationPlanStageView(
                 stage.getResponseMessage(),
                 stage.getCreatedAt(),
                 stage.getBlockedEdgeIds(),
+                stage.getRobotSnapshots().stream()
+                        .map(RobotSnapshotView::from)
+                        .toList(),
                 stage.getTaskPlans().stream()
                         .map(TaskPlanView::from)
                         .toList()
@@ -63,6 +69,10 @@ public record ReoptimizationPlanStageView(
             Long taskId,
             Integer sequence,
             TaskPlan.ExecutionStage executionStage,
+            Long snapshotAssignedRobotId,
+            String snapshotTaskStatus,
+            Long startNodeId,
+            Long endNodeId,
             Long estimatedStartTimeMillis,
             Long estimatedCompletionTimeMillis,
             List<PathStepView> pathSteps
@@ -81,11 +91,42 @@ public record ReoptimizationPlanStageView(
                     taskPlan.getTaskId(),
                     taskPlan.getSequence(),
                     taskPlan.getExecutionStage(),
+                    taskPlan.getSnapshotAssignedRobotId(),
+                    taskPlan.getSnapshotTaskStatus(),
+                    taskPlan.getStartNodeId(),
+                    taskPlan.getEndNodeId(),
                     taskPlan.getEstimatedStartTimeMillis(),
                     taskPlan.getEstimatedCompletionTimeMillis(),
                     taskPlan.getPathSteps().stream()
                             .map(PathStepView::from)
                             .toList()
+            );
+        }
+    }
+
+    public record RobotSnapshotView(
+            Long robotId,
+            Long currentNodeId,
+            Double batteryLevel,
+            String status,
+            Long currentTaskId,
+            String runtimePhase,
+            com.aivle.be.optimization.dto.request
+                    .ReoptimizationOptimizationRequest.RemainingStage
+                    remainingStage
+    ) {
+
+        private static RobotSnapshotView from(
+                ReoptimizationStagedRobotSnapshot snapshot
+        ) {
+            return new RobotSnapshotView(
+                    snapshot.getRobotId(),
+                    snapshot.getCurrentNodeId(),
+                    snapshot.getBatteryLevel(),
+                    snapshot.getStatus(),
+                    snapshot.getCurrentTaskId(),
+                    snapshot.getRuntimePhase(),
+                    snapshot.getRemainingStage()
             );
         }
     }

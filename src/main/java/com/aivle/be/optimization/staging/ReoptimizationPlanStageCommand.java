@@ -8,7 +8,10 @@ import com.aivle.be.optimization.dto.response.TaskPlan;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 검증이 끝난 AI 계획을 DB I/O와 분리해 운반하는 불변 staging 명령.
@@ -24,6 +27,7 @@ public record ReoptimizationPlanStageCommand(
         String description,
         String responseMessage,
         List<Long> blockedEdgeIds,
+        List<RobotSnapshotCommand> robots,
         List<TaskPlanCommand> taskPlans
 ) {
 
@@ -38,6 +42,7 @@ public record ReoptimizationPlanStageCommand(
         blockedEdgeIds = blockedEdgeIds == null
                 ? List.of()
                 : List.copyOf(blockedEdgeIds);
+        robots = robots == null ? List.of() : List.copyOf(robots);
         taskPlans = taskPlans == null
                 ? List.of()
                 : List.copyOf(taskPlans);
@@ -54,6 +59,14 @@ public record ReoptimizationPlanStageCommand(
             );
         }
 
+        Map<Long, ReoptimizationOptimizationRequest.TaskInput> tasksById =
+                request.remainingTasks().stream()
+                        .collect(Collectors.toMap(
+                                ReoptimizationOptimizationRequest
+                                        .TaskInput::taskId,
+                                Function.identity()
+                        ));
+
         return new ReoptimizationPlanStageCommand(
                 request.simulationRunId(),
                 request.replanId(),
@@ -65,10 +78,41 @@ public record ReoptimizationPlanStageCommand(
                 request.description(),
                 response.message(),
                 request.blockedEdgeIds(),
+                request.robots().stream()
+                        .map(RobotSnapshotCommand::from)
+                        .toList(),
                 response.taskPlans().stream()
-                        .map(TaskPlanCommand::from)
+                        .map(plan -> TaskPlanCommand.from(
+                                plan,
+                                tasksById.get(plan.taskId())
+                        ))
                         .toList()
         );
+    }
+
+    public record RobotSnapshotCommand(
+            Long robotId,
+            Long currentNodeId,
+            Double batteryLevel,
+            String status,
+            Long currentTaskId,
+            String runtimePhase,
+            ReoptimizationOptimizationRequest.RemainingStage remainingStage
+    ) {
+
+        private static RobotSnapshotCommand from(
+                ReoptimizationOptimizationRequest.RobotStateInput robot
+        ) {
+            return new RobotSnapshotCommand(
+                    robot.robotId(),
+                    robot.currentNodeId(),
+                    robot.batteryLevel(),
+                    robot.status(),
+                    robot.currentTaskId(),
+                    robot.runtimePhase(),
+                    robot.remainingStage()
+            );
+        }
     }
 
     public record TaskPlanCommand(
@@ -76,6 +120,10 @@ public record ReoptimizationPlanStageCommand(
             Long taskId,
             Integer sequence,
             TaskPlan.ExecutionStage executionStage,
+            Long snapshotAssignedRobotId,
+            String snapshotTaskStatus,
+            Long startNodeId,
+            Long endNodeId,
             Long estimatedStartTimeMillis,
             Long estimatedCompletionTimeMillis,
             List<PathStepCommand> pathSteps
@@ -87,7 +135,14 @@ public record ReoptimizationPlanStageCommand(
                     : List.copyOf(pathSteps);
         }
 
-        private static TaskPlanCommand from(TaskPlan plan) {
+        private static TaskPlanCommand from(
+                TaskPlan plan,
+                ReoptimizationOptimizationRequest.TaskInput task
+        ) {
+            Objects.requireNonNull(
+                    task,
+                    "Validated task plan must have a request task snapshot"
+            );
             List<PathStepCommand> steps = new ArrayList<>();
             appendSteps(
                     steps,
@@ -105,6 +160,10 @@ public record ReoptimizationPlanStageCommand(
                     plan.taskId(),
                     plan.sequence(),
                     plan.executionStage(),
+                    task.currentlyAssignedRobotId(),
+                    task.status(),
+                    task.startNodeId(),
+                    task.endNodeId(),
                     plan.estimatedStartTimeMillis(),
                     plan.estimatedCompletionTimeMillis(),
                     steps

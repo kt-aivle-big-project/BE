@@ -153,6 +153,26 @@ public enum ErrorCode {
             "SIMULATION_RUN_031",
             "재계획 staging 계획을 찾을 수 없습니다."
     ),
+    REOPTIMIZATION_PLAN_APPLY_FAILED(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "SIMULATION_RUN_032",
+            "재계획 계획을 DB에 적용하지 못했습니다."
+    ),
+    REOPTIMIZATION_PLAN_TASK_STATE_CHANGED(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_033",
+            "재계획 이후 작업 상태 또는 담당 로봇이 변경되었습니다."
+    ),
+    REOPTIMIZATION_PLAN_STAGE_INVALID_STATUS(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_034",
+            "현재 상태의 재계획 staging 계획은 적용할 수 없습니다."
+    ),
+    REOPTIMIZATION_PLAN_ACTIVATION_NOT_IMPLEMENTED(
+            HttpStatus.NOT_IMPLEMENTED,
+            "SIMULATION_RUN_035",
+            "DB 적용이 끝난 재계획 계획의 Runtime 활성화는 아직 구현되지 않았습니다."
+    ),
 
     STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),
 

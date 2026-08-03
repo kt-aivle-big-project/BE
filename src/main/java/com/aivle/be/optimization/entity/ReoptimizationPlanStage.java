@@ -114,6 +114,15 @@ public class ReoptimizationPlanStage {
     private List<ReoptimizationStagedTaskPlan> taskPlans =
             new ArrayList<>();
 
+    @OneToMany(
+            mappedBy = "stage",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true
+    )
+    @OrderBy("robotId ASC")
+    private List<ReoptimizationStagedRobotSnapshot> robotSnapshots =
+            new ArrayList<>();
+
     public static ReoptimizationPlanStage create(
             SimulationRun simulationRun,
             ReoptimizationPlanStageCommand command
@@ -131,6 +140,10 @@ public class ReoptimizationPlanStage {
         stage.responseMessage = command.responseMessage();
         stage.blockedEdgeIds.addAll(command.blockedEdgeIds());
 
+        command.robots().stream()
+                .map(ReoptimizationStagedRobotSnapshot::create)
+                .forEach(stage::addRobotSnapshot);
+
         command.taskPlans().stream()
                 .map(ReoptimizationStagedTaskPlan::create)
                 .forEach(stage::addTaskPlan);
@@ -142,9 +155,26 @@ public class ReoptimizationPlanStage {
         taskPlan.assignStage(this);
     }
 
+    private void addRobotSnapshot(
+            ReoptimizationStagedRobotSnapshot robotSnapshot
+    ) {
+        robotSnapshots.add(robotSnapshot);
+        robotSnapshot.assignStage(this);
+    }
+
+    public void markDbApplied() {
+        if (status != Status.STAGED) {
+            throw new IllegalStateException(
+                    "Only a STAGED plan can become DB_APPLIED"
+            );
+        }
+        status = Status.DB_APPLIED;
+    }
+
     public enum Status {
         STAGED,
-        APPLIED,
+        DB_APPLIED,
+        ACTIVATED,
         REJECTED
     }
 }

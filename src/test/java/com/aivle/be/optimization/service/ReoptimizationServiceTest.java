@@ -10,6 +10,8 @@ import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
 import com.aivle.be.optimization.dto.response.PathStep;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import com.aivle.be.optimization.dto.response.TaskPlan;
+import com.aivle.be.optimization.entity.ReoptimizationPlanStage;
+import com.aivle.be.optimization.staging.ReoptimizationActivationPlan;
 import com.aivle.be.optimization.staging.ReoptimizationPlanStageCommand;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.domain.RobotStatus;
@@ -436,7 +438,7 @@ class ReoptimizationServiceTest {
                         BusinessException.class,
                         exception -> assertThat(exception.getErrorCode())
                                 .isEqualTo(
-                                        ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
+                                        ErrorCode.REOPTIMIZATION_PLAN_ACTIVATION_NOT_IMPLEMENTED
                                 )
                 );
 
@@ -481,6 +483,8 @@ class ReoptimizationServiceTest {
                 );
         verify(fixture.planStagingService(), times(1))
                 .stage(stageCommand.capture());
+        verify(fixture.planApplicationService(), times(1))
+                .apply(1L, capturedRequest.replanId(), 1L);
         assertThat(stageCommand.getValue().simulationRunId()).isEqualTo(1L);
         assertThat(stageCommand.getValue().replanId())
                 .isEqualTo(capturedRequest.replanId());
@@ -757,6 +761,8 @@ class ReoptimizationServiceTest {
                 mock(OptimizationClient.class);
         ReoptimizationPlanStagingService planStagingService =
                 mock(ReoptimizationPlanStagingService.class);
+        ReoptimizationPlanApplicationService planApplicationService =
+                successfulPlanApplicationService();
         when(planStagingService.stage(any())).thenAnswer(invocation -> {
             verify(optimizationClient, times(1)).reoptimize(any());
             return 1L;
@@ -849,6 +855,7 @@ class ReoptimizationServiceTest {
                 warehouseEdgeRepository,
                 optimizationClient,
                 planStagingService,
+                planApplicationService,
                 playbackService,
                 transactionManager
         );
@@ -857,6 +864,7 @@ class ReoptimizationServiceTest {
                 service,
                 optimizationClient,
                 planStagingService,
+                planApplicationService,
                 pathFinder,
                 playbackService,
                 run,
@@ -935,6 +943,7 @@ class ReoptimizationServiceTest {
                 warehouseEdgeRepository,
                 optimizationClient,
                 mock(ReoptimizationPlanStagingService.class),
+                successfulPlanApplicationService(),
                 playbackService,
                 mock(SimpMessagingTemplate.class),
                 new TransactionTemplate(transactionManager)
@@ -948,6 +957,7 @@ class ReoptimizationServiceTest {
             WarehouseEdgeRepository warehouseEdgeRepository,
             OptimizationClient optimizationClient,
             ReoptimizationPlanStagingService planStagingService,
+            ReoptimizationPlanApplicationService planApplicationService,
             SimulationPlaybackService playbackService,
             TestTransactionManager transactionManager
     ) {
@@ -958,10 +968,25 @@ class ReoptimizationServiceTest {
                 warehouseEdgeRepository,
                 optimizationClient,
                 planStagingService,
+                planApplicationService,
                 playbackService,
                 mock(SimpMessagingTemplate.class),
                 new TransactionTemplate(transactionManager)
         );
+    }
+
+    private ReoptimizationPlanApplicationService
+    successfulPlanApplicationService() {
+        ReoptimizationPlanApplicationService service =
+                mock(ReoptimizationPlanApplicationService.class);
+        ReoptimizationActivationPlan applied =
+                mock(ReoptimizationActivationPlan.class);
+        when(applied.status()).thenReturn(
+                ReoptimizationPlanStage.Status.DB_APPLIED
+        );
+        when(service.apply(anyLong(), any(), anyLong()))
+                .thenReturn(applied);
+        return service;
     }
 
     private ReoptimizationService transactionalProxy(
@@ -1153,6 +1178,8 @@ class ReoptimizationServiceTest {
         } else {
             verify(fixture.planStagingService(), never()).stage(any());
         }
+        verify(fixture.planApplicationService(), never())
+                .apply(anyLong(), any(), anyLong());
         assertTaskPlanUnchanged(fixture.task());
     }
 
@@ -1178,6 +1205,7 @@ class ReoptimizationServiceTest {
             ReoptimizationService service,
             OptimizationClient optimizationClient,
             ReoptimizationPlanStagingService planStagingService,
+            ReoptimizationPlanApplicationService planApplicationService,
             WarehousePathFinder pathFinder,
             SimulationPlaybackService playbackService,
             RunFixture run,

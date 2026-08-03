@@ -27,6 +27,17 @@ public interface RobotRepository extends JpaRepository<Robot, Long> {
       @Query("select robot from Robot robot where robot.id = :robotId")
       Optional<Robot> findByIdForUpdate(@Param("robotId") Long robotId);
 
+      @Lock(LockModeType.PESSIMISTIC_WRITE)
+      @Query("""
+              select robot
+              from Robot robot
+              where robot.id in :robotIds
+              order by robot.id
+              """)
+      List<Robot> findAllByIdInForUpdateOrderById(
+              @Param("robotIds") List<Long> robotIds
+      );
+
       @Modifying(flushAutomatically = true, clearAutomatically = true)
       @Query("delete from Robot robot where robot.id = :robotId")
       void deleteByIdDirectly(@Param("robotId") Long robotId);
