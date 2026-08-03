@@ -73,10 +73,35 @@ public enum ErrorCode {
             "SIMULATION_RUN_015",
             "해당 시뮬레이션 실행의 재계획이 이미 진행 중입니다."
     ),
-    REOPTIMIZATION_PLAN_CONTRACT_INCOMPLETE(
-            HttpStatus.BAD_GATEWAY,
+    REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED(
+            HttpStatus.NOT_IMPLEMENTED,
             "SIMULATION_RUN_016",
-            "현재 AI 응답 계약으로는 작업별 실행 계획을 적용할 수 없습니다."
+            "AI 재계획 응답의 Runtime 적용은 아직 구현되지 않았습니다."
+    ),
+    REOPTIMIZATION_RESPONSE_CORRELATION_MISMATCH(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_017",
+            "AI 재계획 응답의 요청 상관키가 일치하지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_INFEASIBLE(
+            HttpStatus.UNPROCESSABLE_CONTENT,
+            "SIMULATION_RUN_018",
+            "AI가 실행 가능한 재계획을 찾지 못했습니다."
+    ),
+    MOCK_AI_PLAN_NOT_CONFIGURED(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "SIMULATION_RUN_019",
+            "Mock AI 재계획 fixture가 설정되지 않았습니다."
+    ),
+    MOCK_AI_PLAN_INVALID(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "SIMULATION_RUN_020",
+            "Mock AI 재계획 fixture가 현재 요청과 일치하지 않거나 올바르지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_CONTRACT_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_021",
+            "AI 재계획 응답이 시간 또는 작업 진행 단계 계약을 위반했습니다."
     ),
 
     STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),

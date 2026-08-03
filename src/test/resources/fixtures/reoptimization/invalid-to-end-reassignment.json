@@ -1,0 +1,24 @@
+{
+  "requestId": "mock-invalid-to-end-reassignment-request",
+  "replanId": "fixture-replan-id",
+  "simulationRunId": 1,
+  "snapshotVersion": 1,
+  "status": "SUCCEEDED",
+  "taskPlans": [
+    {
+      "robotId": 11,
+      "taskId": 100,
+      "sequence": 0,
+      "executionStage": "TO_END",
+      "pathToStart": [],
+      "pathToEnd": [
+        {"nodeId": 11, "arrivalTimeMillis": 1000, "departureTimeMillis": 1000},
+        {"nodeId": 30, "arrivalTimeMillis": 7000, "departureTimeMillis": 7000}
+      ],
+      "estimatedStartTimeMillis": 1000,
+      "estimatedCompletionTimeMillis": 7000
+    }
+  ],
+  "unassignedTaskIds": [],
+  "message": "TO_END cannot be reassigned to another robot"
+}

@@ -1,0 +1,27 @@
+{
+  "requestId": "mock-invalid-blocked-edge-request",
+  "replanId": "fixture-replan-id",
+  "simulationRunId": 1,
+  "snapshotVersion": 1,
+  "status": "SUCCEEDED",
+  "taskPlans": [
+    {
+      "robotId": 10,
+      "taskId": 100,
+      "sequence": 0,
+      "executionStage": "FULL",
+      "pathToStart": [
+        {"nodeId": 10, "arrivalTimeMillis": 1000, "departureTimeMillis": 1000},
+        {"nodeId": 20, "arrivalTimeMillis": 4000, "departureTimeMillis": 4000}
+      ],
+      "pathToEnd": [
+        {"nodeId": 20, "arrivalTimeMillis": 4000, "departureTimeMillis": 4000},
+        {"nodeId": 30, "arrivalTimeMillis": 10000, "departureTimeMillis": 10000}
+      ],
+      "estimatedStartTimeMillis": 1000,
+      "estimatedCompletionTimeMillis": 10000
+    }
+  ],
+  "unassignedTaskIds": [],
+  "message": "path intentionally traverses blocked edge 999 (10 -> 20) in the validator test graph"
+}

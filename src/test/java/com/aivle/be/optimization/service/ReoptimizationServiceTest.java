@@ -7,12 +7,15 @@ import com.aivle.be.optimization.client.OptimizationClient;
 import com.aivle.be.optimization.domain.ReoptimizationReason;
 import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
+import com.aivle.be.optimization.dto.response.PathStep;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
+import com.aivle.be.optimization.dto.response.TaskPlan;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.playback.PlaybackContext;
+import com.aivle.be.simulationrun.playback.ReplanningSnapshot;
 import com.aivle.be.simulationrun.playback.RobotRuntime;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.playback.WarehousePathFinder;
@@ -38,7 +41,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -67,14 +70,6 @@ class ReoptimizationServiceTest {
                     null,
                     List.of(),
                     "phase-1-test"
-            );
-
-    private static final ReoptimizationResponse AI_RESPONSE =
-            new ReoptimizationResponse(
-                    "request-1",
-                    "SUCCEEDED",
-                    List.of(),
-                    List.of()
             );
 
     @Test
@@ -109,12 +104,16 @@ class ReoptimizationServiceTest {
                     if (!releaseAi.await(5, TimeUnit.SECONDS)) {
                         throw new AssertionError("AI test latch timeout");
                     }
-                    return AI_RESPONSE;
+                    return successfulResponse(
+                            invocation.getArgument(
+                                    0,
+                                    ReoptimizationOptimizationRequest.class
+                            )
+                    );
                 });
 
         ReoptimizationService service = service(
                 runRepository,
-                stateStore,
                 taskRepository,
                 optimizationClient,
                 playbackService,
@@ -136,7 +135,7 @@ class ReoptimizationServiceTest {
             releaseAi.countDown();
             assertThat(first.get(5, TimeUnit.SECONDS).getErrorCode())
                     .isEqualTo(
-                            ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INCOMPLETE
+                            ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
                     );
         } finally {
             releaseAi.countDown();
@@ -183,12 +182,16 @@ class ReoptimizationServiceTest {
                     if (!releaseAi.await(5, TimeUnit.SECONDS)) {
                         throw new AssertionError("AI test latch timeout");
                     }
-                    return AI_RESPONSE;
+                    return successfulResponse(
+                            invocation.getArgument(
+                                    0,
+                                    ReoptimizationOptimizationRequest.class
+                            )
+                    );
                 });
 
         ReoptimizationService service = service(
                 runRepository,
-                stateStore,
                 taskRepository,
                 optimizationClient,
                 playbackService,
@@ -208,11 +211,11 @@ class ReoptimizationServiceTest {
 
             assertThat(first.get(5, TimeUnit.SECONDS).getErrorCode())
                     .isEqualTo(
-                            ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INCOMPLETE
+                            ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
                     );
             assertThat(second.get(5, TimeUnit.SECONDS).getErrorCode())
                     .isEqualTo(
-                            ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INCOMPLETE
+                            ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
                     );
         } finally {
             releaseAi.countDown();
@@ -253,12 +256,16 @@ class ReoptimizationServiceTest {
                             !TransactionSynchronizationManager
                                     .isActualTransactionActive()
                     );
-                    return AI_RESPONSE;
+                    return successfulResponse(
+                            invocation.getArgument(
+                                    0,
+                                    ReoptimizationOptimizationRequest.class
+                            )
+                    );
                 });
 
         ReoptimizationService target = service(
                 runRepository,
-                stateStore,
                 taskRepository,
                 optimizationClient,
                 playbackService,
@@ -280,7 +287,7 @@ class ReoptimizationServiceTest {
                                     exception -> assertThat(
                                             exception.getErrorCode()
                                     ).isEqualTo(
-                                            ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INCOMPLETE
+                                            ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
                                     )
                             );
 
@@ -323,17 +330,105 @@ class ReoptimizationServiceTest {
     }
 
     @Test
-    void incompleteContractDoesNotResumeOrInvokeWarehousePathFinder() {
+    void failedRobotAfterCompletedPickingIsReportedAsToEnd() {
+        TestTransactionManager transactionManager =
+                new TestTransactionManager();
+        SimulationRunRepository runRepository =
+                mock(SimulationRunRepository.class);
+        TaskRepository taskRepository = mock(TaskRepository.class);
+        SimulationPlaybackService playbackService =
+                readyPlaybackMock();
+        OptimizationClient optimizationClient =
+                mock(OptimizationClient.class);
+        RunFixture run = runFixture(1L);
+        AtomicReference<ReoptimizationOptimizationRequest> aiRequest =
+                new AtomicReference<>();
+
+        when(runRepository.findById(1L))
+                .thenReturn(Optional.of(run.run()));
+        when(taskRepository
+                .findAllBySimulationRun_IdAndStatusInOrderByRequestedAtAsc(
+                        anyLong(),
+                        any()
+                )).thenReturn(List.of());
+        when(playbackService.captureReplanningSnapshot(1L))
+                .thenReturn(new ReplanningSnapshot(
+                        5L,
+                        2_000L,
+                        List.of(new ReplanningSnapshot.RobotSnapshot(
+                                10L,
+                                20L,
+                                75.0,
+                                RobotStatus.ERROR,
+                                100L,
+                                RobotRuntime.Phase.PICKING,
+                                2_000L
+                        ))
+                ));
+        when(optimizationClient.reoptimize(any()))
+                .thenAnswer(invocation -> {
+                    ReoptimizationOptimizationRequest request =
+                            invocation.getArgument(
+                                    0,
+                                    ReoptimizationOptimizationRequest.class
+                    );
+                    aiRequest.set(request);
+                    return responseFor(
+                            request,
+                            null,
+                            null,
+                            null,
+                            ReoptimizationResponse.Status.INFEASIBLE
+                    );
+                });
+
+        ReoptimizationService service = service(
+                runRepository,
+                taskRepository,
+                optimizationClient,
+                playbackService,
+                transactionManager
+        );
+
+        assertThatThrownBy(() -> service.reoptimize(1L, REQUEST))
+                .isInstanceOfSatisfying(
+                        BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(
+                                        ErrorCode.REOPTIMIZATION_PLAN_INFEASIBLE
+                                )
+                );
+
+        assertThat(aiRequest.get().robots()).singleElement()
+                .satisfies(robot -> assertThat(robot.remainingStage())
+                        .isEqualTo(
+                                ReoptimizationOptimizationRequest
+                                        .RemainingStage.TO_END
+                        ));
+    }
+
+    @Test
+    void successfulResponseDoesNotResumeOrInvokeWarehousePathFinder() {
         RuntimeFixture fixture = runtimeFixture();
+        AtomicReference<ReoptimizationOptimizationRequest> aiRequest =
+                new AtomicReference<>();
         when(fixture.optimizationClient().reoptimize(any()))
-                .thenReturn(AI_RESPONSE);
+                .thenAnswer(invocation -> {
+                    ReoptimizationOptimizationRequest request =
+                            invocation.getArgument(
+                                0,
+                                ReoptimizationOptimizationRequest.class
+                            );
+                    aiRequest.set(request);
+                    return successfulResponse(request);
+                });
 
         assertThatThrownBy(() -> fixture.service().reoptimize(1L, REQUEST))
                 .isInstanceOfSatisfying(
                         BusinessException.class,
                         exception -> assertThat(exception.getErrorCode())
                                 .isEqualTo(
-                                        ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INCOMPLETE
+                                        ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
                                 )
                 );
 
@@ -344,9 +439,155 @@ class ReoptimizationServiceTest {
         assertThat(new ArrayList<>(fixture.runtime().getRemainingPath()))
                 .containsExactly(20L, 30L);
         assertThat(fixture.runtime().getCurrentTaskId()).isEqualTo(100L);
+        ReoptimizationOptimizationRequest capturedRequest = aiRequest.get();
+        assertThat(capturedRequest).isNotNull();
+        assertThat(UUID.fromString(capturedRequest.replanId()))
+                .isNotNull();
+        assertThat(capturedRequest.simulationRunId()).isEqualTo(1L);
+        assertThat(capturedRequest.snapshotVersion()).isEqualTo(1L);
+        assertThat(capturedRequest.simulationClockMillis()).isZero();
+        assertThat(capturedRequest.warehouseId()).isEqualTo(1L);
+        assertThat(capturedRequest.blockedEdgeIds()).isEmpty();
+        assertThat(capturedRequest.remainingTasks()).isEmpty();
+        assertThat(capturedRequest.robots()).singleElement()
+                .satisfies(robot -> {
+                    assertThat(robot.robotId()).isEqualTo(10L);
+                    assertThat(robot.currentNodeId()).isEqualTo(10L);
+                    assertThat(robot.batteryLevel()).isEqualTo(100.0);
+                    assertThat(robot.status()).isEqualTo("PAUSED");
+                    assertThat(robot.currentTaskId()).isEqualTo(100L);
+                    assertThat(robot.runtimePhase()).isEqualTo("IDLE");
+                    assertThat(robot.remainingStage()).isEqualTo(
+                            ReoptimizationOptimizationRequest
+                                    .RemainingStage.IDLE
+                    );
+                });
         verify(fixture.pathFinder(), never())
                 .findPath(anyMap(), anyLong(), anyLong());
         verify(fixture.run().run(), never()).finishReplanning();
+    }
+
+    @Test
+    void infeasibleResponseKeepsDatabaseAndRuntimeReplanning() {
+        RuntimeFixture fixture = runtimeFixture();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> responseFor(
+                        invocation.getArgument(
+                                0,
+                                ReoptimizationOptimizationRequest.class
+                        ),
+                        null,
+                        null,
+                        null,
+                        ReoptimizationResponse.Status.INFEASIBLE
+                ));
+
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                ErrorCode.REOPTIMIZATION_PLAN_INFEASIBLE
+        );
+    }
+
+    @Test
+    void invalidPlanContractDoesNotResumeOrInvokeWarehousePathFinder() {
+        RuntimeFixture fixture = runtimeFixture();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> {
+                    ReoptimizationOptimizationRequest request =
+                            invocation.getArgument(
+                                    0,
+                                    ReoptimizationOptimizationRequest.class
+                            );
+                    TaskPlan invalidPlan = new TaskPlan(
+                            10L,
+                            999L,
+                            0,
+                            TaskPlan.ExecutionStage.FULL,
+                            List.of(new PathStep(10L, 0L, 0L)),
+                            List.of(new PathStep(20L, 1_000L, 1_000L)),
+                            0L,
+                            1_000L
+                    );
+
+                    return new ReoptimizationResponse(
+                            "request-1",
+                            request.replanId(),
+                            request.simulationRunId(),
+                            request.snapshotVersion(),
+                            ReoptimizationResponse.Status.SUCCEEDED,
+                            List.of(invalidPlan),
+                            List.of(),
+                            "unknown task contract violation"
+                    );
+                });
+
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INVALID
+        );
+    }
+
+    @Test
+    void rejectsMismatchedReplanId() {
+        RuntimeFixture fixture = runtimeFixture();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> responseFor(
+                        invocation.getArgument(
+                                0,
+                                ReoptimizationOptimizationRequest.class
+                        ),
+                        "different-replan-id",
+                        null,
+                        null,
+                        ReoptimizationResponse.Status.SUCCEEDED
+                ));
+
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                ErrorCode.REOPTIMIZATION_RESPONSE_CORRELATION_MISMATCH
+        );
+    }
+
+    @Test
+    void rejectsMismatchedSimulationRunId() {
+        RuntimeFixture fixture = runtimeFixture();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> responseFor(
+                        invocation.getArgument(
+                                0,
+                                ReoptimizationOptimizationRequest.class
+                        ),
+                        null,
+                        999L,
+                        null,
+                        ReoptimizationResponse.Status.SUCCEEDED
+                ));
+
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                ErrorCode.REOPTIMIZATION_RESPONSE_CORRELATION_MISMATCH
+        );
+    }
+
+    @Test
+    void rejectsMismatchedSnapshotVersion() {
+        RuntimeFixture fixture = runtimeFixture();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> responseFor(
+                        invocation.getArgument(
+                                0,
+                                ReoptimizationOptimizationRequest.class
+                        ),
+                        null,
+                        null,
+                        999L,
+                        ReoptimizationResponse.Status.SUCCEEDED
+                ));
+
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                ErrorCode.REOPTIMIZATION_RESPONSE_CORRELATION_MISMATCH
+        );
     }
 
     @Test
@@ -438,7 +679,6 @@ class ReoptimizationServiceTest {
 
         ReoptimizationService service = service(
                 runRepository,
-                stateStore,
                 taskRepository,
                 optimizationClient,
                 playbackService,
@@ -464,12 +704,17 @@ class ReoptimizationServiceTest {
                 .thenReturn(true);
         when(playbackService.areAllRobotsStoppedForReplanning(anyLong()))
                 .thenReturn(true);
+        when(playbackService.captureReplanningSnapshot(anyLong()))
+                .thenReturn(new ReplanningSnapshot(
+                        1L,
+                        1_000L,
+                        List.of()
+                ));
         return playbackService;
     }
 
     private ReoptimizationService service(
             SimulationRunRepository runRepository,
-            SimulationRunStateStore stateStore,
             TaskRepository taskRepository,
             OptimizationClient optimizationClient,
             SimulationPlaybackService playbackService,
@@ -477,7 +722,6 @@ class ReoptimizationServiceTest {
     ) {
         return new ReoptimizationService(
                 runRepository,
-                stateStore,
                 taskRepository,
                 optimizationClient,
                 playbackService,
@@ -527,6 +771,64 @@ class ReoptimizationServiceTest {
             return exception;
         }
         throw new AssertionError("BusinessException was not thrown");
+    }
+
+    private ReoptimizationResponse successfulResponse(
+            ReoptimizationOptimizationRequest request
+    ) {
+        return responseFor(
+                request,
+                null,
+                null,
+                null,
+                ReoptimizationResponse.Status.SUCCEEDED
+        );
+    }
+
+    private ReoptimizationResponse responseFor(
+            ReoptimizationOptimizationRequest request,
+            String replanId,
+            Long simulationRunId,
+            Long snapshotVersion,
+            ReoptimizationResponse.Status status
+    ) {
+        return new ReoptimizationResponse(
+                "request-1",
+                replanId == null ? request.replanId() : replanId,
+                simulationRunId == null
+                        ? request.simulationRunId()
+                        : simulationRunId,
+                snapshotVersion == null
+                        ? request.snapshotVersion()
+                        : snapshotVersion,
+                status,
+                List.of(),
+                List.of(),
+                null
+        );
+    }
+
+    private void assertReoptimizationRejectedAndFrozen(
+            RuntimeFixture fixture,
+            ErrorCode expectedErrorCode
+    ) {
+        assertThatThrownBy(() -> fixture.service().reoptimize(1L, REQUEST))
+                .isInstanceOfSatisfying(
+                        BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(expectedErrorCode)
+                );
+
+        assertThat(fixture.run().status().get())
+                .isEqualTo(SimulationRunStatus.REPLANNING);
+        assertThat(fixture.context().isReplanRequested()).isTrue();
+        assertThat(fixture.runtime().isPausedForReplanning()).isTrue();
+        assertThat(new ArrayList<>(fixture.runtime().getRemainingPath()))
+                .containsExactly(20L, 30L);
+        assertThat(fixture.runtime().getCurrentTaskId()).isEqualTo(100L);
+        verify(fixture.pathFinder(), never())
+                .findPath(anyMap(), anyLong(), anyLong());
+        verify(fixture.run().run(), never()).finishReplanning();
     }
 
     private record RunFixture(

@@ -677,6 +677,23 @@ public class SimulationPlaybackService {
     }
 
     /**
+     * 모든 로봇이 안전 정지한 동일 context lock 안에서 AI 요청 snapshot을 만든다.
+     */
+    public ReplanningSnapshot captureReplanningSnapshot(
+            Long simulationRunId
+    ) {
+        PlaybackContext context = contexts.get(simulationRunId);
+
+        if (context == null) {
+            return null;
+        }
+
+        synchronized (context) {
+            return context.captureReplanningSnapshot();
+        }
+    }
+
+    /**
      * 재계획 완료 후 정상 로봇들의 정지를 해제한다.
      */
     public boolean finishReplanning(Long simulationRunId) {

@@ -6,8 +6,16 @@ import java.util.List;
 public record OptimizationResponse(
         String requestId,
         String status,
-        List<RobotRoute> routes
+        List<RobotRoute> routes,
+        List<TaskPlan> taskPlans
 ) {
+
+    public OptimizationResponse {
+        routes = routes == null ? List.of() : List.copyOf(routes);
+        taskPlans = taskPlans == null
+                ? List.of()
+                : List.copyOf(taskPlans);
+    }
 
     public record RobotRoute(
             Long robotId,

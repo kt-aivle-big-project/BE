@@ -8,12 +8,13 @@ import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
 import com.aivle.be.optimization.dto.response.ReoptimizationCompletedEvent;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
-import com.aivle.be.robotstate.domain.RobotState;
+import com.aivle.be.optimization.validation.ReoptimizationPlanContractValidator;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
+import com.aivle.be.simulationrun.playback.ReplanningSnapshot;
+import com.aivle.be.simulationrun.playback.RobotRuntime;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
-import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
@@ -27,6 +28,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -47,7 +50,6 @@ public class ReoptimizationService {
     private static final long REPLANNING_STOP_POLL_MILLIS = 50L;
 
     private final SimulationRunRepository simulationRunRepository;
-    private final SimulationRunStateStore simulationRunStateStore;
     private final TaskRepository taskRepository;
     private final OptimizationClient optimizationClient;
     private final SimulationPlaybackService simulationPlaybackService;
@@ -115,24 +117,37 @@ public class ReoptimizationService {
 
         awaitRobotsStoppedForReplanning(simulationRunId);
 
+        ReplanningSnapshot runtimeSnapshot =
+                simulationPlaybackService.captureReplanningSnapshot(
+                        simulationRunId
+                );
+
+        if (runtimeSnapshot == null) {
+            throw new BusinessException(
+                    ErrorCode.SIMULATION_RUN_NOT_RUNNING
+            );
+        }
+
         // AI 오류 또는 응답 계약 거부가 발생해도 이 커밋은 유지되어야 한다.
         startReplanningInDatabase(simulationRunId);
 
+        String replanId = UUID.randomUUID().toString();
         ReoptimizationOptimizationRequest fastApiRequest =
-                createFastApiRequest(simulationRunId, request);
+                createFastApiRequest(
+                        replanId,
+                        simulationRunId,
+                        runtimeSnapshot,
+                        request
+                );
 
         assertNoActiveTransactionForAiCall();
 
         ReoptimizationResponse response =
                 optimizationClient.reoptimize(fastApiRequest);
 
-        /*
-         * Phase 1에서는 현재 응답 계약으로 task별 실행 계획을 만들 수 없다.
-         * DB 작업 배정, Runtime task/path, ready queue, resume를 절대 변경하지 않는다.
-         */
-        throw new BusinessException(
-                ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INCOMPLETE
-        );
+        validateResponseCorrelation(fastApiRequest, response);
+        validatePlanContract(fastApiRequest, response);
+        throw rejectionUntilPlanApplicationIsImplemented(response);
     }
 
     private void validateRunningSimulation(Long simulationRunId) {
@@ -164,7 +179,9 @@ public class ReoptimizationService {
     }
 
     private ReoptimizationOptimizationRequest createFastApiRequest(
+            String replanId,
             Long simulationRunId,
+            ReplanningSnapshot runtimeSnapshot,
             ReoptimizationRequest request
     ) {
         ReoptimizationOptimizationRequest fastApiRequest =
@@ -179,11 +196,6 @@ public class ReoptimizationService {
                         );
                     }
 
-                    List<RobotState> robotStates =
-                            simulationRunStateStore.findAll(
-                                    simulationRunId
-                            );
-
                     List<Task> remainingTasks =
                             taskRepository
                                     .findAllBySimulationRun_IdAndStatusInOrderByRequestedAtAsc(
@@ -192,15 +204,20 @@ public class ReoptimizationService {
                                     );
 
                     List<ReoptimizationOptimizationRequest.RobotStateInput>
-                            robots = robotStates.stream()
-                            .map(state ->
+                            robots = runtimeSnapshot.robots().stream()
+                            .map(robot ->
                                     new ReoptimizationOptimizationRequest.RobotStateInput(
-                                            state.robotId(),
-                                            state.currentNodeId(),
-                                            state.batteryLevel() == null
-                                                    ? null
-                                                    : state.batteryLevel().doubleValue(),
-                                            state.status().name()
+                                            robot.robotId(),
+                                            robot.currentNodeId(),
+                                            robot.batteryLevel(),
+                                            robot.status().name(),
+                                            robot.currentTaskId(),
+                                            robot.runtimePhase().name(),
+                                            toRemainingStage(
+                                                    runtimeSnapshot
+                                                            .simulationClockMillis(),
+                                                    robot
+                                            )
                                     )
                             )
                             .toList();
@@ -222,7 +239,10 @@ public class ReoptimizationService {
                             .toList();
 
                     return new ReoptimizationOptimizationRequest(
+                            replanId,
                             simulationRunId,
+                            runtimeSnapshot.snapshotVersion(),
+                            runtimeSnapshot.simulationClockMillis(),
                             simulationRun.getWarehouse().getId(),
                             request.reason(),
                             request.triggerRobotId(),
@@ -240,6 +260,96 @@ public class ReoptimizationService {
         }
 
         return fastApiRequest;
+    }
+
+    private ReoptimizationOptimizationRequest.RemainingStage
+    toRemainingStage(
+            Long simulationClockMillis,
+            ReplanningSnapshot.RobotSnapshot robot
+    ) {
+        return switch (robot.runtimePhase()) {
+            case MOVING_TO_START ->
+                    ReoptimizationOptimizationRequest.RemainingStage.TO_START;
+            case PICKING -> simulationClockMillis
+                    >= robot.busyUntilMillis()
+                    ? ReoptimizationOptimizationRequest.RemainingStage.TO_END
+                    : ReoptimizationOptimizationRequest.RemainingStage.PICKING;
+            case MOVING_TO_END ->
+                    ReoptimizationOptimizationRequest.RemainingStage.TO_END;
+            case DROPPING ->
+                    ReoptimizationOptimizationRequest.RemainingStage.DROPPING;
+            case IDLE, CHARGING ->
+                    ReoptimizationOptimizationRequest.RemainingStage.IDLE;
+        };
+    }
+
+    private void validateResponseCorrelation(
+            ReoptimizationOptimizationRequest request,
+            ReoptimizationResponse response
+    ) {
+        boolean matches = response != null
+                && Objects.equals(
+                request.replanId(),
+                response.replanId()
+        )
+                && Objects.equals(
+                request.simulationRunId(),
+                response.simulationRunId()
+        )
+                && Objects.equals(
+                request.snapshotVersion(),
+                response.snapshotVersion()
+        );
+
+        if (!matches) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RESPONSE_CORRELATION_MISMATCH
+            );
+        }
+    }
+
+    private BusinessException rejectionUntilPlanApplicationIsImplemented(
+            ReoptimizationResponse response
+    ) {
+        if (response.status() == null
+                || response.status()
+                == ReoptimizationResponse.Status.FAILED) {
+            return new BusinessException(
+                    ErrorCode.REOPTIMIZATION_AI_FAILED
+            );
+        }
+
+        if (response.status()
+                == ReoptimizationResponse.Status.INFEASIBLE) {
+            return new BusinessException(
+                    ErrorCode.REOPTIMIZATION_PLAN_INFEASIBLE
+            );
+        }
+
+        /*
+         * Phase 2-1에서는 DTO 역직렬화와 상관키까지만 검증한다.
+         * DB 작업 배정, Runtime task/path, ready queue, resume는 변경하지 않는다.
+         */
+        return new BusinessException(
+                ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
+        );
+    }
+
+    private void validatePlanContract(
+            ReoptimizationOptimizationRequest request,
+            ReoptimizationResponse response
+    ) {
+        try {
+            ReoptimizationPlanContractValidator.validate(
+                    request,
+                    response
+            );
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INVALID,
+                    exception
+            );
+        }
     }
 
     private SimulationRun findSimulationRun(Long simulationRunId) {

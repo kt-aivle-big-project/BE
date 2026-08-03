@@ -54,6 +54,9 @@ public class PlaybackContext {
     // 전역 재계획을 위해 로봇들의 안전 정지를 요청한 상태
     private boolean replanRequested = false;
 
+    // 이 context에서 생성된 안전 정지 snapshot의 단조 증가 버전
+    private long replanningSnapshotVersion = 0L;
+
     // 동작별 소요 시간(ms)
     private final long moveMillisPerNode;
     private final long pickingMillis;
@@ -103,6 +106,9 @@ public class PlaybackContext {
      * 전체 로봇에 재계획 안전 정지를 요청한다.
      */
     public void requestReplanning() {
+        if (!replanRequested) {
+            replanningSnapshotVersion++;
+        }
         this.replanRequested = true;
     }
 
@@ -112,6 +118,39 @@ public class PlaybackContext {
     public boolean areAllRobotsStoppedForReplanning() {
         return robots.stream()
                 .allMatch(RobotRuntime::isStoppedForReplanning);
+    }
+
+    /**
+     * 안전 정지가 완료된 현재 Runtime 상태를 AI 요청용 불변 값으로 복사한다.
+     */
+    public ReplanningSnapshot captureReplanningSnapshot() {
+        if (!replanRequested
+                || !areAllRobotsStoppedForReplanning()) {
+            throw new IllegalStateException(
+                    "재계획 안전 정지가 완료되지 않았습니다."
+            );
+        }
+
+        List<ReplanningSnapshot.RobotSnapshot> robotSnapshots =
+                robots.stream()
+                        .map(robot ->
+                                new ReplanningSnapshot.RobotSnapshot(
+                                        robot.getRobotId(),
+                                        robot.getCurrentNodeId(),
+                                        robot.getBatteryLevel(),
+                                        robot.getStatus(),
+                                        robot.getCurrentTaskId(),
+                                        robot.getPhase(),
+                                        robot.getBusyUntilMillis()
+                                )
+                        )
+                        .toList();
+
+        return new ReplanningSnapshot(
+                replanningSnapshotVersion,
+                clockMillis,
+                robotSnapshots
+        );
     }
 
     /**
