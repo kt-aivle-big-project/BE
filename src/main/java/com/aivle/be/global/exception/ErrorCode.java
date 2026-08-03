@@ -138,6 +138,21 @@ public enum ErrorCode {
             "SIMULATION_RUN_028",
             "AI 재계획 응답이 현재 재계획 snapshot보다 오래되었습니다."
     ),
+    REOPTIMIZATION_PLAN_STAGE_DUPLICATE(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_029",
+            "동일한 재계획 staging 계획이 이미 존재합니다."
+    ),
+    REOPTIMIZATION_PLAN_STAGE_FAILED(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "SIMULATION_RUN_030",
+            "검증된 재계획 계획을 staging 저장하지 못했습니다."
+    ),
+    REOPTIMIZATION_PLAN_STAGE_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "SIMULATION_RUN_031",
+            "재계획 staging 계획을 찾을 수 없습니다."
+    ),
 
     STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),
 

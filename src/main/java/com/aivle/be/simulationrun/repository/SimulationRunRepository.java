@@ -2,12 +2,21 @@ package com.aivle.be.simulationrun.repository;
 
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface SimulationRunRepository extends JpaRepository<SimulationRun, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select run from SimulationRun run where run.id = :id")
+    Optional<SimulationRun> findByIdForUpdate(@Param("id") Long id);
 
     boolean existsByWarehouse_IdAndGuestSessionIdIsNullAndStatusInAndIdNot(
             Long warehouseId,

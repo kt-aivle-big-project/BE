@@ -10,6 +10,7 @@ import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
 import com.aivle.be.optimization.dto.response.PathStep;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import com.aivle.be.optimization.dto.response.TaskPlan;
+import com.aivle.be.optimization.staging.ReoptimizationPlanStageCommand;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
@@ -32,6 +33,7 @@ import com.aivle.be.warehouseedge.repository.WarehouseEdgeRepository;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -63,6 +65,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -472,9 +475,27 @@ class ReoptimizationServiceTest {
                                     .RemainingStage.IDLE
                     );
                 });
+        ArgumentCaptor<ReoptimizationPlanStageCommand> stageCommand =
+                ArgumentCaptor.forClass(
+                        ReoptimizationPlanStageCommand.class
+                );
+        verify(fixture.planStagingService(), times(1))
+                .stage(stageCommand.capture());
+        assertThat(stageCommand.getValue().simulationRunId()).isEqualTo(1L);
+        assertThat(stageCommand.getValue().replanId())
+                .isEqualTo(capturedRequest.replanId());
+        assertThat(stageCommand.getValue().snapshotVersion()).isEqualTo(1L);
+        assertThat(stageCommand.getValue().taskPlans()).singleElement()
+                .satisfies(plan -> {
+                    assertThat(plan.robotId()).isEqualTo(10L);
+                    assertThat(plan.taskId()).isEqualTo(100L);
+                    assertThat(plan.pathSteps()).hasSize(4);
+                });
+        verify(fixture.optimizationClient(), times(1)).reoptimize(any());
         verify(fixture.pathFinder(), never())
                 .findPath(anyMap(), anyLong(), anyLong());
         verify(fixture.run().run(), never()).finishReplanning();
+        assertTaskPlanUnchanged(fixture.task());
     }
 
     @Test
@@ -495,6 +516,49 @@ class ReoptimizationServiceTest {
         assertReoptimizationRejectedAndFrozen(
                 fixture,
                 ErrorCode.REOPTIMIZATION_PLAN_INFEASIBLE
+        );
+        verify(fixture.planStagingService(), never()).stage(any());
+    }
+
+    @Test
+    void failedResponseDoesNotCreateStagingPlan() {
+        RuntimeFixture fixture = runtimeFixture();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> responseFor(
+                        invocation.getArgument(
+                                0,
+                                ReoptimizationOptimizationRequest.class
+                        ),
+                        null,
+                        null,
+                        null,
+                        ReoptimizationResponse.Status.FAILED
+                ));
+
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                ErrorCode.REOPTIMIZATION_AI_FAILED
+        );
+    }
+
+    @Test
+    void stagingFailureKeepsDatabaseAndRuntimeFrozen() {
+        RuntimeFixture fixture = runtimeFixture();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> successfulResponse(
+                        invocation.getArgument(
+                                0,
+                                ReoptimizationOptimizationRequest.class
+                        )
+                ));
+        doThrow(new BusinessException(
+                ErrorCode.REOPTIMIZATION_PLAN_STAGE_FAILED
+        )).when(fixture.planStagingService()).stage(any());
+
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                ErrorCode.REOPTIMIZATION_PLAN_STAGE_FAILED,
+                true
         );
     }
 
@@ -691,6 +755,12 @@ class ReoptimizationServiceTest {
         TaskRepository taskRepository = mock(TaskRepository.class);
         OptimizationClient optimizationClient =
                 mock(OptimizationClient.class);
+        ReoptimizationPlanStagingService planStagingService =
+                mock(ReoptimizationPlanStagingService.class);
+        when(planStagingService.stage(any())).thenAnswer(invocation -> {
+            verify(optimizationClient, times(1)).reoptimize(any());
+            return 1L;
+        });
         SimpMessagingTemplate messagingTemplate =
                 mock(SimpMessagingTemplate.class);
         WarehousePathFinder pathFinder = mock(WarehousePathFinder.class);
@@ -778,6 +848,7 @@ class ReoptimizationServiceTest {
                 warehouseNodeRepository,
                 warehouseEdgeRepository,
                 optimizationClient,
+                planStagingService,
                 playbackService,
                 transactionManager
         );
@@ -785,11 +856,13 @@ class ReoptimizationServiceTest {
         return new RuntimeFixture(
                 service,
                 optimizationClient,
+                planStagingService,
                 pathFinder,
                 playbackService,
                 run,
                 context,
-                runtime
+                runtime,
+                task
         );
     }
 
@@ -861,6 +934,7 @@ class ReoptimizationServiceTest {
                 warehouseNodeRepository,
                 warehouseEdgeRepository,
                 optimizationClient,
+                mock(ReoptimizationPlanStagingService.class),
                 playbackService,
                 mock(SimpMessagingTemplate.class),
                 new TransactionTemplate(transactionManager)
@@ -873,6 +947,7 @@ class ReoptimizationServiceTest {
             WarehouseNodeRepository warehouseNodeRepository,
             WarehouseEdgeRepository warehouseEdgeRepository,
             OptimizationClient optimizationClient,
+            ReoptimizationPlanStagingService planStagingService,
             SimulationPlaybackService playbackService,
             TestTransactionManager transactionManager
     ) {
@@ -882,6 +957,7 @@ class ReoptimizationServiceTest {
                 warehouseNodeRepository,
                 warehouseEdgeRepository,
                 optimizationClient,
+                planStagingService,
                 playbackService,
                 mock(SimpMessagingTemplate.class),
                 new TransactionTemplate(transactionManager)
@@ -1043,6 +1119,18 @@ class ReoptimizationServiceTest {
             RuntimeFixture fixture,
             ErrorCode expectedErrorCode
     ) {
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                expectedErrorCode,
+                false
+        );
+    }
+
+    private void assertReoptimizationRejectedAndFrozen(
+            RuntimeFixture fixture,
+            ErrorCode expectedErrorCode,
+            boolean stagingInvoked
+    ) {
         assertThatThrownBy(() -> fixture.service().reoptimize(1L, REQUEST))
                 .isInstanceOfSatisfying(
                         BusinessException.class,
@@ -1060,6 +1148,24 @@ class ReoptimizationServiceTest {
         verify(fixture.pathFinder(), never())
                 .findPath(anyMap(), anyLong(), anyLong());
         verify(fixture.run().run(), never()).finishReplanning();
+        if (stagingInvoked) {
+            verify(fixture.planStagingService(), times(1)).stage(any());
+        } else {
+            verify(fixture.planStagingService(), never()).stage(any());
+        }
+        assertTaskPlanUnchanged(fixture.task());
+    }
+
+    private void assertTaskPlanUnchanged(Task task) {
+        assertThat(task.getRobot()).isNull();
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        verify(task, never()).assignRobot(any());
+        verify(task, never()).reassignRobot(any());
+        verify(task, never()).resetForReplay();
+        verify(task, never()).start();
+        verify(task, never()).complete();
+        verify(task, never()).fail();
+        verify(task, never()).cancel();
     }
 
     private record RunFixture(
@@ -1071,11 +1177,13 @@ class ReoptimizationServiceTest {
     private record RuntimeFixture(
             ReoptimizationService service,
             OptimizationClient optimizationClient,
+            ReoptimizationPlanStagingService planStagingService,
             WarehousePathFinder pathFinder,
             SimulationPlaybackService playbackService,
             RunFixture run,
             PlaybackContext context,
-            RobotRuntime runtime
+            RobotRuntime runtime,
+            Task task
     ) {
     }
 

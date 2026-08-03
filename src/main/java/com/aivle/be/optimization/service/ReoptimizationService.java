@@ -8,6 +8,7 @@ import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
 import com.aivle.be.optimization.dto.response.ReoptimizationCompletedEvent;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
+import com.aivle.be.optimization.staging.ReoptimizationPlanStageCommand;
 import com.aivle.be.optimization.validation.ReoptimizationPlanContractValidator;
 import com.aivle.be.optimization.validation.ReoptimizationPlanStalenessValidator;
 import com.aivle.be.optimization.validation.ReoptimizationPlanValidationException;
@@ -64,6 +65,7 @@ public class ReoptimizationService {
     private final WarehouseNodeRepository warehouseNodeRepository;
     private final WarehouseEdgeRepository warehouseEdgeRepository;
     private final OptimizationClient optimizationClient;
+    private final ReoptimizationPlanStagingService planStagingService;
     private final SimulationPlaybackService simulationPlaybackService;
     private final SimpMessagingTemplate messagingTemplate;
     private final TransactionTemplate transactionTemplate;
@@ -168,21 +170,41 @@ public class ReoptimizationService {
                 optimizationClient.reoptimize(fastApiRequest);
 
         validateResponseCorrelation(fastApiRequest, response);
+        validatePlanContract(fastApiRequest, response);
         ReplanningSnapshot currentSnapshot =
                 captureCurrentSnapshotForValidation(simulationRunId);
-        validateSnapshotIsCurrent(
-                fastApiRequest,
-                response,
-                runtimeSnapshot,
-                currentSnapshot
-        );
-        validatePlanContract(fastApiRequest, response);
         validateCompletePlan(
                 fastApiRequest,
                 response,
                 currentSnapshot
         );
+        ReplanningSnapshot stagingSnapshot =
+                captureCurrentSnapshotForValidation(simulationRunId);
+        validateSnapshotIsCurrent(
+                fastApiRequest,
+                response,
+                runtimeSnapshot,
+                stagingSnapshot
+        );
+        stageValidatedPlan(fastApiRequest, response);
         throw rejectionUntilPlanApplicationIsImplemented(response);
+    }
+
+    private void stageValidatedPlan(
+            ReoptimizationOptimizationRequest request,
+            ReoptimizationResponse response
+    ) {
+        if (response.status()
+                != ReoptimizationResponse.Status.SUCCEEDED) {
+            return;
+        }
+
+        ReoptimizationPlanStageCommand command =
+                ReoptimizationPlanStageCommand.from(
+                        request,
+                        response
+                );
+        planStagingService.stage(command);
     }
 
     private void validateRunningSimulation(Long simulationRunId) {
@@ -362,7 +384,7 @@ public class ReoptimizationService {
         }
 
         /*
-         * Phase 2-1에서는 DTO 역직렬화와 상관키까지만 검증한다.
+         * Phase 2-3A에서는 검증된 계획을 staging 저장만 한다.
          * DB 작업 배정, Runtime task/path, ready queue, resume는 변경하지 않는다.
          */
         return new BusinessException(
