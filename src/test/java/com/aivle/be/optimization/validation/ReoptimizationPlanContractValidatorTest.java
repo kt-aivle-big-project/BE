@@ -84,6 +84,60 @@ class ReoptimizationPlanContractValidatorTest {
     }
 
     @Test
+    void rejectsToEndWhenSequenceIsNotZero() {
+        ReoptimizationOptimizationRequest request = request(List.of(
+                normalRobot(10L, 100L, stage("TO_END"))
+        ));
+        ReoptimizationResponse response = succeeded(
+                toEndPlan(10L, 100L, 1)
+        );
+
+        assertThatThrownBy(() ->
+                ReoptimizationPlanContractValidator.validate(
+                        request,
+                        response
+                )
+        ).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("sequence zero");
+    }
+
+    @Test
+    void rejectsToEndWithWrongSnapshotOriginOrTaskDestination() {
+        ReoptimizationOptimizationRequest request = request(List.of(
+                normalRobot(10L, 100L, stage("TO_END"))
+        ));
+        TaskPlan wrongOrigin = toEndPlan(
+                10L,
+                100L,
+                0,
+                11L,
+                30L
+        );
+        TaskPlan wrongDestination = toEndPlan(
+                10L,
+                100L,
+                0,
+                10L,
+                31L
+        );
+
+        assertThatThrownBy(() ->
+                ReoptimizationPlanContractValidator.validate(
+                        request,
+                        succeeded(wrongOrigin)
+                )
+        ).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("snapshot robot node");
+        assertThatThrownBy(() ->
+                ReoptimizationPlanContractValidator.validate(
+                        request,
+                        succeeded(wrongDestination)
+                )
+        ).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("task end node");
+    }
+
+    @Test
     void rejectsSucceededReassignmentAfterFailedRobotCompletedPicking() {
         ReoptimizationOptimizationRequest request = request(List.of(
                 failedRobot(10L, 100L, stage("TO_END")),
@@ -143,6 +197,25 @@ class ReoptimizationPlanContractValidatorTest {
                         response
                 )
         ).doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsSucceededPlanWhenOfflineRobotHoldsTheTask() {
+        ReoptimizationOptimizationRequest request = request(List.of(
+                robot(10L, 100L, "OFFLINE", stage("DROPPING")),
+                normalRobot(11L, null, stage("IDLE"))
+        ));
+        ReoptimizationResponse response = succeeded(
+                fullPlan(11L, 100L, 1_000L)
+        );
+
+        assertThatThrownBy(() ->
+                ReoptimizationPlanContractValidator.validate(
+                        request,
+                        response
+                )
+        ).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requires INFEASIBLE");
     }
 
     private ReoptimizationOptimizationRequest request(
@@ -250,15 +323,39 @@ class ReoptimizationPlanContractValidatorTest {
     }
 
     private TaskPlan toEndPlan(Long robotId, Long taskId) {
+        return toEndPlan(robotId, taskId, 0);
+    }
+
+    private TaskPlan toEndPlan(
+            Long robotId,
+            Long taskId,
+            int sequence
+    ) {
+        return toEndPlan(
+                robotId,
+                taskId,
+                sequence,
+                robotId,
+                30L
+        );
+    }
+
+    private TaskPlan toEndPlan(
+            Long robotId,
+            Long taskId,
+            int sequence,
+            Long originNodeId,
+            Long destinationNodeId
+    ) {
         return new TaskPlan(
                 robotId,
                 taskId,
-                0,
+                sequence,
                 TaskPlan.ExecutionStage.TO_END,
                 List.of(),
                 List.of(
-                        step(robotId, 1_000L),
-                        step(30L, 3_000L)
+                        step(originNodeId, 1_000L),
+                        step(destinationNodeId, 3_000L)
                 ),
                 1_000L,
                 3_000L

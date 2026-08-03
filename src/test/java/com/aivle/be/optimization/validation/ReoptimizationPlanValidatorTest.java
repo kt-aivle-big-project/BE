@@ -15,6 +15,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Set;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -197,6 +198,59 @@ class ReoptimizationPlanValidatorTest {
                 ),
                 ErrorCode.REOPTIMIZATION_PLAN_BLOCKED_EDGE
         );
+
+        Scenario otherWarehouseBlockedEdge = scenario(
+                scenario.request().robots(),
+                scenario.request().remainingTasks(),
+                List.of(8L)
+        );
+        assertInvalid(
+                otherWarehouseBlockedEdge,
+                response(
+                        ReoptimizationResponse.Status.INFEASIBLE,
+                        List.of(),
+                        List.of(100L)
+                ),
+                ErrorCode.REOPTIMIZATION_PLAN_BLOCKED_EDGE
+        );
+    }
+
+    @Test
+    void keepsNumericBlockedEdgeIdsAndRejectsParallelEdgeAmbiguity() {
+        Scenario scenario = scenario(
+                List.of(robot(10L, 10L, "PAUSED")),
+                List.of(task(100L, 20L, 30L)),
+                List.of(2L)
+        );
+        assertThat(scenario.request().blockedEdgeIds())
+                .containsExactly(2L);
+        assertThat(scenario.request().blockedEdgeIds().get(0))
+                .isInstanceOf(Long.class);
+
+        List<ReoptimizationPlanValidationInput.DirectedEdge> parallelEdges =
+                new java.util.ArrayList<>(directedEdges());
+        parallelEdges.add(edge(8L, 10L, 20L));
+
+        assertThatThrownBy(() -> ReoptimizationPlanValidator.validate(
+                input(
+                        scenario(
+                                scenario.request().robots(),
+                                scenario.request().remainingTasks(),
+                                List.of()
+                        ),
+                        succeeded(List.of(
+                                standardTask100(10L, 0, 1_000L)
+                        )),
+                        parallelEdges,
+                        Set.of(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L)
+                )
+        )).isInstanceOfSatisfying(
+                ReoptimizationPlanValidationException.class,
+                exception -> assertThat(exception.getErrorCode())
+                        .isEqualTo(
+                                ErrorCode.REOPTIMIZATION_PLAN_PATH_INVALID
+                        )
+        );
     }
 
     @Test
@@ -236,8 +290,16 @@ class ReoptimizationPlanValidatorTest {
 
         assertInvalid(
                 scenario,
-                nodeConflictResponse(),
+                nodeHandoffResponse(2_000L),
                 ErrorCode.REOPTIMIZATION_PLAN_CONFLICT
+        );
+    }
+
+    @Test
+    void allowsNodeHandoffWhenTimesAreActuallySeparated() {
+        assertValid(
+                nodeConflictScenario(),
+                nodeHandoffResponse(2_001L)
         );
     }
 
@@ -256,6 +318,51 @@ class ReoptimizationPlanValidatorTest {
                 edgeConflictResponse(true),
                 ErrorCode.REOPTIMIZATION_PLAN_CONFLICT
         );
+    }
+
+    @Test
+    void allowsEdgeOccupancyIntervalsThatOnlyTouchAtBoundary() {
+        Scenario scenario = scenario(
+                List.of(
+                        robot(10L, 10L, "PAUSED"),
+                        robot(11L, 40L, "PAUSED")
+                ),
+                List.of(
+                        task(100L, 20L, 20L),
+                        task(101L, 20L, 20L)
+                ),
+                List.of()
+        );
+        TaskPlan first = plan(
+                10L,
+                100L,
+                0,
+                List.of(step(10L, 1_000L), step(20L, 2_000L)),
+                List.of(step(20L, 2_000L))
+        );
+        TaskPlan second = plan(
+                11L,
+                101L,
+                0,
+                List.of(
+                        step(40L, 1_000L),
+                        step(10L, 2_000L),
+                        step(20L, 3_000L)
+                ),
+                List.of(step(20L, 3_000L))
+        );
+        List<ReoptimizationPlanValidationInput.DirectedEdge> edges =
+                new java.util.ArrayList<>(directedEdges());
+        edges.add(edge(8L, 40L, 10L));
+
+        assertThatCode(() -> ReoptimizationPlanValidator.validate(
+                input(
+                        scenario,
+                        succeeded(List.of(first, second)),
+                        edges,
+                        Set.of(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L)
+                )
+        )).doesNotThrowAnyException();
     }
 
     @Test
@@ -405,16 +512,21 @@ class ReoptimizationPlanValidatorTest {
         ));
     }
 
-    private ReoptimizationResponse nodeConflictResponse() {
+    private ReoptimizationResponse nodeHandoffResponse(
+            long secondArrival
+    ) {
         TaskPlan first = plan(
                 10L, 100L, 0,
-                path(1_000L, 10L, 20L),
-                path(3_000L, 20L, 30L)
+                List.of(step(10L, 1_000L), step(20L, 2_000L)),
+                List.of(step(20L, 2_000L), step(30L, 3_000L))
         );
         TaskPlan second = plan(
                 11L, 101L, 0,
-                path(1_000L, 40L, 20L),
-                path(3_000L, 20L, 50L)
+                List.of(step(40L, 1_000L), step(20L, secondArrival)),
+                List.of(
+                        step(20L, secondArrival),
+                        step(50L, secondArrival + 1_000L)
+                )
         );
         return succeeded(List.of(first, second));
     }
@@ -586,13 +698,28 @@ class ReoptimizationPlanValidatorTest {
             Scenario scenario,
             ReoptimizationResponse response
     ) {
+        return input(
+                scenario,
+                response,
+                directedEdges(),
+                Set.of(1L, 2L, 3L, 4L, 5L, 6L, 7L)
+        );
+    }
+
+    private ReoptimizationPlanValidationInput input(
+            Scenario scenario,
+            ReoptimizationResponse response,
+            List<ReoptimizationPlanValidationInput.DirectedEdge>
+                    directedEdges,
+            Set<Long> warehouseEdgeIds
+    ) {
         return new ReoptimizationPlanValidationInput(
                 scenario.snapshot(),
                 scenario.request(),
                 response,
                 Set.of(10L, 20L, 30L, 40L, 50L, 60L, 70L),
-                directedEdges(),
-                Set.of(1L, 2L, 3L, 4L, 5L, 6L, 7L),
+                directedEdges,
+                warehouseEdgeIds,
                 scenario.participantRobotIds(),
                 scenario.unavailableRobotIds()
         );

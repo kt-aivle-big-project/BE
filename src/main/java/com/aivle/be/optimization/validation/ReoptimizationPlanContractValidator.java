@@ -97,6 +97,12 @@ public final class ReoptimizationPlanContractValidator {
             ReoptimizationOptimizationRequest.RobotStateInput robot,
             TaskPlan plan
     ) {
+        if (plan.sequence() != 0) {
+            throw new IllegalArgumentException(
+                    "TO_END must be the robot's first task with sequence zero"
+            );
+        }
+
         boolean sameInProgressTask = plan.taskId().equals(
                 robot.currentTaskId()
         );

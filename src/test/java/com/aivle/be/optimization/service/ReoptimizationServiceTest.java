@@ -538,6 +538,50 @@ class ReoptimizationServiceTest {
     }
 
     @Test
+    void toEndWithNonZeroSequenceKeepsDatabaseAndRuntimeFrozen() {
+        RuntimeFixture fixture = runtimeFixture();
+        fixture.runtime().setPhase(RobotRuntime.Phase.MOVING_TO_END);
+        fixture.runtime().pauseForReplanning();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> {
+                    ReoptimizationOptimizationRequest request =
+                            invocation.getArgument(
+                                    0,
+                                    ReoptimizationOptimizationRequest.class
+                            );
+                    TaskPlan invalidPlan = new TaskPlan(
+                            10L,
+                            100L,
+                            1,
+                            TaskPlan.ExecutionStage.TO_END,
+                            List.of(),
+                            List.of(
+                                    new PathStep(10L, 0L, 0L),
+                                    new PathStep(30L, 2_000L, 2_000L)
+                            ),
+                            0L,
+                            2_000L
+                    );
+
+                    return new ReoptimizationResponse(
+                            "request-1",
+                            request.replanId(),
+                            request.simulationRunId(),
+                            request.snapshotVersion(),
+                            ReoptimizationResponse.Status.SUCCEEDED,
+                            List.of(invalidPlan),
+                            List.of(),
+                            "TO_END must start with sequence zero"
+                    );
+                });
+
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INVALID
+        );
+    }
+
+    @Test
     void rejectsPlanWhenRuntimeSnapshotChangesDuringAiCall() {
         RuntimeFixture fixture = runtimeFixture();
         when(fixture.optimizationClient().reoptimize(any()))
