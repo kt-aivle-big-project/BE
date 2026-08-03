@@ -9,6 +9,9 @@ import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.task.service.TaskInventoryService;
+import com.aivle.be.task.entity.TaskType;
+import com.aivle.be.warehousenode.entity.WarehouseNode;
+import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -28,6 +31,7 @@ public class PlanTaskLifecycleService {
 
     private final TaskRepository taskRepository;
     private final RobotRepository robotRepository;
+    private final WarehouseNodeRepository warehouseNodeRepository;
     private final TaskInventoryService taskInventoryService;
     private final AiPostgresContractSyncService aiPostgresContractSyncService;
     private final SimpMessagingTemplate messagingTemplate;
@@ -58,6 +62,9 @@ public class PlanTaskLifecycleService {
                     .orElseThrow(() -> new IllegalArgumentException(
                             "LARO assigned robot does not exist in BE: " + robotId
                     ));
+            if (task.getTaskType() == TaskType.INBOUND) {
+                confirmInboundDestination(task, operation);
+            }
             if (task.getStatus() == TaskStatus.PENDING) {
                 task.assignFromValidatedPlan(robot);
             } else if (task.getStatus() == TaskStatus.ASSIGNED
@@ -72,6 +79,31 @@ public class PlanTaskLifecycleService {
             broadcast(task);
         }
         installedTaskIds.put(simulationRunId, Set.copyOf(planTaskIds));
+    }
+
+    private void confirmInboundDestination(
+            Task task,
+            LaroPlanResponse.LogicalOperation operation
+    ) {
+        String rackId = operation.targetRackId();
+        Integer rackLevel = operation.targetRackLevel();
+        String deliveryNode = operation.deliveryNode();
+        if (rackId == null || rackId.isBlank() || rackLevel == null
+                || deliveryNode == null || deliveryNode.isBlank()) {
+            throw new IllegalArgumentException(
+                    "LARO inbound operation is missing the selected putaway destination: "
+                            + operation.operationId()
+            );
+        }
+        WarehouseNode rackNode = warehouseNodeRepository
+                .findByWarehouse_IdAndNodeCode(task.getWarehouse().getId(), rackId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "LARO selected an unknown BE rack node: " + rackId
+                ));
+        aiPostgresContractSyncService.confirmInboundPlacement(
+                task, rackId, rackLevel, deliveryNode
+        );
+        task.confirmInboundDestination(rackNode);
     }
 
     @Transactional
@@ -95,6 +127,12 @@ public class PlanTaskLifecycleService {
             aiPostgresContractSyncService.syncTaskCompletion(task);
             broadcast(task);
         }
+    }
+
+    @Transactional
+    public void releaseAssignments(Long simulationRunId) {
+        installedTaskIds.remove(simulationRunId);
+        aiPostgresContractSyncService.releaseInboundPlacements(simulationRunId);
     }
 
     private boolean matches(Task task, String operationId) {

@@ -84,7 +84,13 @@ public record LaroPlanResponse(
             @JsonProperty("operation_type")
             String operationType,
             @JsonProperty("assigned_robot_id")
-            String assignedRobotId
+            String assignedRobotId,
+            @JsonProperty("target_rack_id")
+            String targetRackId,
+            @JsonProperty("target_rack_level")
+            Integer targetRackLevel,
+            @JsonProperty("delivery_node")
+            String deliveryNode
     ) {
     }
 

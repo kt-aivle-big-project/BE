@@ -125,6 +125,7 @@ public class AiPostgresContractSyncService {
     public ContractEvents syncSimulationTasks(Long simulationRunId, Long warehouseId) {
         String wid = AiRouteGraphSyncService.toAiWarehouseId(warehouseId);
         normalizeFacilityStatuses(wid);
+        releaseInactiveInboundPlacements(wid);
         syncInventory(warehouseId, wid);
         List<Task> tasks =
                 taskRepository.findAllBySimulationRun_IdOrderByRequestedAtAsc(simulationRunId);
@@ -144,6 +145,20 @@ public class AiPostgresContractSyncService {
             }
         }
         return new ContractEvents(List.copyOf(orderIds), List.copyOf(inboundIds));
+    }
+
+    private void releaseInactiveInboundPlacements(String wid) {
+        jdbc.update("""
+                UPDATE inbound_receipts ir
+                SET target_rack_id=NULL, target_rack_level=NULL,
+                    status='pending', updated_at=now()
+                FROM task t JOIN simulation_runs sr
+                  ON sr.simulation_run_id=t.simulation_run_id
+                WHERE t.inbound_id=ir.inbound_id
+                  AND ir.warehouse_id=?
+                  AND ir.status IN ('planned','in_transit')
+                  AND sr.status IN ('CREATED','STOPPED','FAILED','COMPLETED')
+                """, wid);
     }
 
     private void syncInventory(Long warehouseId, String wid) {
@@ -205,16 +220,12 @@ public class AiPostgresContractSyncService {
     }
 
     private String syncInboundTask(String wid, Long runId, Task task) {
-        List<Map<String, Object>> targets = jdbc.queryForList("""
-                SELECT p.port_id, r.rack_id
-                FROM inbound_ports p CROSS JOIN racks r
-                WHERE p.warehouse_id=? AND r.warehouse_id=?
-                ORDER BY p.port_id, r.rack_id LIMIT 1
-                """, wid, wid);
-        if (targets.isEmpty()) {
+        List<String> ports = jdbc.query(
+                "SELECT port_id FROM inbound_ports WHERE warehouse_id=? ORDER BY port_id LIMIT 1",
+                (rs, row) -> rs.getString(1), wid);
+        if (ports.isEmpty()) {
             return null;
         }
-        Map<String, Object> target = targets.get(0);
         String inboundId = "IN-%03d".formatted(task.getId());
         String operationId = "OP-RUN-" + runId + "-" + task.getId();
         String handlingUnitId = "HU-IN-" + runId + "-" + task.getId();
@@ -230,22 +241,122 @@ public class AiPostgresContractSyncService {
                 INSERT INTO inbound_receipts
                   (warehouse_id, inbound_id, handling_unit_id, item_id, quantity,
                    source_port_id, target_rack_id, target_rack_level, status, priority)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'pending', 'medium')
-                ON CONFLICT (warehouse_id, inbound_id) DO NOTHING
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'medium')
+                ON CONFLICT (warehouse_id, inbound_id) DO UPDATE
+                SET handling_unit_id=EXCLUDED.handling_unit_id,
+                    item_id=EXCLUDED.item_id,
+                    quantity=EXCLUDED.quantity,
+                    source_port_id=EXCLUDED.source_port_id,
+                    target_rack_id=EXCLUDED.target_rack_id,
+                    target_rack_level=EXCLUDED.target_rack_level,
+                    status='pending',
+                    priority=EXCLUDED.priority,
+                    updated_at=now()
                 """, wid, inboundId,
                 handlingUnitId,
                 String.valueOf(task.getEffectiveItemId()), task.effectiveQuantity(),
-                target.get("port_id"), target.get("rack_id"));
+                ports.get(0), null, null);
         return inboundId;
+    }
+
+    /**
+     * Atomically accepts the putaway slot selected by LARO. The advisory lock
+     * serializes competing plan installations for the same physical slot.
+     */
+    @Transactional
+    public void confirmInboundPlacement(
+            Task task,
+            String targetRackId,
+            Integer targetRackLevel,
+            String deliveryNode
+    ) {
+        if (task.getInboundId() == null || targetRackId == null
+                || targetRackLevel == null || deliveryNode == null) {
+            throw new IllegalArgumentException(
+                    "LARO inbound operation must contain target rack, level, and delivery node."
+            );
+        }
+        String wid = AiRouteGraphSyncService.toAiWarehouseId(task.getWarehouse().getId());
+        String slotKey = wid + ":" + targetRackId + ":" + targetRackLevel;
+        jdbc.queryForList("SELECT pg_advisory_xact_lock(hashtext(?))", slotKey);
+
+        Integer receiptQuantity = jdbc.query("""
+                        SELECT quantity FROM inbound_receipts
+                        WHERE warehouse_id=? AND inbound_id=?
+                        FOR UPDATE
+                        """,
+                rs -> rs.next() ? rs.getInt(1) : null,
+                wid, task.getInboundId());
+        if (receiptQuantity == null) {
+            throw new IllegalArgumentException(
+                    "LARO inbound operation does not match a stored receipt: "
+                            + wid + "/" + task.getInboundId()
+            );
+        }
+
+        Boolean validSlot = jdbc.queryForObject("""
+                SELECT EXISTS (
+                  SELECT 1 FROM rack_slots rs
+                  WHERE rs.warehouse_id=? AND rs.rack_id=? AND rs.level=?
+                    AND rs.status<>'FULL'
+                    AND rs.capacity - COALESCE((
+                      SELECT SUM(hu.quantity) FROM handling_units hu
+                      WHERE hu.warehouse_id=rs.warehouse_id
+                        AND hu.home_rack_id=rs.rack_id
+                        AND hu.home_rack_level=rs.level
+                        AND hu.status IN ('stored','reserved','in_transit','returning')
+                    ), 0) - COALESCE((
+                      SELECT SUM(other.quantity) FROM inbound_receipts other
+                      WHERE other.warehouse_id=rs.warehouse_id
+                        AND other.inbound_id<>?
+                        AND other.target_rack_id=rs.rack_id
+                        AND other.target_rack_level=rs.level
+                        AND other.status IN ('planned','in_transit')
+                    ), 0) >= ?
+                )
+                """, Boolean.class, wid, targetRackId, targetRackLevel,
+                task.getInboundId(), receiptQuantity);
+        if (!Boolean.TRUE.equals(validSlot)) {
+            throw new IllegalArgumentException(
+                    "LARO selected a missing, full, or undersized inbound slot: "
+                            + wid + "/" + targetRackId + " level " + targetRackLevel
+            );
+        }
+
+        Boolean validAccessNode = jdbc.queryForObject("""
+                SELECT EXISTS (
+                  SELECT 1 FROM racks
+                  WHERE warehouse_id=? AND rack_id=?
+                    AND jsonb_exists(access_node_ids, ?)
+                )
+                """, Boolean.class, wid, targetRackId, deliveryNode);
+        if (!Boolean.TRUE.equals(validAccessNode)) {
+            throw new IllegalArgumentException(
+                    "LARO delivery node does not belong to the selected rack: "
+                            + deliveryNode + " -> " + targetRackId
+            );
+        }
+
+        int updated = jdbc.update("""
+                UPDATE inbound_receipts
+                SET target_rack_id=?, target_rack_level=?, status='planned', updated_at=now()
+                WHERE warehouse_id=? AND inbound_id=?
+                """, targetRackId, targetRackLevel, wid, task.getInboundId());
+        if (updated != 1) {
+            throw new IllegalArgumentException(
+                    "Failed to persist LARO inbound placement: "
+                            + wid + "/" + task.getInboundId()
+            );
+        }
     }
 
     @Transactional
     public void syncTaskCompletion(Task task) {
         Long warehouseId = task.getWarehouse().getId();
         String wid = AiRouteGraphSyncService.toAiWarehouseId(warehouseId);
-        syncInventory(warehouseId, wid);
 
         if (task.getTaskType() == TaskType.OUTBOUND && task.getOrderId() != null) {
+            syncInventory(warehouseId, wid);
             jdbc.update("""
                     UPDATE orders SET status='completed'
                     WHERE warehouse_id=? AND order_id=?
@@ -254,11 +365,71 @@ public class AiPostgresContractSyncService {
         }
         if (task.getTaskType() == TaskType.INBOUND && task.getInboundId() != null) {
             jdbc.update("""
+                    INSERT INTO handling_units
+                      (warehouse_id, handling_unit_id, stock_id, item_id, item_name,
+                       quantity, capacity, unit, home_rack_id, home_rack_level, status)
+                    SELECT ir.warehouse_id, ir.handling_unit_id,
+                           'STOCK-' || ir.handling_unit_id, ir.item_id, p.product_name,
+                           ir.quantity, rs.capacity, 'EA',
+                           ir.target_rack_id, ir.target_rack_level, 'stored'
+                    FROM inbound_receipts ir
+                    JOIN rack_slots rs
+                      ON rs.warehouse_id=ir.warehouse_id
+                     AND rs.rack_id=ir.target_rack_id
+                     AND rs.level=ir.target_rack_level
+                    LEFT JOIN product p ON p.product_id::text=ir.item_id
+                    WHERE ir.warehouse_id=? AND ir.inbound_id=?
+                    ON CONFLICT (warehouse_id, handling_unit_id) DO UPDATE
+                    SET quantity=EXCLUDED.quantity,
+                        home_rack_id=EXCLUDED.home_rack_id,
+                        home_rack_level=EXCLUDED.home_rack_level,
+                        status='stored', updated_at=now()
+                    """, wid, task.getInboundId());
+            jdbc.update("""
                     UPDATE inbound_receipts
                     SET status='stored', updated_at=now()
                     WHERE warehouse_id=? AND inbound_id=?
                     """, wid, task.getInboundId());
+            jdbc.update("""
+                    UPDATE rack_slots rs
+                    SET status=CASE
+                      WHEN totals.quantity >= rs.capacity THEN 'FULL'
+                      ELSE 'PARTIAL'
+                    END
+                    FROM (
+                      SELECT warehouse_id, home_rack_id, home_rack_level,
+                             SUM(quantity) AS quantity
+                      FROM handling_units
+                      WHERE warehouse_id=?
+                      GROUP BY warehouse_id, home_rack_id, home_rack_level
+                    ) totals
+                    WHERE totals.warehouse_id=rs.warehouse_id
+                      AND totals.home_rack_id=rs.rack_id
+                      AND totals.home_rack_level=rs.level
+                      AND rs.rack_id=(
+                        SELECT target_rack_id FROM inbound_receipts
+                        WHERE warehouse_id=? AND inbound_id=?
+                      )
+                      AND rs.level=(
+                        SELECT target_rack_level FROM inbound_receipts
+                        WHERE warehouse_id=? AND inbound_id=?
+                      )
+                    """, wid, wid, task.getInboundId(), wid, task.getInboundId());
         }
+    }
+
+    @Transactional
+    public void releaseInboundPlacements(Long simulationRunId) {
+        jdbc.update("""
+                UPDATE inbound_receipts ir
+                SET target_rack_id=NULL, target_rack_level=NULL,
+                    status='pending', updated_at=now()
+                FROM task t
+                WHERE t.simulation_run_id=?
+                  AND t.inbound_id=ir.inbound_id
+                  AND ir.warehouse_id='WH-' || LPAD(t.warehouse_id::text, 3, '0')
+                  AND ir.status IN ('planned','in_transit')
+                """, simulationRunId);
     }
 
     private void syncStation(

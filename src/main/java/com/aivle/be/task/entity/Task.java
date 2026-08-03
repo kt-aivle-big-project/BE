@@ -252,6 +252,17 @@ public class Task {
         this.assignedAt = LocalDateTime.now();
     }
 
+    public void confirmInboundDestination(WarehouseNode targetNode) {
+        if (taskType != TaskType.INBOUND || targetNode == null
+                || !warehouse.getId().equals(targetNode.getWarehouse().getId())) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        if (status != TaskStatus.PENDING) {
+            throw new BusinessException(ErrorCode.TASK_ALREADY_PROCESSED);
+        }
+        this.endNode = targetNode;
+    }
+
     public void fail() {
         if (this.status != TaskStatus.ASSIGNED && this.status != TaskStatus.IN_PROGRESS) {
             throw new BusinessException(ErrorCode.TASK_ALREADY_PROCESSED);

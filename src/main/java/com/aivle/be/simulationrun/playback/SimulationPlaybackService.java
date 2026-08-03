@@ -348,6 +348,7 @@ public class SimulationPlaybackService {
 
     public void clear(Long simulationRunId) {
         contexts.remove(simulationRunId);
+        planTaskLifecycleService.releaseAssignments(simulationRunId);
     }
 
     public boolean markRobotError(Long simulationRunId, Long robotId) {
