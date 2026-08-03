@@ -21,9 +21,15 @@ import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.playback.WarehousePathFinder;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
+import com.aivle.be.task.entity.Task;
+import com.aivle.be.task.entity.TaskStatus;
+import com.aivle.be.task.entity.TaskType;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.task.service.TaskService;
 import com.aivle.be.warehouse.entity.Warehouse;
+import com.aivle.be.warehouseedge.entity.WarehouseEdge;
+import com.aivle.be.warehouseedge.repository.WarehouseEdgeRepository;
+import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.aop.framework.ProxyFactory;
@@ -43,6 +49,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -104,7 +111,7 @@ class ReoptimizationServiceTest {
                     if (!releaseAi.await(5, TimeUnit.SECONDS)) {
                         throw new AssertionError("AI test latch timeout");
                     }
-                    return successfulResponse(
+                    return infeasibleResponse(
                             invocation.getArgument(
                                     0,
                                     ReoptimizationOptimizationRequest.class
@@ -135,7 +142,7 @@ class ReoptimizationServiceTest {
             releaseAi.countDown();
             assertThat(first.get(5, TimeUnit.SECONDS).getErrorCode())
                     .isEqualTo(
-                            ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
+                            ErrorCode.REOPTIMIZATION_PLAN_INFEASIBLE
                     );
         } finally {
             releaseAi.countDown();
@@ -182,7 +189,7 @@ class ReoptimizationServiceTest {
                     if (!releaseAi.await(5, TimeUnit.SECONDS)) {
                         throw new AssertionError("AI test latch timeout");
                     }
-                    return successfulResponse(
+                    return infeasibleResponse(
                             invocation.getArgument(
                                     0,
                                     ReoptimizationOptimizationRequest.class
@@ -211,11 +218,11 @@ class ReoptimizationServiceTest {
 
             assertThat(first.get(5, TimeUnit.SECONDS).getErrorCode())
                     .isEqualTo(
-                            ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
+                            ErrorCode.REOPTIMIZATION_PLAN_INFEASIBLE
                     );
             assertThat(second.get(5, TimeUnit.SECONDS).getErrorCode())
                     .isEqualTo(
-                            ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
+                            ErrorCode.REOPTIMIZATION_PLAN_INFEASIBLE
                     );
         } finally {
             releaseAi.countDown();
@@ -256,7 +263,7 @@ class ReoptimizationServiceTest {
                             !TransactionSynchronizationManager
                                     .isActualTransactionActive()
                     );
-                    return successfulResponse(
+                    return infeasibleResponse(
                             invocation.getArgument(
                                     0,
                                     ReoptimizationOptimizationRequest.class
@@ -287,7 +294,7 @@ class ReoptimizationServiceTest {
                                     exception -> assertThat(
                                             exception.getErrorCode()
                                     ).isEqualTo(
-                                            ErrorCode.REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED
+                                            ErrorCode.REOPTIMIZATION_PLAN_INFEASIBLE
                                     )
                             );
 
@@ -337,7 +344,19 @@ class ReoptimizationServiceTest {
                 mock(SimulationRunRepository.class);
         TaskRepository taskRepository = mock(TaskRepository.class);
         SimulationPlaybackService playbackService =
-                readyPlaybackMock();
+                readyPlaybackMock(
+                        5L,
+                        2_000L,
+                        List.of(new ReplanningSnapshot.RobotSnapshot(
+                                10L,
+                                20L,
+                                75.0,
+                                RobotStatus.ERROR,
+                                100L,
+                                RobotRuntime.Phase.PICKING,
+                                2_000L
+                        ))
+                );
         OptimizationClient optimizationClient =
                 mock(OptimizationClient.class);
         RunFixture run = runFixture(1L);
@@ -351,20 +370,6 @@ class ReoptimizationServiceTest {
                         anyLong(),
                         any()
                 )).thenReturn(List.of());
-        when(playbackService.captureReplanningSnapshot(1L))
-                .thenReturn(new ReplanningSnapshot(
-                        5L,
-                        2_000L,
-                        List.of(new ReplanningSnapshot.RobotSnapshot(
-                                10L,
-                                20L,
-                                75.0,
-                                RobotStatus.ERROR,
-                                100L,
-                                RobotRuntime.Phase.PICKING,
-                                2_000L
-                        ))
-                ));
         when(optimizationClient.reoptimize(any()))
                 .thenAnswer(invocation -> {
                     ReoptimizationOptimizationRequest request =
@@ -448,7 +453,12 @@ class ReoptimizationServiceTest {
         assertThat(capturedRequest.simulationClockMillis()).isZero();
         assertThat(capturedRequest.warehouseId()).isEqualTo(1L);
         assertThat(capturedRequest.blockedEdgeIds()).isEmpty();
-        assertThat(capturedRequest.remainingTasks()).isEmpty();
+        assertThat(capturedRequest.remainingTasks()).singleElement()
+                .satisfies(task -> {
+                    assertThat(task.taskId()).isEqualTo(100L);
+                    assertThat(task.startNodeId()).isEqualTo(20L);
+                    assertThat(task.endNodeId()).isEqualTo(30L);
+                });
         assertThat(capturedRequest.robots()).singleElement()
                 .satisfies(robot -> {
                     assertThat(robot.robotId()).isEqualTo(10L);
@@ -523,7 +533,27 @@ class ReoptimizationServiceTest {
 
         assertReoptimizationRejectedAndFrozen(
                 fixture,
-                ErrorCode.REOPTIMIZATION_PLAN_CONTRACT_INVALID
+                ErrorCode.REOPTIMIZATION_PLAN_TASK_COVERAGE_INVALID
+        );
+    }
+
+    @Test
+    void rejectsPlanWhenRuntimeSnapshotChangesDuringAiCall() {
+        RuntimeFixture fixture = runtimeFixture();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> {
+                    fixture.runtime().setBatteryLevel(90.0);
+                    return infeasibleResponse(
+                            invocation.getArgument(
+                                    0,
+                                    ReoptimizationOptimizationRequest.class
+                            )
+                    );
+                });
+
+        assertReoptimizationRejectedAndFrozen(
+                fixture,
+                ErrorCode.REOPTIMIZATION_PLAN_STALE
         );
     }
 
@@ -620,7 +650,17 @@ class ReoptimizationServiceTest {
         SimpMessagingTemplate messagingTemplate =
                 mock(SimpMessagingTemplate.class);
         WarehousePathFinder pathFinder = mock(WarehousePathFinder.class);
+        WarehouseNodeRepository warehouseNodeRepository =
+                mock(WarehouseNodeRepository.class);
+        WarehouseEdgeRepository warehouseEdgeRepository =
+                mock(WarehouseEdgeRepository.class);
         RunFixture run = runFixture(1L);
+        WarehouseNode node10 = node(10L);
+        WarehouseNode node20 = node(20L);
+        WarehouseNode node30 = node(30L);
+        Task task = mock(Task.class);
+        WarehouseEdge edge10To20 = edge(1L, node10, node20);
+        WarehouseEdge edge20To30 = edge(2L, node20, node30);
 
         when(runRepository.findById(1L))
                 .thenReturn(Optional.of(run.run()));
@@ -629,7 +669,18 @@ class ReoptimizationServiceTest {
                 .findAllBySimulationRun_IdAndStatusInOrderByRequestedAtAsc(
                         anyLong(),
                         any()
-                )).thenReturn(List.of());
+                )).thenReturn(List.of(task));
+        when(task.getId()).thenReturn(100L);
+        when(task.getRobot()).thenReturn(null);
+        when(task.getStartNode()).thenReturn(node20);
+        when(task.getEndNode()).thenReturn(node30);
+        when(task.getTaskType()).thenReturn(TaskType.OUTBOUND);
+        when(task.getStatus()).thenReturn(TaskStatus.IN_PROGRESS);
+        when(warehouseNodeRepository.findAllByWarehouse_Id(1L))
+                .thenReturn(List.of(node10, node20, node30));
+        when(warehouseEdgeRepository
+                .findAllByFromNode_Warehouse_Id(1L))
+                .thenReturn(List.of(edge10To20, edge20To30));
 
         SimulationPlaybackService playbackService =
                 new SimulationPlaybackService(
@@ -680,6 +731,8 @@ class ReoptimizationServiceTest {
         ReoptimizationService service = service(
                 runRepository,
                 taskRepository,
+                warehouseNodeRepository,
+                warehouseEdgeRepository,
                 optimizationClient,
                 playbackService,
                 transactionManager
@@ -697,19 +750,47 @@ class ReoptimizationServiceTest {
     }
 
     private SimulationPlaybackService readyPlaybackMock() {
+        return readyPlaybackMock(1L, 1_000L, List.of());
+    }
+
+    private SimulationPlaybackService readyPlaybackMock(
+            Long snapshotVersion,
+            Long simulationClockMillis,
+            List<ReplanningSnapshot.RobotSnapshot> robots
+    ) {
         SimulationPlaybackService playbackService =
                 mock(SimulationPlaybackService.class);
+        Map<Long, String> boundReplanIds = new ConcurrentHashMap<>();
         when(playbackService.isPlaying(anyLong())).thenReturn(true);
         when(playbackService.requestReplanningStop(anyLong()))
                 .thenReturn(true);
         when(playbackService.areAllRobotsStoppedForReplanning(anyLong()))
                 .thenReturn(true);
+        when(playbackService.bindReplanId(
+                anyLong(),
+                anyLong(),
+                any()
+        )).thenAnswer(invocation -> {
+            boundReplanIds.put(
+                    invocation.getArgument(0, Long.class),
+                    invocation.getArgument(2, String.class)
+            );
+            return true;
+        });
         when(playbackService.captureReplanningSnapshot(anyLong()))
-                .thenReturn(new ReplanningSnapshot(
-                        1L,
-                        1_000L,
-                        List.of()
-                ));
+                .thenAnswer(invocation -> {
+                    Long simulationRunId = invocation.getArgument(
+                            0,
+                            Long.class
+                    );
+                    return new ReplanningSnapshot(
+                        boundReplanIds.get(simulationRunId),
+                        simulationRunId,
+                        snapshotVersion,
+                        simulationClockMillis,
+                        robots
+                    );
+                });
         return playbackService;
     }
 
@@ -720,9 +801,42 @@ class ReoptimizationServiceTest {
             SimulationPlaybackService playbackService,
             TestTransactionManager transactionManager
     ) {
+        WarehouseNodeRepository warehouseNodeRepository =
+                mock(WarehouseNodeRepository.class);
+        WarehouseEdgeRepository warehouseEdgeRepository =
+                mock(WarehouseEdgeRepository.class);
+        when(warehouseNodeRepository.findAllByWarehouse_Id(anyLong()))
+                .thenReturn(List.of());
+        when(warehouseEdgeRepository
+                .findAllByFromNode_Warehouse_Id(anyLong()))
+                .thenReturn(List.of());
+
         return new ReoptimizationService(
                 runRepository,
                 taskRepository,
+                warehouseNodeRepository,
+                warehouseEdgeRepository,
+                optimizationClient,
+                playbackService,
+                mock(SimpMessagingTemplate.class),
+                new TransactionTemplate(transactionManager)
+        );
+    }
+
+    private ReoptimizationService service(
+            SimulationRunRepository runRepository,
+            TaskRepository taskRepository,
+            WarehouseNodeRepository warehouseNodeRepository,
+            WarehouseEdgeRepository warehouseEdgeRepository,
+            OptimizationClient optimizationClient,
+            SimulationPlaybackService playbackService,
+            TestTransactionManager transactionManager
+    ) {
+        return new ReoptimizationService(
+                runRepository,
+                taskRepository,
+                warehouseNodeRepository,
+                warehouseEdgeRepository,
                 optimizationClient,
                 playbackService,
                 mock(SimpMessagingTemplate.class),
@@ -776,12 +890,85 @@ class ReoptimizationServiceTest {
     private ReoptimizationResponse successfulResponse(
             ReoptimizationOptimizationRequest request
     ) {
+        ReoptimizationOptimizationRequest.RobotStateInput robot =
+                request.robots().get(0);
+        ReoptimizationOptimizationRequest.TaskInput task =
+                request.remainingTasks().get(0);
+        long start = request.simulationClockMillis();
+        TaskPlan plan = new TaskPlan(
+                robot.robotId(),
+                task.taskId(),
+                0,
+                TaskPlan.ExecutionStage.FULL,
+                List.of(
+                        new PathStep(
+                                robot.currentNodeId(),
+                                start,
+                                start
+                        ),
+                        new PathStep(
+                                task.startNodeId(),
+                                start + 1_000L,
+                                start + 1_000L
+                        )
+                ),
+                List.of(
+                        new PathStep(
+                                task.startNodeId(),
+                                start + 1_000L,
+                                start + 1_000L
+                        ),
+                        new PathStep(
+                                task.endNodeId(),
+                                start + 2_000L,
+                                start + 2_000L
+                        )
+                ),
+                start,
+                start + 2_000L
+        );
+
+        return new ReoptimizationResponse(
+                "request-1",
+                request.replanId(),
+                request.simulationRunId(),
+                request.snapshotVersion(),
+                ReoptimizationResponse.Status.SUCCEEDED,
+                List.of(plan),
+                List.of(),
+                null
+        );
+    }
+
+    private WarehouseNode node(Long id) {
+        WarehouseNode node = mock(WarehouseNode.class);
+        when(node.getId()).thenReturn(id);
+        return node;
+    }
+
+    private WarehouseEdge edge(
+            Long id,
+            WarehouseNode from,
+            WarehouseNode to
+    ) {
+        WarehouseEdge edge = mock(WarehouseEdge.class);
+        when(edge.getId()).thenReturn(id);
+        when(edge.getFromNode()).thenReturn(from);
+        when(edge.getToNode()).thenReturn(to);
+        when(edge.getDirectionType())
+                .thenReturn(WarehouseEdge.DirectionType.A_TO_B);
+        return edge;
+    }
+
+    private ReoptimizationResponse infeasibleResponse(
+            ReoptimizationOptimizationRequest request
+    ) {
         return responseFor(
                 request,
                 null,
                 null,
                 null,
-                ReoptimizationResponse.Status.SUCCEEDED
+                ReoptimizationResponse.Status.INFEASIBLE
         );
     }
 

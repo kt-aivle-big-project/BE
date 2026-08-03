@@ -693,6 +693,22 @@ public class SimulationPlaybackService {
         }
     }
 
+    public boolean bindReplanId(
+            Long simulationRunId,
+            Long snapshotVersion,
+            String replanId
+    ) {
+        PlaybackContext context = contexts.get(simulationRunId);
+
+        if (context == null) {
+            return false;
+        }
+
+        synchronized (context) {
+            return context.bindReplanId(snapshotVersion, replanId);
+        }
+    }
+
     /**
      * 재계획 완료 후 정상 로봇들의 정지를 해제한다.
      */

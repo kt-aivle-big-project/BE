@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -108,6 +110,31 @@ class ReoptimizationResponseJsonTest {
         assertThatThrownBy(() -> readFixture(
                 "invalid-departure-before-arrival.json"
         )).hasRootCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void phase22PlanFixturesMatchTheTaskPlanJsonContract()
+            throws Exception {
+        List<String> fixtures = List.of(
+                "invalid-missing-task.json",
+                "invalid-unknown-task.json",
+                "invalid-unknown-robot.json",
+                "invalid-failed-robot-assignment.json",
+                "invalid-sequence-start.json",
+                "invalid-sequence-gap.json",
+                "invalid-sequence-duplicate.json",
+                "invalid-path-node.json",
+                "invalid-path-disconnected-edge.json",
+                "invalid-node-conflict.json",
+                "invalid-head-on-edge-conflict.json",
+                "invalid-same-direction-edge-conflict.json",
+                "success-multiple-robots.json",
+                "success-multiple-tasks-one-robot.json"
+        );
+
+        for (String fixture : fixtures) {
+            assertThat(readFixture(fixture)).isNotNull();
+        }
     }
 
     private ReoptimizationResponse readFixture(String fixtureName)

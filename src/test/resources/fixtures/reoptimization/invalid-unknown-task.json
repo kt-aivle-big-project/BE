@@ -1,0 +1,23 @@
+{
+  "requestId": "invalid-unknown-task",
+  "replanId": "fixture-replan-id",
+  "simulationRunId": 1,
+  "snapshotVersion": 7,
+  "status": "SUCCEEDED",
+  "taskPlans": [
+    {
+      "robotId": 10, "taskId": 999, "sequence": 0, "executionStage": "FULL",
+      "pathToStart": [
+        {"nodeId": 10, "arrivalTimeMillis": 1000, "departureTimeMillis": 1000},
+        {"nodeId": 20, "arrivalTimeMillis": 2000, "departureTimeMillis": 2000}
+      ],
+      "pathToEnd": [
+        {"nodeId": 20, "arrivalTimeMillis": 2000, "departureTimeMillis": 2000},
+        {"nodeId": 30, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}
+      ],
+      "estimatedStartTimeMillis": 1000, "estimatedCompletionTimeMillis": 3000
+    }
+  ],
+  "unassignedTaskIds": [],
+  "message": "task 999 is outside the run"
+}

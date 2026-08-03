@@ -8,6 +8,8 @@ import java.util.List;
  * 모든 정상 로봇이 안전 정지한 시점의 불변 Runtime snapshot.
  */
 public record ReplanningSnapshot(
+        String replanId,
+        Long simulationRunId,
         Long snapshotVersion,
         Long simulationClockMillis,
         List<RobotSnapshot> robots

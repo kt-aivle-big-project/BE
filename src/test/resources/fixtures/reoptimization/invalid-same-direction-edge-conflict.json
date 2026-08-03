@@ -1,0 +1,23 @@
+{
+  "requestId": "invalid-same-direction-edge-conflict",
+  "replanId": "fixture-replan-id",
+  "simulationRunId": 1,
+  "snapshotVersion": 7,
+  "status": "SUCCEEDED",
+  "taskPlans": [
+    {
+      "robotId": 10, "taskId": 100, "sequence": 0, "executionStage": "FULL",
+      "pathToStart": [{"nodeId": 10, "arrivalTimeMillis": 1000, "departureTimeMillis": 1000}, {"nodeId": 20, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}],
+      "pathToEnd": [{"nodeId": 20, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}],
+      "estimatedStartTimeMillis": 1000, "estimatedCompletionTimeMillis": 3000
+    },
+    {
+      "robotId": 11, "taskId": 101, "sequence": 0, "executionStage": "FULL",
+      "pathToStart": [{"nodeId": 10, "arrivalTimeMillis": 1500, "departureTimeMillis": 1500}, {"nodeId": 20, "arrivalTimeMillis": 2500, "departureTimeMillis": 2500}],
+      "pathToEnd": [{"nodeId": 20, "arrivalTimeMillis": 2500, "departureTimeMillis": 2500}],
+      "estimatedStartTimeMillis": 1500, "estimatedCompletionTimeMillis": 2500
+    }
+  ],
+  "unassignedTaskIds": [],
+  "message": "robots traverse edge 1 in the same direction"
+}

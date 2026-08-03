@@ -23,5 +23,5 @@
     }
   ],
   "unassignedTaskIds": [],
-  "message": "path intentionally traverses blocked edge 999 (10 -> 20) in the validator test graph"
+  "message": "path intentionally traverses blocked edge 2 (20 -> 30)"
 }

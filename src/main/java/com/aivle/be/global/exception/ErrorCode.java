@@ -103,6 +103,41 @@ public enum ErrorCode {
             "SIMULATION_RUN_021",
             "AI 재계획 응답이 시간 또는 작업 진행 단계 계약을 위반했습니다."
     ),
+    REOPTIMIZATION_PLAN_TASK_COVERAGE_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_022",
+            "AI 재계획 응답의 작업 범위가 남은 작업과 일치하지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_ROBOT_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_023",
+            "AI 재계획 응답이 참가하지 않았거나 사용할 수 없는 로봇을 참조합니다."
+    ),
+    REOPTIMIZATION_PLAN_SEQUENCE_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_024",
+            "AI 재계획 응답의 로봇별 작업 순서가 올바르지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_PATH_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_025",
+            "AI 재계획 응답의 경로가 창고 그래프와 일치하지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_BLOCKED_EDGE(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_026",
+            "AI 재계획 응답이 차단된 edge를 통과합니다."
+    ),
+    REOPTIMIZATION_PLAN_CONFLICT(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_027",
+            "AI 재계획 응답에 로봇 간 노드 또는 edge 시간 충돌이 있습니다."
+    ),
+    REOPTIMIZATION_PLAN_STALE(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_028",
+            "AI 재계획 응답이 현재 재계획 snapshot보다 오래되었습니다."
+    ),
 
     STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),
 

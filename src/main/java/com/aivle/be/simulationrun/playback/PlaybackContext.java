@@ -57,6 +57,9 @@ public class PlaybackContext {
     // 이 context에서 생성된 안전 정지 snapshot의 단조 증가 버전
     private long replanningSnapshotVersion = 0L;
 
+    // 현재 snapshot에 결합된 재계획 요청 ID
+    private String activeReplanId;
+
     // 동작별 소요 시간(ms)
     private final long moveMillisPerNode;
     private final long pickingMillis;
@@ -108,6 +111,7 @@ public class PlaybackContext {
     public void requestReplanning() {
         if (!replanRequested) {
             replanningSnapshotVersion++;
+            activeReplanId = null;
         }
         this.replanRequested = true;
     }
@@ -147,10 +151,30 @@ public class PlaybackContext {
                         .toList();
 
         return new ReplanningSnapshot(
+                activeReplanId,
+                simulationRunId,
                 replanningSnapshotVersion,
                 clockMillis,
                 robotSnapshots
         );
+    }
+
+    public boolean bindReplanId(
+            Long snapshotVersion,
+            String replanId
+    ) {
+        if (!replanRequested
+                || replanningSnapshotVersion != snapshotVersion) {
+            return false;
+        }
+
+        if (activeReplanId != null
+                && !activeReplanId.equals(replanId)) {
+            return false;
+        }
+
+        activeReplanId = replanId;
+        return true;
     }
 
     /**
@@ -159,6 +183,7 @@ public class PlaybackContext {
     public void finishReplanning() {
         robots.forEach(RobotRuntime::resumeAfterReplanning);
         this.replanRequested = false;
+        this.activeReplanId = null;
     }
 
     /**

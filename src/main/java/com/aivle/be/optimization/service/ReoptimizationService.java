@@ -9,6 +9,11 @@ import com.aivle.be.optimization.dto.request.ReoptimizationRequest;
 import com.aivle.be.optimization.dto.response.ReoptimizationCompletedEvent;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import com.aivle.be.optimization.validation.ReoptimizationPlanContractValidator;
+import com.aivle.be.optimization.validation.ReoptimizationPlanStalenessValidator;
+import com.aivle.be.optimization.validation.ReoptimizationPlanValidationException;
+import com.aivle.be.optimization.validation.ReoptimizationPlanValidationInput;
+import com.aivle.be.optimization.validation.ReoptimizationPlanValidator;
+import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.playback.ReplanningSnapshot;
@@ -18,6 +23,9 @@ import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.task.entity.Task;
 import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
+import com.aivle.be.warehouseedge.entity.WarehouseEdge;
+import com.aivle.be.warehouseedge.repository.WarehouseEdgeRepository;
+import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
@@ -29,9 +37,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -51,6 +61,8 @@ public class ReoptimizationService {
 
     private final SimulationRunRepository simulationRunRepository;
     private final TaskRepository taskRepository;
+    private final WarehouseNodeRepository warehouseNodeRepository;
+    private final WarehouseEdgeRepository warehouseEdgeRepository;
     private final OptimizationClient optimizationClient;
     private final SimulationPlaybackService simulationPlaybackService;
     private final SimpMessagingTemplate messagingTemplate;
@@ -132,6 +144,16 @@ public class ReoptimizationService {
         startReplanningInDatabase(simulationRunId);
 
         String replanId = UUID.randomUUID().toString();
+        if (!simulationPlaybackService.bindReplanId(
+                simulationRunId,
+                runtimeSnapshot.snapshotVersion(),
+                replanId
+        )) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_PLAN_STALE
+            );
+        }
+
         ReoptimizationOptimizationRequest fastApiRequest =
                 createFastApiRequest(
                         replanId,
@@ -146,7 +168,20 @@ public class ReoptimizationService {
                 optimizationClient.reoptimize(fastApiRequest);
 
         validateResponseCorrelation(fastApiRequest, response);
+        ReplanningSnapshot currentSnapshot =
+                captureCurrentSnapshotForValidation(simulationRunId);
+        validateSnapshotIsCurrent(
+                fastApiRequest,
+                response,
+                runtimeSnapshot,
+                currentSnapshot
+        );
         validatePlanContract(fastApiRequest, response);
+        validateCompletePlan(
+                fastApiRequest,
+                response,
+                currentSnapshot
+        );
         throw rejectionUntilPlanApplicationIsImplemented(response);
     }
 
@@ -350,6 +385,138 @@ public class ReoptimizationService {
                     exception
             );
         }
+    }
+
+    private ReplanningSnapshot captureCurrentSnapshotForValidation(
+            Long simulationRunId
+    ) {
+        try {
+            ReplanningSnapshot snapshot =
+                    simulationPlaybackService.captureReplanningSnapshot(
+                            simulationRunId
+                    );
+
+            if (snapshot == null) {
+                throw new IllegalStateException(
+                        "Replanning context is missing"
+                );
+            }
+            return snapshot;
+        } catch (RuntimeException exception) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_PLAN_STALE,
+                    exception
+            );
+        }
+    }
+
+    private void validateSnapshotIsCurrent(
+            ReoptimizationOptimizationRequest request,
+            ReoptimizationResponse response,
+            ReplanningSnapshot requestedSnapshot,
+            ReplanningSnapshot currentSnapshot
+    ) {
+        try {
+            ReoptimizationPlanStalenessValidator.validate(
+                    request,
+                    response,
+                    requestedSnapshot,
+                    currentSnapshot
+            );
+        } catch (ReoptimizationPlanValidationException exception) {
+            throw new BusinessException(
+                    exception.getErrorCode(),
+                    exception
+            );
+        }
+    }
+
+    private void validateCompletePlan(
+            ReoptimizationOptimizationRequest request,
+            ReoptimizationResponse response,
+            ReplanningSnapshot currentSnapshot
+    ) {
+        ReoptimizationPlanValidationInput input =
+                transactionTemplate.execute(transactionStatus -> {
+                    Set<Long> validNodeIds = warehouseNodeRepository
+                            .findAllByWarehouse_Id(request.warehouseId())
+                            .stream()
+                            .map(node -> node.getId())
+                            .collect(Collectors.toSet());
+                    List<WarehouseEdge> warehouseEdges =
+                            warehouseEdgeRepository
+                                    .findAllByFromNode_Warehouse_Id(
+                                            request.warehouseId()
+                                    );
+                    List<ReoptimizationPlanValidationInput.DirectedEdge>
+                            directedEdges = warehouseEdges.stream()
+                            .flatMap(edge -> toDirectedEdges(edge).stream())
+                            .toList();
+                    Set<Long> warehouseEdgeIds = warehouseEdges.stream()
+                            .map(WarehouseEdge::getId)
+                            .collect(Collectors.toSet());
+                    Set<Long> participantRobotIds = currentSnapshot
+                            .robots().stream()
+                            .map(ReplanningSnapshot.RobotSnapshot::robotId)
+                            .collect(Collectors.toSet());
+                    Set<Long> unavailableRobotIds = currentSnapshot
+                            .robots().stream()
+                            .filter(robot ->
+                                    robot.status() == RobotStatus.ERROR
+                                            || robot.status()
+                                            == RobotStatus.OFFLINE
+                            )
+                            .map(ReplanningSnapshot.RobotSnapshot::robotId)
+                            .collect(Collectors.toSet());
+
+                    return new ReoptimizationPlanValidationInput(
+                            currentSnapshot,
+                            request,
+                            response,
+                            validNodeIds,
+                            directedEdges,
+                            warehouseEdgeIds,
+                            participantRobotIds,
+                            unavailableRobotIds
+                    );
+                });
+
+        if (input == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
+        }
+
+        try {
+            ReoptimizationPlanValidator.validate(input);
+        } catch (ReoptimizationPlanValidationException exception) {
+            throw new BusinessException(
+                    exception.getErrorCode(),
+                    exception
+            );
+        }
+    }
+
+    private List<ReoptimizationPlanValidationInput.DirectedEdge>
+    toDirectedEdges(WarehouseEdge edge) {
+        Long fromNodeId = edge.getFromNode().getId();
+        Long toNodeId = edge.getToNode().getId();
+        ReoptimizationPlanValidationInput.DirectedEdge forward =
+                new ReoptimizationPlanValidationInput.DirectedEdge(
+                        edge.getId(),
+                        fromNodeId,
+                        toNodeId
+                );
+        ReoptimizationPlanValidationInput.DirectedEdge reverse =
+                new ReoptimizationPlanValidationInput.DirectedEdge(
+                        edge.getId(),
+                        toNodeId,
+                        fromNodeId
+                );
+
+        return switch (edge.getDirectionType()) {
+            case BOTH -> List.of(forward, reverse);
+            case A_TO_B -> List.of(forward);
+            case B_TO_A -> List.of(reverse);
+        };
     }
 
     private SimulationRun findSimulationRun(Long simulationRunId) {

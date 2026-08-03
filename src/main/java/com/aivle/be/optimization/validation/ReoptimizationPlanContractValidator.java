@@ -41,26 +41,13 @@ public final class ReoptimizationPlanContractValidator {
                 ));
 
         rejectSucceededPlanForStrandedFailedRobotTask(request);
-        rejectDuplicateTasks(response);
 
         for (TaskPlan plan : response.taskPlans()) {
             ReoptimizationOptimizationRequest.TaskInput task =
                     tasksById.get(plan.taskId());
 
-            if (task == null) {
-                throw new IllegalArgumentException(
-                        "Task plan references an unknown remaining task"
-                );
-            }
-
             ReoptimizationOptimizationRequest.RobotStateInput robot =
                     robotsById.get(plan.robotId());
-
-            if (robot == null || isUnavailable(robot)) {
-                throw new IllegalArgumentException(
-                        "Task plan references an unavailable robot"
-                );
-            }
 
             long firstArrival = plan.pathToStart().isEmpty()
                     ? plan.pathToEnd().get(0).arrivalTimeMillis()
@@ -72,11 +59,15 @@ public final class ReoptimizationPlanContractValidator {
                 );
             }
 
-            if (plan.executionStage() == TaskPlan.ExecutionStage.TO_END) {
+            if (robot != null
+                    && plan.executionStage()
+                    == TaskPlan.ExecutionStage.TO_END) {
                 validateToEndContinuation(robot, plan);
             }
 
-            validateTaskEndpoints(robot, task, plan);
+            if (robot != null && task != null) {
+                validateTaskEndpoints(robot, task, plan);
+            }
         }
     }
 
@@ -98,21 +89,6 @@ public final class ReoptimizationPlanContractValidator {
         if (strandedTaskExists) {
             throw new IllegalArgumentException(
                     "A failed robot task after picking requires INFEASIBLE"
-            );
-        }
-    }
-
-    private static void rejectDuplicateTasks(
-            ReoptimizationResponse response
-    ) {
-        long distinctTaskCount = response.taskPlans().stream()
-                .map(TaskPlan::taskId)
-                .distinct()
-                .count();
-
-        if (distinctTaskCount != response.taskPlans().size()) {
-            throw new IllegalArgumentException(
-                    "A task cannot appear in more than one task plan"
             );
         }
     }
