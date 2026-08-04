@@ -16,10 +16,13 @@ public record TaskResponse(
         Long endNodeId,
         Long warehouseItemId,
         Long itemId,
+        String externalOperationId,
         Long robotId,
         Integer quantity,
+        Integer targetRackLevel,
         LocalDateTime requestedAt,
-        LocalDateTime assignedAt
+        LocalDateTime assignedAt,
+        LocalDateTime inventoryAppliedAt
 ) {
     public TaskResponse(Task task) {
         this(
@@ -32,10 +35,13 @@ public record TaskResponse(
                 task.getEndNode().getId(),
                 task.getWarehouseItem() != null ? task.getWarehouseItem().getId() : null,
                 task.getEffectiveItemId(),
+                task.getExternalOperationId(),
                 task.getRobot() != null ? task.getRobot().getId() : null,
                 task.getQuantity(),
+                task.getTargetRackLevel(),
                 task.getRequestedAt(),
-                task.getAssignedAt()
+                task.getAssignedAt(),
+                task.getInventoryAppliedAt()
         );
     }
 }

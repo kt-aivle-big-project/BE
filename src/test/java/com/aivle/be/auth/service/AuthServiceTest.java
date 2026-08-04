@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTest {
@@ -42,7 +43,7 @@ class AuthServiceTest {
 
     @Test
     void signupCreatesUserWithNormalizedEmailAndEncodedPassword() {
-        SignupRequest request = new SignupRequest(" User@Example.com ", "홍길동", "Password123!", true);
+        SignupRequest request = new SignupRequest(" User@Example.com ", "홍길동", "Password123!", true, true);
         when(userRepository.existsByEmail("user@example.com")).thenReturn(false);
         when(passwordEncoder.encode("Password123!")).thenReturn("encoded-password");
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -53,12 +54,12 @@ class AuthServiceTest {
         assertThat(response.name()).isEqualTo("홍길동");
         verify(passwordEncoder).encode("Password123!");
         verify(userRepository).save(any(User.class));
-        verify(userConsentRepository).save(any(UserConsent.class));
+        verify(userConsentRepository, times(2)).save(any(UserConsent.class));
     }
 
     @Test
     void signupRejectsDuplicateEmail() {
-        SignupRequest request = new SignupRequest("user@example.com", "홍길동", "Password123!", true);
+        SignupRequest request = new SignupRequest("user@example.com", "홍길동", "Password123!", true, true);
         when(userRepository.existsByEmail("user@example.com")).thenReturn(true);
 
         assertThatThrownBy(() -> authService.signup(request))

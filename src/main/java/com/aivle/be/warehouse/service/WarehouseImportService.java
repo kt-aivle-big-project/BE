@@ -2,6 +2,7 @@ package com.aivle.be.warehouse.service;
 
 import com.aivle.be.chargingstation.entity.ChargingStation;
 import com.aivle.be.chargingstation.repository.ChargingStationRepository;
+import com.aivle.be.graph.event.WarehouseGraphChangedEvent;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.robot.entity.Robot;
@@ -13,6 +14,9 @@ import com.aivle.be.scenario.entity.Scenario;
 import com.aivle.be.scenario.repository.ScenarioRepository;
 import com.aivle.be.storagelocation.entity.StorageLocation;
 import com.aivle.be.storagelocation.repository.StorageLocationRepository;
+import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import com.aivle.be.task.entity.TaskStatus;
+import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.user.entity.User;
 import com.aivle.be.user.repository.UserRepository;
 import com.aivle.be.warehouse.dto.WarehouseImportRequest;
@@ -30,6 +34,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -76,22 +81,33 @@ public class WarehouseImportService {
     private static final Logger log = LoggerFactory.getLogger(WarehouseImportService.class);
 
     /** 지도 JSON 의 타입 -> 우리 노드 타입 */
-    private static final Map<String, NodeType> NODE_TYPES = Map.of(
-            "route", NodeType.ROUTE,
-            "route_charge_junction", NodeType.ROUTE_CHARGE_JUNCTION,
-            "inbound", NodeType.INBOUND,
-            "outbound", NodeType.OUTBOUND,
-            "charging_slot", NodeType.CHARGING_SLOT
+    private static final Map<String, NodeType> NODE_TYPES = Map.ofEntries(
+            Map.entry("route", NodeType.ROUTE),
+            Map.entry("route_charge_junction", NodeType.ROUTE_CHARGE_JUNCTION),
+            Map.entry("rack_storage", NodeType.RACK_STORAGE),
+            Map.entry("rack_access", NodeType.RACK_ACCESS),
+            Map.entry("inbound_handoff_access", NodeType.INBOUND_HANDOFF_ACCESS),
+            Map.entry("outbound_station_access", NodeType.OUTBOUND_STATION_ACCESS),
+            Map.entry("empty_tote_buffer_access", NodeType.EMPTY_TOTE_BUFFER_ACCESS),
+            Map.entry("inbound", NodeType.INBOUND),
+            Map.entry("outbound", NodeType.OUTBOUND),
+            Map.entry("charging_slot", NodeType.CHARGING_SLOT),
+            Map.entry("parking_slot", NodeType.PARKING_SLOT)
     );
 
     /** 노드 타입 -> 구역 이름 */
-    private static final Map<NodeType, String> ZONE_NAMES = Map.of(
-            NodeType.ROUTE, "MOVING_ZONE",
-            NodeType.ROUTE_CHARGE_JUNCTION, "MOVING_ZONE",
-            NodeType.RACK_STORAGE, "STORAGE_ZONE",
-            NodeType.INBOUND, "INBOUND_ZONE",
-            NodeType.OUTBOUND, "OUTBOUND_ZONE",
-            NodeType.CHARGING_SLOT, "CHARGING_ZONE"
+    private static final Map<NodeType, String> ZONE_NAMES = Map.ofEntries(
+            Map.entry(NodeType.ROUTE, "MOVING_ZONE"),
+            Map.entry(NodeType.ROUTE_CHARGE_JUNCTION, "MOVING_ZONE"),
+            Map.entry(NodeType.RACK_STORAGE, "STORAGE_ZONE"),
+            Map.entry(NodeType.RACK_ACCESS, "STORAGE_ZONE"),
+            Map.entry(NodeType.INBOUND_HANDOFF_ACCESS, "INBOUND_ZONE"),
+            Map.entry(NodeType.OUTBOUND_STATION_ACCESS, "OUTBOUND_ZONE"),
+            Map.entry(NodeType.EMPTY_TOTE_BUFFER_ACCESS, "OUTBOUND_ZONE"),
+            Map.entry(NodeType.INBOUND, "INBOUND_ZONE"),
+            Map.entry(NodeType.OUTBOUND, "OUTBOUND_ZONE"),
+            Map.entry(NodeType.CHARGING_SLOT, "CHARGING_ZONE"),
+            Map.entry(NodeType.PARKING_SLOT, "MOVING_ZONE")
     );
 
     private static final String RACK_ACCESS_TYPE = "rack_access";
@@ -99,6 +115,19 @@ public class WarehouseImportService {
 
     private static final int DEFAULT_ROBOT_COUNT = 6;
     private static final double DEFAULT_CHARGING_POWER = 50.0;
+    private static final Set<TaskStatus> OPERATIONAL_TASK_STATUSES = Set.of(
+            TaskStatus.PENDING,
+            TaskStatus.ASSIGNED,
+            TaskStatus.IN_PROGRESS
+    );
+    private static final Set<SimulationRunStatus> OPERATIONAL_RUN_STATUSES = Set.of(
+            SimulationRunStatus.CREATED,
+            SimulationRunStatus.RUNNING,
+            SimulationRunStatus.PAUSED,
+            SimulationRunStatus.QUIESCING,
+            SimulationRunStatus.REPLANNING,
+            SimulationRunStatus.PENDING_ACTIVATION
+    );
 
     private final WarehouseRepository warehouseRepository;
     private final WarehouseNodeRepository warehouseNodeRepository;
@@ -110,6 +139,9 @@ public class WarehouseImportService {
     private final RobotSpecRepository robotSpecRepository;
     private final ScenarioRepository scenarioRepository;
     private final UserRepository userRepository;
+    private final TaskRepository taskRepository;
+    private final ApplicationEventPublisher eventPublisher;
+    private final WarehouseFacilitySyncService warehouseFacilitySyncService;
 
     @Transactional
     public WarehouseImportResponse importWarehouse(WarehouseImportRequest request, Long loginUserId) {
@@ -151,10 +183,21 @@ public class WarehouseImportService {
 
         createChargingStations(warehouse, chargingSlots);
         createStorageLocations(warehouse, racks);
+        warehouseFacilitySyncService.synchronizeOutboundFacilities(
+                warehouse.getId(), request.map(), nodeByCode
+        );
         int robotCount = createRobots(warehouse, chargingSlots, request.robotCount());
         createScenarioPresets(warehouse, robotCount);
 
-        int skipped = request.map().nodes().size() - nodes.size();
+        Set<String> importedCodes = request.map().nodes().stream()
+                .map(WarehouseImportRequest.MapNode::id)
+                .collect(java.util.stream.Collectors.toSet());
+        int importedNodeCount = (int) nodes.stream()
+                .filter(node -> importedCodes.contains(node.getNodeCode()))
+                .count();
+        int skipped = request.map().nodes().size() - importedNodeCount;
+
+        eventPublisher.publishEvent(new WarehouseGraphChangedEvent(warehouse.getId()));
 
         log.info("[창고 가져오기] {} (id={}) 노드 {}, 간선 {}, 랙 {}, 충전소 {}, 로봇 {} (제외 {})",
                 warehouse.getName(), warehouse.getId(),
@@ -164,9 +207,241 @@ public class WarehouseImportService {
                 warehouse.getId(),
                 warehouse.getName(),
                 nodes.size(),
+                importedNodeCount,
                 edgeCount,
                 racks.size(),
                 chargingSlots.size(),
+                robotCount,
+                skipped
+        );
+    }
+
+    /**
+     * Reconcile an edited map with an existing warehouse.
+     *
+     * <p>Stable node/edge codes are used as identities, so moving an icon
+     * updates coordinates without breaking inventory, charging-station or
+     * robot foreign keys. A protected rack/charging node cannot be removed
+     * while business data still references it.</p>
+     */
+    @Transactional
+    public WarehouseImportResponse updateWarehouseLayout(
+            Long warehouseId,
+            WarehouseImportRequest request
+    ) {
+        Warehouse warehouse = warehouseRepository.findById(warehouseId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_INPUT));
+        warehouse.update(
+                request.name(),
+                request.width(),
+                request.height(),
+                request.location(),
+                request.description(),
+                request.status()
+        );
+
+        List<WarehouseNode> existingNodes = warehouseNodeRepository
+                .findAllByWarehouse_Id(warehouseId);
+        Map<String, WarehouseNode> nodeByCode = new LinkedHashMap<>();
+        existingNodes.forEach(node -> nodeByCode.put(node.getNodeCode(), node));
+
+        Set<String> requestedNodeCodes = request.map().nodes().stream()
+                .map(WarehouseImportRequest.MapNode::id)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        List<WarehouseNode> removedNodes = existingNodes.stream()
+                .filter(WarehouseNode::isActive)
+                .filter(node -> !requestedNodeCodes.contains(node.getNodeCode()))
+                .toList();
+        Set<Long> removedNodeIds = removedNodes.stream()
+                .map(WarehouseNode::getId)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (!removedNodeIds.isEmpty()
+                && taskRepository.countOperationalReferences(
+                        warehouseId,
+                        removedNodeIds,
+                        OPERATIONAL_TASK_STATUSES,
+                        OPERATIONAL_RUN_STATUSES
+                ) > 0) {
+            throw new BusinessException(ErrorCode.WAREHOUSE_NODE_IN_ACTIVE_TASK);
+        }
+        Set<Long> protectedNodeIds = new LinkedHashSet<>();
+        storageLocationRepository.findAllByWarehouse_Id(warehouseId)
+                .forEach(value -> protectedNodeIds.add(value.getNode().getId()));
+        chargingStationRepository.findAllByWarehouse_Id(warehouseId)
+                .forEach(value -> protectedNodeIds.add(value.getNode().getId()));
+        robotRepository.findAllByWarehouse_Id(warehouseId).stream()
+                .map(Robot::getNodeId)
+                .filter(java.util.Objects::nonNull)
+                .forEach(protectedNodeIds::add);
+        boolean removesProtectedNode = existingNodes.stream()
+                .anyMatch(node -> node.isActive()
+                        && protectedNodeIds.contains(node.getId())
+                        && !requestedNodeCodes.contains(node.getNodeCode()));
+        if (removesProtectedNode) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        int skipped = 0;
+        for (WarehouseImportRequest.MapNode raw : request.map().nodes()) {
+            NodeType nodeType = NODE_TYPES.get(lower(raw.type()));
+            if (nodeType == null) {
+                skipped += 1;
+                continue;
+            }
+            WarehouseNode.RouteProperties properties = new WarehouseNode.RouteProperties(
+                    raw.service_only(),
+                    raw.transit_allowed(),
+                    raw.holding_allowed(),
+                    raw.node_capacity(),
+                    raw.resourceType(),
+                    raw.resourceCode(),
+                    raw.side()
+            );
+            WarehouseNode node = nodeByCode.get(raw.id());
+            if (node == null) {
+                node = WarehouseNode.create(
+                        warehouse,
+                        ZONE_NAMES.get(nodeType),
+                        raw.x(),
+                        raw.y(),
+                        raw.id(),
+                        nodeType,
+                        properties,
+                        raw.routeAttributes()
+                );
+                warehouseNodeRepository.save(node);
+                nodeByCode.put(raw.id(), node);
+            } else {
+                node.update(
+                        ZONE_NAMES.get(nodeType),
+                        raw.x(),
+                        raw.y(),
+                        raw.id(),
+                        nodeType,
+                        properties,
+                        raw.routeAttributes()
+                );
+                node.activate();
+            }
+        }
+        warehouseNodeRepository.flush();
+
+        List<WarehouseEdge> existingEdges = warehouseEdgeRepository
+                .findAllByFromNode_Warehouse_Id(warehouseId);
+        Map<String, WarehouseEdge> edgeByCode = new LinkedHashMap<>();
+        existingEdges.forEach(edge -> edgeByCode.put(edge.getEdgeCode(), edge));
+        Set<String> requestedEdgeCodes = new LinkedHashSet<>();
+
+        for (WarehouseImportRequest.MapEdge raw : request.map().edges()) {
+            WarehouseNode source = nodeByCode.get(raw.source());
+            WarehouseNode target = nodeByCode.get(raw.target());
+            if (source == null || target == null || source == target) {
+                continue;
+            }
+            String edgeCode = raw.id();
+            if (edgeCode == null || edgeCode.isBlank()) {
+                edgeCode = raw.source() + "::" + raw.target();
+            }
+            if (!requestedEdgeCodes.add(edgeCode)) {
+                continue;
+            }
+            double distance = raw.distance_m() == null ? 1.0 : raw.distance_m();
+            WarehouseEdge.RouteProperties properties = new WarehouseEdge.RouteProperties(
+                    raw.type(),
+                    raw.speed_limit_mps(),
+                    raw.nominal_travel_time_ms(),
+                    raw.cost(),
+                    raw.physicalResourceCode(),
+                    raw.service_only(),
+                    raw.mobile_robot_traversable()
+            );
+            WarehouseEdge edge = edgeByCode.get(edgeCode);
+            if (edge == null) {
+                warehouseEdgeRepository.save(WarehouseEdge.create(
+                        source,
+                        target,
+                        distance,
+                        directionOf(raw.direction()),
+                        edgeCode,
+                        properties,
+                        raw.routeAttributes()
+                ));
+            } else {
+                edge.update(
+                        source,
+                        target,
+                        distance,
+                        directionOf(raw.direction()),
+                        edgeCode,
+                        properties,
+                        raw.routeAttributes()
+                );
+            }
+        }
+
+        List<WarehouseEdge> removedEdges = existingEdges.stream()
+                .filter(edge -> !requestedEdgeCodes.contains(edge.getEdgeCode()))
+                .toList();
+        warehouseEdgeRepository.deleteAll(removedEdges);
+        warehouseEdgeRepository.flush();
+
+        removedNodes.forEach(WarehouseNode::retire);
+        warehouseNodeRepository.flush();
+
+        Set<Long> storageNodeIds = storageLocationRepository
+                .findAllByWarehouse_Id(warehouseId).stream()
+                .map(value -> value.getNode().getId())
+                .collect(java.util.stream.Collectors.toSet());
+        List<WarehouseNode> newRacks = nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.RACK_STORAGE)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .filter(node -> !storageNodeIds.contains(node.getId()))
+                .toList();
+        createStorageLocations(warehouse, newRacks);
+
+        Set<Long> chargingNodeIds = chargingStationRepository
+                .findAllByWarehouse_Id(warehouseId).stream()
+                .map(value -> value.getNode().getId())
+                .collect(java.util.stream.Collectors.toSet());
+        List<WarehouseNode> newChargingSlots = nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.CHARGING_SLOT)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .filter(node -> !chargingNodeIds.contains(node.getId()))
+                .toList();
+        createChargingStations(warehouse, newChargingSlots);
+
+        List<WarehouseNode> activeChargingSlots = nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.CHARGING_SLOT)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .toList();
+        synchronizeRobotHomeNodes(warehouseId, activeChargingSlots);
+
+        // The physical facility contract must advance with the same map
+        // revision.  Otherwise FE/Neo4j show the edited two-robot topology
+        // while AI still reads the old seeded station rows.
+        warehouseFacilitySyncService.synchronizeOutboundFacilities(
+                warehouseId, request.map(), nodeByCode
+        );
+
+        eventPublisher.publishEvent(new WarehouseGraphChangedEvent(warehouseId));
+        int rackCount = (int) nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.RACK_STORAGE)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .count();
+        int chargingCount = (int) nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.CHARGING_SLOT)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .count();
+        int robotCount = robotRepository.findAllByWarehouse_Id(warehouseId).size();
+
+        return new WarehouseImportResponse(
+                warehouseId,
+                warehouse.getName(),
+                requestedNodeCodes.size() - skipped,
+                requestedNodeCodes.size() - skipped,
+                requestedEdgeCodes.size(),
+                rackCount,
+                chargingCount,
                 robotCount,
                 skipped
         );
@@ -202,7 +477,17 @@ public class WarehouseImportService {
                     raw.x(),
                     raw.y(),
                     raw.id(),
-                    nodeType
+                    nodeType,
+                    new WarehouseNode.RouteProperties(
+                            raw.service_only(),
+                            raw.transit_allowed(),
+                            raw.holding_allowed(),
+                            raw.node_capacity(),
+                            raw.resourceType(),
+                            raw.resourceCode(),
+                            raw.side()
+                    ),
+                    raw.routeAttributes()
             ));
         }
 
@@ -239,7 +524,17 @@ public class WarehouseImportService {
                     round(x),
                     round(y),
                     entry.getKey(),
-                    NodeType.RACK_STORAGE
+                    NodeType.RACK_STORAGE,
+                    new WarehouseNode.RouteProperties(
+                            false,
+                            false,
+                            false,
+                            1,
+                            "RACK",
+                            entry.getKey(),
+                            null
+                    ),
+                    Map.of()
             ));
         }
 
@@ -278,54 +573,41 @@ public class WarehouseImportService {
             Map<String, WarehouseNode> nodeByCode
     ) {
         // 접근 자리 -> 랙
-        Map<String, String> accessToRack = new LinkedHashMap<>();
-
-        for (WarehouseImportRequest.MapNode raw : map.nodes()) {
-            if (RACK_ACCESS_TYPE.equals(lower(raw.type()))) {
-                String rackCode = rackCodeOf(raw);
-                if (rackCode != null) {
-                    accessToRack.put(raw.id(), rackCode);
-                }
-            }
-        }
-
         // 방향별로 모은다
-        Map<String, WarehouseImportRequest.MapEdge> directed = new LinkedHashMap<>();
+        List<WarehouseEdge> edges = new ArrayList<>();
+        Set<String> usedCodes = new LinkedHashSet<>();
 
         for (WarehouseImportRequest.MapEdge raw : map.edges()) {
-            String source = resolve(raw.source(), nodeByCode, accessToRack);
-            String target = resolve(raw.target(), nodeByCode, accessToRack);
+            WarehouseNode source = nodeByCode.get(raw.source());
+            WarehouseNode target = nodeByCode.get(raw.target());
+            String edgeCode = raw.id();
 
-            if (source == null || target == null || source.equals(target)) {
+            if (source == null || target == null || source == target) {
                 continue;
             }
-
-            directed.putIfAbsent(source + ">" + target, raw);
-        }
-
-        List<WarehouseEdge> edges = new ArrayList<>();
-        Set<String> used = new LinkedHashSet<>();
-
-        for (Map.Entry<String, WarehouseImportRequest.MapEdge> entry : directed.entrySet()) {
-            String[] pair = entry.getKey().split(">", 2);
-            String source = pair[0];
-            String target = pair[1];
-
-            if (used.contains(source + ">" + target) || used.contains(target + ">" + source)) {
+            if (edgeCode == null || edgeCode.isBlank()) {
+                edgeCode = raw.source() + "::" + raw.target();
+            }
+            if (!usedCodes.add(edgeCode)) {
                 continue;
             }
-
-            used.add(source + ">" + target);
-
-            boolean twoWay = directed.containsKey(target + ">" + source);
-            WarehouseImportRequest.MapEdge raw = entry.getValue();
 
             edges.add(WarehouseEdge.create(
-                    nodeByCode.get(source),
-                    nodeByCode.get(target),
+                    source,
+                    target,
                     raw.distance_m() == null ? 1.0 : raw.distance_m(),
-                    twoWay ? WarehouseEdge.DirectionType.BOTH : WarehouseEdge.DirectionType.A_TO_B,
-                    edgeCode(raw.id(), twoWay)
+                    directionOf(raw.direction()),
+                    edgeCode,
+                    new WarehouseEdge.RouteProperties(
+                            raw.type(),
+                            raw.speed_limit_mps(),
+                            raw.nominal_travel_time_ms(),
+                            raw.cost(),
+                            raw.physicalResourceCode(),
+                            raw.service_only(),
+                            raw.mobile_robot_traversable()
+                    ),
+                    raw.routeAttributes()
             ));
         }
 
@@ -337,33 +619,7 @@ public class WarehouseImportService {
      * 간선이 가리키는 코드를 저장 대상 노드 코드로 바꾼다.
      * 저장하지 않는 자리(입출고 접근 등)로 가는 간선은 버린다.
      */
-    private String resolve(
-            String code,
-            Map<String, WarehouseNode> nodeByCode,
-            Map<String, String> accessToRack
-    ) {
-        if (nodeByCode.containsKey(code)) {
-            return code;
-        }
-
-        String rackCode = accessToRack.get(code);
-        return rackCode != null && nodeByCode.containsKey(rackCode) ? rackCode : null;
-    }
-
     /** 왕복으로 합쳐진 간선은 방향 접미사를 뗀다. RA_K0_1_A_IN -> RA_K0_1_A */
-    private String edgeCode(String code, boolean twoWay) {
-        if (code == null || !twoWay) {
-            return code;
-        }
-        if (code.endsWith("_IN")) {
-            return code.substring(0, code.length() - 3);
-        }
-        if (code.endsWith("_OUT")) {
-            return code.substring(0, code.length() - 4);
-        }
-        return code;
-    }
-
     /* =========================================================
        구역 · 설비
     ========================================================= */
@@ -373,13 +629,14 @@ public class WarehouseImportService {
 
         List<ZoneSpec> specs = List.of(
                 new ZoneSpec("MOVING_ZONE", WarehouseZone.ZoneType.MOVING, "이동 통로",
-                        List.of(NodeType.ROUTE, NodeType.ROUTE_CHARGE_JUNCTION)),
+                        List.of(NodeType.ROUTE, NodeType.ROUTE_CHARGE_JUNCTION, NodeType.PARKING_SLOT)),
                 new ZoneSpec("STORAGE_ZONE", WarehouseZone.ZoneType.STORAGE, "랙 보관 구역",
-                        List.of(NodeType.RACK_STORAGE)),
+                        List.of(NodeType.RACK_STORAGE, NodeType.RACK_ACCESS)),
                 new ZoneSpec("INBOUND_ZONE", WarehouseZone.ZoneType.INBOUND, "입고 구역",
-                        List.of(NodeType.INBOUND)),
+                        List.of(NodeType.INBOUND, NodeType.INBOUND_HANDOFF_ACCESS)),
                 new ZoneSpec("OUTBOUND_ZONE", WarehouseZone.ZoneType.OUTBOUND, "출고 구역",
-                        List.of(NodeType.OUTBOUND)),
+                        List.of(NodeType.OUTBOUND, NodeType.OUTBOUND_STATION_ACCESS,
+                                NodeType.EMPTY_TOTE_BUFFER_ACCESS)),
                 new ZoneSpec("CHARGING_ZONE", WarehouseZone.ZoneType.CHARGING, "충전 구역",
                         List.of(NodeType.CHARGING_SLOT))
         );
@@ -460,13 +717,14 @@ public class WarehouseImportService {
                 slots.size()
         );
 
+        List<WarehouseNode> orderedSlots = orderedChargingSlots(slots);
         List<Robot> robots = new ArrayList<>();
 
         for (int index = 0; index < count; index++) {
             robots.add(Robot.create(
                     spec,
                     warehouse,
-                    slots.get(index).getId(),
+                    orderedSlots.get(index).getId(),
                     100,
                     RobotAvailabilityStatus.AVAILABLE
             ));
@@ -474,6 +732,44 @@ public class WarehouseImportService {
 
         robotRepository.saveAll(robots);
         return robots.size();
+    }
+
+    /**
+     * Keep one deterministic charging home per robot after a map edit.
+     * Runtime position lives in Redis, so updating this master node does not
+     * teleport a running robot; it only changes the terminal node used by the
+     * next plan/replan.
+     */
+    private void synchronizeRobotHomeNodes(Long warehouseId, List<WarehouseNode> chargingSlots) {
+        List<Robot> robots = robotRepository.findAllByWarehouse_Id(warehouseId).stream()
+                .sorted(java.util.Comparator.comparing(Robot::getId))
+                .toList();
+        List<WarehouseNode> orderedSlots = orderedChargingSlots(chargingSlots);
+
+        if (orderedSlots.size() < robots.size()) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        for (int index = 0; index < robots.size(); index++) {
+            robots.get(index).setNodeId(orderedSlots.get(index).getId());
+        }
+    }
+
+    private List<WarehouseNode> orderedChargingSlots(List<WarehouseNode> chargingSlots) {
+        if (chargingSlots.size() < 2) {
+            return List.copyOf(chargingSlots);
+        }
+        double minX = chargingSlots.stream().mapToDouble(WarehouseNode::getX).min().orElse(0);
+        double maxX = chargingSlots.stream().mapToDouble(WarehouseNode::getX).max().orElse(0);
+        double minY = chargingSlots.stream().mapToDouble(WarehouseNode::getY).min().orElse(0);
+        double maxY = chargingSlots.stream().mapToDouble(WarehouseNode::getY).max().orElse(0);
+        java.util.Comparator<WarehouseNode> comparator = (maxX - minX) >= (maxY - minY)
+                ? java.util.Comparator.comparingDouble(WarehouseNode::getX)
+                        .thenComparingDouble(WarehouseNode::getY)
+                : java.util.Comparator.comparingDouble(WarehouseNode::getY)
+                        .thenComparingDouble(WarehouseNode::getX);
+        return chargingSlots.stream()
+                .sorted(comparator.thenComparing(WarehouseNode::getNodeCode))
+                .toList();
     }
 
     /** 화면에서 고를 수 있는 실행 설정을 만들어 둔다. */
@@ -513,6 +809,19 @@ public class WarehouseImportService {
 
     private String lower(String value) {
         return value == null ? null : value.trim().toLowerCase();
+    }
+
+    private WarehouseEdge.DirectionType directionOf(String value) {
+        if (value == null || value.isBlank()) {
+            // 사용자가 그린 일반 연결선의 기본 계약은 왕복 통행이다.
+            // 단방향이 필요한 서비스 인계선은 요청에 A_TO_B/B_TO_A를 명시한다.
+            return WarehouseEdge.DirectionType.BOTH;
+        }
+        return switch (value.trim().toUpperCase()) {
+            case "BOTH", "BIDIRECTIONAL" -> WarehouseEdge.DirectionType.BOTH;
+            case "B_TO_A", "REVERSE" -> WarehouseEdge.DirectionType.B_TO_A;
+            default -> WarehouseEdge.DirectionType.A_TO_B;
+        };
     }
 
     private double round(double value) {

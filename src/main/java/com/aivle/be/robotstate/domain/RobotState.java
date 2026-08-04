@@ -19,9 +19,19 @@ public record RobotState(
         Long nextNodeId,
         String nextNodeCode,
         Double arrivalInSeconds,
+        String movementStepId,
+        Long movementStartAtMillis,
+        Long movementEndAtMillis,
+        Long simulationTimeMillis,
+        Double movementProgress,
         Integer batteryLevel,
         RobotStatus status,
         Long currentTaskId,
+        String taskType,
+        RobotStatus activity,
+        String serviceKind,
+        Double serviceProgress,
+        Boolean carryingLoad,
         LocalDateTime updatedAt
 ) {
     /**
@@ -41,7 +51,10 @@ public record RobotState(
                 robotId, warehouseId,
                 currentNodeId, currentNodeCode,
                 null, null, null,
-                batteryLevel, status, currentTaskId, updatedAt
+                null, null, null, null, null,
+                batteryLevel, status, currentTaskId,
+                null, status, null, null, false,
+                updatedAt
         );
     }
 }

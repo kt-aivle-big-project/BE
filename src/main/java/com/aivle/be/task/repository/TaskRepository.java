@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface TaskRepository extends JpaRepository<Task, Long> {
 
@@ -16,6 +17,11 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     boolean existsByRobot_IdAndStatusIn(Long robotId, Collection<TaskStatus> statuses);
 
     List<Task> findAllBySimulationRun_IdOrderByRequestedAtAsc(Long simulationRunId);
+
+    Optional<Task> findBySimulationRun_IdAndExternalOperationId(
+            Long simulationRunId,
+            String externalOperationId
+    );
 
     List<Task> findAllBySimulationRun_IdAndStatusInOrderByRequestedAtAsc(
             Long simulationRunId,
@@ -37,4 +43,25 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     @Modifying(flushAutomatically = true)
     @Query("update Task task set task.robot = null where task.robot.id = :robotId")
     void clearRobotReference(@Param("robotId") Long robotId);
+
+    @Query("""
+            select count(task)
+            from Task task
+            where task.warehouse.id = :warehouseId
+              and task.status in :taskStatuses
+              and (
+                    task.simulationRun is null
+                    or task.simulationRun.status in :runStatuses
+              )
+              and (
+                    task.startNode.id in :nodeIds
+                    or task.endNode.id in :nodeIds
+              )
+            """)
+    long countOperationalReferences(
+            @Param("warehouseId") Long warehouseId,
+            @Param("nodeIds") Collection<Long> nodeIds,
+            @Param("taskStatuses") Collection<TaskStatus> taskStatuses,
+            @Param("runStatuses") Collection<com.aivle.be.simulationrun.domain.SimulationRunStatus> runStatuses
+    );
 }

@@ -45,13 +45,13 @@ public class WarehouseLayoutService {
                         .toList();
 
         List<WarehouseNodeResponse> nodes =
-                warehouseNodeRepository.findAllByWarehouse_Id(warehouseId)
+                warehouseNodeRepository.findAllByWarehouse_IdAndActiveTrue(warehouseId)
                         .stream()
                         .map(WarehouseNodeResponse::from)
                         .toList();
 
         List<WarehouseEdgeResponse> edges =
-                warehouseEdgeRepository.findAllByFromNode_Warehouse_Id(warehouseId)
+                warehouseEdgeRepository.findAllActiveByWarehouseId(warehouseId)
                         .stream()
                         .map(WarehouseEdgeResponse::from)
                         .toList();
@@ -59,6 +59,7 @@ public class WarehouseLayoutService {
         List<ChargingStationResponse> chargingStations =
                 chargingStationRepository.findAllByWarehouse_Id(warehouseId)
                         .stream()
+                        .filter(station -> station.getNode().isActive())
                         .map(ChargingStationResponse::from)
                         .toList();
 

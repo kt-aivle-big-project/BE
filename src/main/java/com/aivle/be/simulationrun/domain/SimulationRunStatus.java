@@ -11,8 +11,12 @@ public enum SimulationRunStatus {
     // 일시정지
     PAUSED,
 
+    QUIESCING,
+
     // 재계획 중 (AI 재최적화 요청 ~ 결과 반영)
     REPLANNING,
+
+    PENDING_ACTIVATION,
 
     // 정상 완료
     COMPLETED,

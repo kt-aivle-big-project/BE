@@ -5,6 +5,7 @@ import com.aivle.be.warehousenode.entity.WarehouseNode;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 창고 그래프(맵) 내보내기 응답.
@@ -55,7 +56,24 @@ public record WarehouseGraphResponse(
             Double x,
 
             @Schema(description = "Y 좌표", example = "0.72")
-            Double y
+            Double y,
+
+            Boolean serviceOnly,
+
+            Boolean transitAllowed,
+
+            Boolean holdingAllowed,
+
+            Integer nodeCapacity,
+
+            String resourceType,
+
+            String resourceCode,
+
+            String side,
+
+            @Schema(description = "LARO RouteNode 추가 속성")
+            Map<String, Object> routeAttributes
     ) {
 
         public static GraphNode from(WarehouseNode node) {
@@ -64,7 +82,15 @@ public record WarehouseGraphResponse(
                     node.getNodeType() == null ? null : node.getNodeType().name(),
                     node.getZoneId(),
                     node.getX(),
-                    node.getY()
+                    node.getY(),
+                    node.getServiceOnly(),
+                    node.getTransitAllowed(),
+                    node.getHoldingAllowed(),
+                    node.getNodeCapacity(),
+                    node.getResourceType(),
+                    node.getResourceCode(),
+                    node.getSide(),
+                    node.getRouteAttributes()
             );
         }
     }
@@ -88,7 +114,24 @@ public record WarehouseGraphResponse(
                     description = "통행 방향. BOTH(양방향) / A_TO_B / B_TO_A",
                     example = "BOTH"
             )
-            String direction
+            String direction,
+
+            String edgeType,
+
+            Double speedLimitMps,
+
+            Long nominalTravelTimeMs,
+
+            Double cost,
+
+            String physicalResourceCode,
+
+            Boolean serviceOnly,
+
+            Boolean mobileRobotTraversable,
+
+            @Schema(description = "LARO TRAVERSES 추가 속성")
+            Map<String, Object> routeAttributes
     ) {
 
         public static GraphEdge from(WarehouseEdge edge) {
@@ -99,7 +142,15 @@ public record WarehouseGraphResponse(
                     edge.getDistance(),
                     edge.getDirectionType() == null
                             ? null
-                            : edge.getDirectionType().name()
+                            : edge.getDirectionType().name(),
+                    edge.getEdgeType(),
+                    edge.getSpeedLimitMps(),
+                    edge.getNominalTravelTimeMs(),
+                    edge.getCost(),
+                    edge.getPhysicalResourceCode(),
+                    edge.getServiceOnly(),
+                    edge.getMobileRobotTraversable(),
+                    edge.getRouteAttributes()
             );
         }
     }

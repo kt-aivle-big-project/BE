@@ -20,6 +20,8 @@ public interface SimulationRunRepository extends JpaRepository<SimulationRun, Lo
             Collection<SimulationRunStatus> statuses
     );
 
+    List<SimulationRun> findAllByStatusIn(Collection<SimulationRunStatus> statuses);
+
     /**
      * 특정 사용자가 실행한 시뮬레이션 목록 (최신순).
      */

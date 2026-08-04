@@ -35,7 +35,7 @@ public class RobotStateValidationService {
     ) {
         Robot robot = robotRepository.findById(robotId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ROBOT_NOT_FOUND));
-        WarehouseNode node = warehouseNodeRepository.findById(request.currentNodeId())
+        WarehouseNode node = warehouseNodeRepository.findByIdAndActiveTrue(request.currentNodeId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.NODE_NOT_FOUND));
 
         validateSameWarehouse(robot, node);

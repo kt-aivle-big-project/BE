@@ -10,18 +10,20 @@ spring:
   # 없으면 창고·노드가 비어 있어서 화면도 시뮬레이션도 동작하지 않는다.
   # 조원마다 수동으로 SQL 을 넣어야 했던 문제를 없앤다.
   #
-  # 모든 파일은 "이미 있으면 건너뛴다"(ON CONFLICT DO NOTHING)로 쓰여 있어
-  # 매번 실행돼도 기존 데이터를 덮어쓰지 않는다.
+  # V02는 공용 기본 지도의 계약을 upsert하되, storage_location과 재고 행은 보존한다.
+  # 나머지 카탈로그/재고 시드는 "이미 있으면 건너뛴다" 방식으로 기존 값을 지킨다.
   sql:
     init:
-      mode: ${SQL_INIT_MODE:always}
+      mode: ${SQL_INIT_MODE:never}
       continue-on-error: false
       data-locations:
         - classpath:db/seed/V01_base.sql
         - classpath:db/seed/V02_warehouse_1.sql
-        - classpath:db/seed/V03_warehouse_2.sql
-        - classpath:db/seed/V04_warehouse_3.sql
         - classpath:db/seed/V05_inventory.sql
+        - classpath:db/seed/V06_product_catalog.sql
+        - classpath:db/seed/V07_box_storage_model.sql
+        - classpath:db/seed/V08_three_level_rack_storage.sql
+        - classpath:db/seed/V09_remove_expiry.sql
 
   jpa:
     # Hibernate 가 테이블을 만든 뒤에 위 SQL 이 실행되도록 미룬다.
@@ -50,4 +52,7 @@ fastapi:
 simulation:
   playback:
     # 재생 틱 주기(ms). 값이 작을수록 로봇이 빠르게 움직인다.
-    tick-ms: 500
+    tick-ms: 100
+  command-generation:
+    # 1x, 2x, 3x, 4x, 5x workload relative weights. Values need not total 100.
+    workload-multiplier-weights: ${SIMULATION_COMMAND_GENERATION_WORKLOAD_MULTIPLIER_WEIGHTS:10,15,20,25,30}

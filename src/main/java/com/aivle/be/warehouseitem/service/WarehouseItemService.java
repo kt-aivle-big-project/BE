@@ -2,6 +2,8 @@ package com.aivle.be.warehouseitem.service;
 
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.product.entity.Product;
+import com.aivle.be.product.repository.ProductRepository;
 import com.aivle.be.storagelocation.entity.StorageLocation;
 import com.aivle.be.storagelocation.repository.StorageLocationRepository;
 import com.aivle.be.warehouse.entity.Warehouse;
@@ -25,6 +27,7 @@ import java.util.List;
 public class WarehouseItemService {
 
     private final WarehouseItemRepository warehouseItemRepository;
+    private final ProductRepository productRepository;
     private final WarehouseRepository warehouseRepository;
     private final StorageLocationRepository storageLocationRepository;
     private final WarehouseZoneResolverService warehouseZoneResolverService;
@@ -33,7 +36,9 @@ public class WarehouseItemService {
     public WarehouseItemResponse create(WarehouseItemRequest request) {
         Warehouse warehouse = findWarehouse(request.warehouseId());
         StorageLocation storageLocation = findStorageLocation(request.storageLocationId());
+        Product product = findProduct(request.itemId());
         requireSameWarehouse(warehouse, storageLocation);
+        int rackLevel = resolveRackLevel(storageLocation.getId(), request.rackLevel(), null);
 
         WarehouseNode node = storageLocation.getNode();
         warehouseZoneResolverService.requireStorageZone(node);
@@ -41,9 +46,9 @@ public class WarehouseItemService {
         WarehouseItem item = WarehouseItem.create(
                 warehouse,
                 storageLocation,
+                rackLevel,
                 node,
-                request.itemId(),
-                request.expiryDate(),
+                product,
                 LocalDateTime.now(),
                 request.quantity()
         );
@@ -77,15 +82,26 @@ public class WarehouseItemService {
         WarehouseItem item = findById(warehouseItemId);
         Warehouse warehouse = findWarehouse(request.warehouseId());
         StorageLocation storageLocation = findStorageLocation(request.storageLocationId());
+        Product product = findProduct(request.itemId());
         requireSameWarehouse(warehouse, storageLocation);
+        Integer requestedRackLevel = request.rackLevel();
+        if (requestedRackLevel == null
+                && item.getStorageLocation().getId().equals(storageLocation.getId())) {
+            requestedRackLevel = item.getRackLevel();
+        }
+        int rackLevel = resolveRackLevel(
+                storageLocation.getId(),
+                requestedRackLevel,
+                warehouseItemId
+        );
 
         warehouseZoneResolverService.requireStorageZone(storageLocation.getNode());
 
         item.update(
                 storageLocation,
+                rackLevel,
                 storageLocation.getNode(),
-                request.itemId(),
-                request.expiryDate(),
+                product,
                 request.quantity()
         );
 
@@ -113,9 +129,51 @@ public class WarehouseItemService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.STORAGE_LOCATION_NOT_FOUND));
     }
 
+    private Product findProduct(Long productId) {
+        return productRepository.findById(productId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+    }
+
     private void requireSameWarehouse(Warehouse warehouse, StorageLocation storageLocation) {
         if (!storageLocation.getWarehouse().getId().equals(warehouse.getId())) {
             throw new BusinessException(ErrorCode.WAREHOUSE_ITEM_LOCATION_MISMATCH);
+        }
+    }
+
+    private int resolveRackLevel(
+            Long storageLocationId,
+            Integer requestedRackLevel,
+            Long currentWarehouseItemId
+    ) {
+        if (requestedRackLevel != null) {
+            requireEmptySlot(storageLocationId, requestedRackLevel, currentWarehouseItemId);
+            return requestedRackLevel;
+        }
+        for (int rackLevel = 1; rackLevel <= 3; rackLevel++) {
+            boolean occupied = currentWarehouseItemId == null
+                    ? warehouseItemRepository.existsByStorageLocation_IdAndRackLevel(
+                            storageLocationId, rackLevel)
+                    : warehouseItemRepository.existsByStorageLocation_IdAndRackLevelAndIdNot(
+                            storageLocationId, rackLevel, currentWarehouseItemId);
+            if (!occupied) {
+                return rackLevel;
+            }
+        }
+        throw new BusinessException(ErrorCode.INVALID_INPUT);
+    }
+
+    private void requireEmptySlot(
+            Long storageLocationId,
+            Integer rackLevel,
+            Long currentWarehouseItemId
+    ) {
+        boolean occupied = currentWarehouseItemId == null
+                ? warehouseItemRepository.existsByStorageLocation_IdAndRackLevel(
+                        storageLocationId, rackLevel)
+                : warehouseItemRepository.existsByStorageLocation_IdAndRackLevelAndIdNot(
+                        storageLocationId, rackLevel, currentWarehouseItemId);
+        if (occupied) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
     }
 }

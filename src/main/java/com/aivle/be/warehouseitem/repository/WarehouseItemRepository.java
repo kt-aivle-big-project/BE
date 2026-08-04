@@ -10,9 +10,30 @@ public interface WarehouseItemRepository extends JpaRepository<WarehouseItem, Lo
 
     List<WarehouseItem> findAllByWarehouse_Id(Long warehouseId);
 
-    Optional<WarehouseItem> findFirstByWarehouse_IdAndItemIdAndNode_Id(
+    List<WarehouseItem> findAllByStorageLocation_IdOrderByRackLevelAsc(Long storageLocationId);
+
+    boolean existsByStorageLocation_IdAndRackLevel(Long storageLocationId, Integer rackLevel);
+
+    boolean existsByStorageLocation_IdAndRackLevelAndQuantityGreaterThan(
+            Long storageLocationId,
+            Integer rackLevel,
+            Integer quantity
+    );
+
+    boolean existsByStorageLocation_IdAndRackLevelAndIdNot(
+            Long storageLocationId,
+            Integer rackLevel,
+            Long warehouseItemId
+    );
+
+    Optional<WarehouseItem> findByStorageLocation_IdAndRackLevel(
+            Long storageLocationId,
+            Integer rackLevel
+    );
+
+    Optional<WarehouseItem> findFirstByWarehouse_IdAndProduct_IdAndNode_Id(
             Long warehouseId,
-            Long itemId,
+            Long productId,
             Long nodeId
     );
 }

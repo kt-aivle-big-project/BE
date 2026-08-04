@@ -2,16 +2,15 @@ package com.aivle.be.warehouseitem.dto;
 
 import com.aivle.be.warehouseitem.entity.WarehouseItem;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 public record WarehouseItemResponse(
         Long id,
         Long warehouseId,
         Long storageLocationId,
+        Integer rackLevel,
         Long nodeId,
         Long itemId,
-        LocalDate expiryDate,
         LocalDateTime receivedAt,
         Integer quantity,
         Integer inboundQuantity,
@@ -22,9 +21,9 @@ public record WarehouseItemResponse(
                 item.getId(),
                 item.getWarehouse().getId(),
                 item.getStorageLocation().getId(),
+                item.getRackLevel(),
                 item.getNode().getId(),
                 item.getItemId(),
-                item.getExpiryDate(),
                 item.getReceivedAt(),
                 item.getQuantity(),
                 item.getInboundQuantity(),

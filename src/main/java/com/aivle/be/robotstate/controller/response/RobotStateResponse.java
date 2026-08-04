@@ -27,9 +27,34 @@ public record RobotStateResponse(
         )
         Double arrivalInSeconds,
 
+        @Schema(description = "현재 MOVE 구간 식별자", example = "R10006-0018", nullable = true)
+        String movementStepId,
+
+        @Schema(description = "MOVE 구간의 시뮬레이션 시작 시각(ms)", example = "12992", nullable = true)
+        Long movementStartAtMillis,
+
+        @Schema(description = "MOVE 구간의 시뮬레이션 종료 시각(ms)", example = "13762", nullable = true)
+        Long movementEndAtMillis,
+
+        @Schema(description = "상태 생성 시점의 시뮬레이션 시각(ms)", example = "13300", nullable = true)
+        Long simulationTimeMillis,
+
+        @Schema(description = "현재 MOVE 구간 진행률(0~1)", example = "0.4", nullable = true)
+        Double movementProgress,
+
         Integer batteryLevel,
         RobotStatus status,
         Long currentTaskId,
+        @Schema(description = "현재 작업 유형", example = "INBOUND", nullable = true)
+        String taskType,
+        @Schema(description = "화면 아이콘에 사용할 실제 활동", example = "PUTAWAY", nullable = true)
+        RobotStatus activity,
+        @Schema(description = "현재 SERVICE 단계", example = "PICKUP", nullable = true)
+        String serviceKind,
+        @Schema(description = "현재 SERVICE 진행률(0~1)", example = "0.5", nullable = true)
+        Double serviceProgress,
+        @Schema(description = "BOX 적재 여부", example = "true")
+        Boolean carryingLoad,
         LocalDateTime updatedAt
 ) {
     public static RobotStateResponse from(RobotState state) {
@@ -41,9 +66,19 @@ public record RobotStateResponse(
                 state.nextNodeId(),
                 state.nextNodeCode(),
                 state.arrivalInSeconds(),
+                state.movementStepId(),
+                state.movementStartAtMillis(),
+                state.movementEndAtMillis(),
+                state.simulationTimeMillis(),
+                state.movementProgress(),
                 state.batteryLevel(),
                 state.status(),
                 state.currentTaskId(),
+                state.taskType(),
+                state.activity(),
+                state.serviceKind(),
+                state.serviceProgress(),
+                state.carryingLoad(),
                 state.updatedAt()
         );
     }

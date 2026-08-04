@@ -2,6 +2,11 @@ package com.aivle.be.simulationrun.playback;
 
 import com.aivle.be.chargingstation.entity.ChargingStation;
 import com.aivle.be.chargingstation.repository.ChargingStationRepository;
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.laro.dto.LaroPlanResponse;
+import com.aivle.be.laro.service.LaroInventoryReservationService;
+import com.aivle.be.laro.service.LaroTaskId;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.controller.response.RobotStateResponse;
@@ -9,8 +14,10 @@ import com.aivle.be.robotstate.domain.RobotState;
 import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.scenario.entity.Scenario;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
+import com.aivle.be.simulationrun.repository.SimulationRunRobotRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.entity.Task;
@@ -25,6 +32,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +43,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -67,6 +79,7 @@ public class SimulationPlaybackService {
             List.of(TaskStatus.PENDING, TaskStatus.ASSIGNED);
 
     private final SimulationRunRepository simulationRunRepository;
+    private final SimulationRunRobotRepository simulationRunRobotRepository;
     private final SimulationRunStateStore simulationRunStateStore;
     private final TaskRepository taskRepository;
     private final RobotRepository robotRepository;
@@ -75,9 +88,18 @@ public class SimulationPlaybackService {
     private final TaskService taskService;
     private final WarehousePathFinder pathFinder;
     private final SimpMessagingTemplate messagingTemplate;
+    private final JdbcTemplate jdbcTemplate;
+    private final LaroInventoryReservationService inventoryReservationService;
 
     // 진행 중인 재생 (simulationRunId -> 상태)
     private final Map<Long, PlaybackContext> contexts = new ConcurrentHashMap<>();
+
+    // AI의 MOVE/WAIT/SERVICE 절대 시간표. 같은 run에서는 BFS context와 동시에 존재하지 않는다.
+    private final Map<Long, AiPlaybackContext> aiContexts = new ConcurrentHashMap<>();
+
+    // A replan is built and validated first, then activated only after every
+    // robot reaches the handover barrier declared by the AI plan.
+    private final Map<Long, PendingAiPlan> pendingAiPlans = new ConcurrentHashMap<>();
 
     // 노드 코드 캐시 (nodeId -> nodeCode)
     private final Map<Long, String> nodeCodeCache = new ConcurrentHashMap<>();
@@ -92,6 +114,9 @@ public class SimulationPlaybackService {
      */
     @Transactional
     public void buildPlan(Long simulationRunId, List<Robot> robots) {
+        if (aiContexts.containsKey(simulationRunId)) {
+            return;
+        }
         SimulationRun run = simulationRunRepository.findById(simulationRunId).orElse(null);
         if (run == null || robots.isEmpty()) {
             return;
@@ -137,6 +162,7 @@ public class SimulationPlaybackService {
                 ? 5.0 : scenario.getLoadingSeconds();
         Map<Long, Double> chargingPowerByNode = new LinkedHashMap<>();
         chargingStationRepository.findAllByWarehouse_Id(warehouseId).stream()
+                .filter(station -> station.getNode().isActive())
                 .filter(station ->
                         station.getStatus() == ChargingStation.ChargingStationStatus.AVAILABLE
                                 && station.getChargingPower() != null
@@ -180,11 +206,360 @@ public class SimulationPlaybackService {
      *
      * @param tickMillis 실제 경과 시간(ms)
      */
+    /**
+     * READY LARO 계획을 현재 실행 계획으로 설치한다.
+     * 설치가 끝난 시점부터 기존 BFS context는 제거되고 AI 시간표가 유일한 이동 권위가 된다.
+     */
+    @Transactional
+    public void installAiPlan(
+            Long simulationRunId,
+            LaroPlanResponse.SimulationPlan plan,
+            Map<String, Long> aiTaskToBeTask
+    ) {
+        PreparedAiPlan prepared = prepareAiPlan(simulationRunId, plan, aiTaskToBeTask);
+        assignPlannedTasks(prepared.assignedRobotByTask());
+        contexts.remove(simulationRunId);
+        pendingAiPlans.remove(simulationRunId);
+        aiContexts.put(simulationRunId, prepared.context());
+        logPreparedPlan("installed", prepared);
+    }
+
+    @Transactional
+    public void stageAiReplan(
+            Long simulationRunId,
+            LaroPlanResponse.SimulationPlan plan,
+            Map<String, Long> aiTaskToBeTask
+    ) {
+        AiPlaybackContext active = aiContexts.get(simulationRunId);
+        if (active == null || plan.basePlanId() == null
+                || !plan.basePlanId().equals(active.getPlanId())) {
+            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        }
+        PreparedAiPlan prepared = prepareAiPlan(simulationRunId, plan, aiTaskToBeTask);
+        Map<String, Long> robotIds = prepared.robotIdsByAiCode();
+        if (plan.handoverPoints() != null) {
+            for (LaroPlanResponse.HandoverPoint point : plan.handoverPoints()) {
+                Long robotId = robotIds.get(point.robotId());
+                if (robotId == null) {
+                    Long numericId = canonicalRobotDatabaseId(point.robotId());
+                    if (numericId != null && active.getRobots().stream()
+                            .anyMatch(robot -> numericId.equals(robot.getRobotId()))) {
+                        robotId = numericId;
+                    }
+                }
+                Long nodeId = prepared.nodeIdsByCode().get(point.nodeId());
+                if (robotId == null || nodeId == null || point.handoverAtMs() == null) {
+                    throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                }
+                active.applyHandover(robotId, point.handoverAtMs(), nodeId);
+            }
+        }
+        pendingAiPlans.put(simulationRunId, new PendingAiPlan(
+                prepared.context(),
+                prepared.assignedRobotByTask()
+        ));
+        logPreparedPlan("staged", prepared);
+    }
+
+    private PreparedAiPlan prepareAiPlan(
+            Long simulationRunId,
+            LaroPlanResponse.SimulationPlan plan,
+            Map<String, Long> aiTaskToBeTask
+    ) {
+        SimulationRun run = simulationRunRepository.findById(simulationRunId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND));
+        if (run.getStatus() != SimulationRunStatus.RUNNING
+                && run.getStatus() != SimulationRunStatus.QUIESCING
+                && run.getStatus() != SimulationRunStatus.REPLANNING
+                && run.getStatus() != SimulationRunStatus.PENDING_ACTIVATION) {
+            throw new BusinessException(ErrorCode.SIMULATION_RUN_NOT_RUNNING);
+        }
+        Long warehouseId = run.getWarehouse().getId();
+
+        List<Robot> participants = simulationRunRobotRepository
+                .findAllBySimulationRun_IdOrderByRobot_Id(simulationRunId)
+                .stream()
+                .map(value -> value.getRobot())
+                .toList();
+        if (participants.isEmpty() || plan.robots() == null
+                || plan.robots().size() > participants.size()) {
+            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        }
+
+        Map<String, WarehouseNode> nodesByCode = warehouseNodeRepository
+                .findAllByWarehouse_IdAndActiveTrue(warehouseId)
+                .stream()
+                .filter(node -> node.getNodeCode() != null)
+                .collect(Collectors.toMap(
+                        WarehouseNode::getNodeCode,
+                        node -> node,
+                        (left, right) -> left
+                ));
+        cacheNodeCodes(warehouseId);
+        Map<Long, Set<Long>> adjacency = pathFinder.loadAdjacency(warehouseId);
+
+        Set<Long> usedRobotIds = new HashSet<>();
+        List<AiPlaybackContext.RobotTimeline> timelines = new ArrayList<>();
+        Map<Long, Robot> assignedRobotByTask = new HashMap<>();
+        Map<String, Long> robotIdsByAiCode = new HashMap<>();
+
+        for (LaroPlanResponse.RobotPlan robotPlan : plan.robots()) {
+            Robot robot = resolvePlanRobot(robotPlan.robotId(), participants, usedRobotIds);
+            usedRobotIds.add(robot.getId());
+            robotIdsByAiCode.put(robotPlan.robotId(), robot.getId());
+            List<AiPlaybackContext.TimedStep> steps = convertSteps(
+                    robotPlan, nodesByCode, adjacency, aiTaskToBeTask);
+            if (steps.isEmpty()) {
+                continue;
+            }
+            AiPlaybackContext.RobotTimeline timeline = new AiPlaybackContext.RobotTimeline(
+                    robot.getId(),
+                    steps,
+                    resolveInitialNode(robotPlan, nodesByCode, robot),
+                    robot.getBattery()
+            );
+            timelines.add(timeline);
+            for (AiPlaybackContext.TimedStep step : steps) {
+                if (step.taskId() != null) {
+                    assignedRobotByTask.putIfAbsent(step.taskId(), robot);
+                }
+            }
+        }
+        if (timelines.isEmpty()) {
+            throw new BusinessException(ErrorCode.LARO_PLAN_NOT_EXECUTABLE);
+        }
+
+        long initialClock = firstNonNull(
+                plan.effectiveFromSimTimeMs(), plan.planStartSimTimeMs(), 0L);
+        long finishClock = plan.absoluteFinishAtMs() != null
+                ? plan.absoluteFinishAtMs()
+                : initialClock + (plan.makespanMs() == null ? 0L : plan.makespanMs());
+        long latestStepEnd = timelines.stream()
+                .flatMap(timeline -> timeline.getSteps().stream())
+                .mapToLong(AiPlaybackContext.TimedStep::endAtMillis)
+                .max()
+                .orElse(initialClock);
+        finishClock = Math.max(finishClock, latestStepEnd);
+
+        AiPlaybackContext context = new AiPlaybackContext(
+                simulationRunId,
+                warehouseId,
+                plan.warehouseId(),
+                plan.planId(),
+                plan.planVersion(),
+                plan.simulationId(),
+                initialClock,
+                finishClock,
+                timelines,
+                new HashSet<>(aiTaskToBeTask.values()),
+                run.getSimulationSpeed() == null ? 1.0 : run.getSimulationSpeed()
+        );
+        Map<String, Long> nodeIdsByCode = nodesByCode.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().getId()));
+        return new PreparedAiPlan(
+                context,
+                Map.copyOf(assignedRobotByTask),
+                Map.copyOf(robotIdsByAiCode),
+                Map.copyOf(nodeIdsByCode)
+        );
+    }
+
+    private void logPreparedPlan(String action, PreparedAiPlan prepared) {
+        AiPlaybackContext context = prepared.context();
+        log.info("[AI playback] {} runId={}, planId={}, robots={}, steps={}, tasks={}",
+                action,
+                context.getSimulationRunId(),
+                context.getPlanId(),
+                context.getRobots().size(),
+                context.getRobots().stream().mapToInt(value -> value.getSteps().size()).sum(),
+                context.getTaskIds().size());
+    }
+
+    private List<AiPlaybackContext.TimedStep> convertSteps(
+            LaroPlanResponse.RobotPlan robotPlan,
+            Map<String, WarehouseNode> nodesByCode,
+            Map<Long, Set<Long>> adjacency,
+            Map<String, Long> aiTaskToBeTask
+    ) {
+        if (robotPlan.steps() == null) {
+            return List.of();
+        }
+        List<LaroPlanResponse.PlanStep> ordered = robotPlan.steps().stream()
+                .sorted(Comparator
+                        .comparing((LaroPlanResponse.PlanStep step) ->
+                                step.sequence() == null ? Integer.MAX_VALUE : step.sequence())
+                        .thenComparing(step -> step.startAtMs() == null ? Long.MAX_VALUE : step.startAtMs()))
+                .toList();
+        List<AiPlaybackContext.TimedStep> converted = new ArrayList<>();
+        long previousEnd = -1L;
+        int fallbackSequence = 0;
+        for (LaroPlanResponse.PlanStep step : ordered) {
+            if (step.stepType() == null || step.startAtMs() == null || step.endAtMs() == null
+                    || step.endAtMs() < step.startAtMs() || step.startAtMs() < previousEnd) {
+                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            }
+            AiPlaybackContext.StepType type;
+            try {
+                type = AiPlaybackContext.StepType.valueOf(step.stepType().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException exception) {
+                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            }
+
+            Long nodeId = nodeId(nodesByCode, step.nodeId(), type != AiPlaybackContext.StepType.MOVE);
+            Long fromNodeId = nodeId(nodesByCode, step.fromNode(), type == AiPlaybackContext.StepType.MOVE);
+            Long toNodeId = nodeId(nodesByCode, step.toNode(), type == AiPlaybackContext.StepType.MOVE);
+            if (type == AiPlaybackContext.StepType.MOVE
+                    && !adjacency.getOrDefault(fromNodeId, Set.of()).contains(toNodeId)) {
+                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            }
+
+            Long beTaskId = null;
+            if (step.taskId() != null) {
+                beTaskId = aiTaskToBeTask.get(step.taskId());
+                if (beTaskId == null) {
+                    beTaskId = aiTaskToBeTask.get(LaroTaskId.base(step.taskId()));
+                }
+            }
+            converted.add(new AiPlaybackContext.TimedStep(
+                    step.stepId(),
+                    step.sequence() == null ? fallbackSequence : step.sequence(),
+                    type,
+                    step.startAtMs(),
+                    step.endAtMs(),
+                    nodeId,
+                    fromNodeId,
+                    toNodeId,
+                    beTaskId,
+                    step.serviceKind()
+            ));
+            fallbackSequence++;
+            previousEnd = step.endAtMs();
+        }
+        return inferStepTasks(converted);
+    }
+
+    private List<AiPlaybackContext.TimedStep> inferStepTasks(
+            List<AiPlaybackContext.TimedStep> steps
+    ) {
+        List<AiPlaybackContext.TimedStep> inferred = new ArrayList<>(steps.size());
+        for (int index = 0; index < steps.size(); index++) {
+            AiPlaybackContext.TimedStep step = steps.get(index);
+            Long taskId = step.taskId() == null ? nearestTaskId(steps, index) : step.taskId();
+            inferred.add(new AiPlaybackContext.TimedStep(
+                    step.stepId(), step.sequence(), step.type(),
+                    step.startAtMillis(), step.endAtMillis(),
+                    step.nodeId(), step.fromNodeId(), step.toNodeId(),
+                    taskId, step.serviceKind()
+            ));
+        }
+        return inferred;
+    }
+
+    private Long nearestTaskId(List<AiPlaybackContext.TimedStep> steps, int index) {
+        for (int offset = 1; offset < steps.size(); offset++) {
+            int next = index + offset;
+            if (next < steps.size() && steps.get(next).taskId() != null) {
+                return steps.get(next).taskId();
+            }
+            int previous = index - offset;
+            if (previous >= 0 && steps.get(previous).taskId() != null) {
+                return steps.get(previous).taskId();
+            }
+        }
+        return null;
+    }
+
+    private Long nodeId(
+            Map<String, WarehouseNode> nodesByCode,
+            String nodeCode,
+            boolean required
+    ) {
+        if (nodeCode == null) {
+            if (required) {
+                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            }
+            return null;
+        }
+        WarehouseNode node = nodesByCode.get(nodeCode);
+        if (node == null && required) {
+            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        }
+        return node == null ? null : node.getId();
+    }
+
+    private Long resolveInitialNode(
+            LaroPlanResponse.RobotPlan plan,
+            Map<String, WarehouseNode> nodesByCode,
+            Robot robot
+    ) {
+        WarehouseNode initial = plan.initialNode() == null ? null : nodesByCode.get(plan.initialNode());
+        return initial == null ? robot.getNodeId() : initial.getId();
+    }
+
+    static Robot resolvePlanRobot(
+            String planRobotId,
+            List<Robot> participants,
+            Set<Long> usedRobotIds
+    ) {
+        Long numeric = canonicalRobotDatabaseId(planRobotId);
+        if (numeric == null) {
+            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        }
+        return participants.stream()
+                .filter(robot -> numeric.equals(robot.getId()))
+                .filter(robot -> !usedRobotIds.contains(robot.getId()))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED));
+    }
+
+    static Long canonicalRobotDatabaseId(String value) {
+        if (value == null || !value.matches("R[1-9][0-9]*")) {
+            return null;
+        }
+        try {
+            Long numeric = Long.valueOf(value.substring(1));
+            return value.equals("R" + numeric) ? numeric : null;
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
+    private void assignPlannedTasks(Map<Long, Robot> assignedRobotByTask) {
+        for (Map.Entry<Long, Robot> entry : assignedRobotByTask.entrySet()) {
+            Task task = taskRepository.findById(entry.getKey()).orElse(null);
+            if (task == null) {
+                continue;
+            }
+            if (task.getStatus() == TaskStatus.PENDING) {
+                task.assignRobot(entry.getValue());
+                broadcastTask(task);
+            } else if ((task.getStatus() == TaskStatus.ASSIGNED
+                    || task.getStatus() == TaskStatus.IN_PROGRESS)
+                    && task.getRobot() != null
+                    && !entry.getValue().getId().equals(task.getRobot().getId())) {
+                task.reassignRobot(entry.getValue());
+                broadcastTask(task);
+            }
+        }
+    }
+
+    @SafeVarargs
+    private final <T> T firstNonNull(T... values) {
+        for (T value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
     @Transactional
     public void tick(long tickMillis) {
-        if (contexts.isEmpty()) {
+        if (contexts.isEmpty() && aiContexts.isEmpty()) {
             return;
         }
+
+        advanceAiContexts(tickMillis);
 
         for (Long runId : List.copyOf(contexts.keySet())) {
             PlaybackContext context = contexts.get(runId);
@@ -212,6 +587,449 @@ public class SimulationPlaybackService {
                         runId, context.clockSeconds());
             }
         }
+    }
+
+    private void advanceAiContexts(long tickMillis) {
+        for (Long runId : List.copyOf(aiContexts.keySet())) {
+            AiPlaybackContext context = aiContexts.get(runId);
+            if (context == null) {
+                continue;
+            }
+            SimulationRun run = simulationRunRepository.findById(runId).orElse(null);
+            if (run == null || isTerminated(run.getStatus())) {
+                aiContexts.remove(runId);
+                continue;
+            }
+            if (!canAdvanceAiPlan(run.getStatus())) {
+                continue;
+            }
+
+            context.advanceClock(tickMillis);
+            for (AiPlaybackContext.RobotTimeline robot : context.getRobots()) {
+                advanceAiRobot(context, robot);
+            }
+
+            PendingAiPlan pending = pendingAiPlans.get(runId);
+            if (pending != null && context.allRobotsHeld()) {
+                try {
+                    activatePendingPlan(run, context, pending);
+                } catch (RuntimeException exception) {
+                    recoverFromActivationFailure(run, context, pending, exception);
+                }
+                continue;
+            }
+
+            if (!context.isQuiescing()
+                    && context.isFinished() && !context.isTasksFinalized()) {
+                for (AiPlaybackContext.RobotTimeline robot : context.getRobots()) {
+                    if (!robot.isFailed()) {
+                        robot.setStatus(RobotStatus.IDLE);
+                        robot.setCurrentTaskId(null);
+                        publishAi(context, robot, null);
+                    }
+                }
+                finalizeAiTasks(context);
+                context.markTasksFinalized();
+                aiContexts.remove(runId);
+                log.info("[AI playback] completed runId={}, planId={}, simTimeMs={}",
+                        runId, context.getPlanId(), context.getClockMillis());
+            }
+        }
+    }
+
+    private void advanceAiRobot(
+            AiPlaybackContext context,
+            AiPlaybackContext.RobotTimeline robot
+    ) {
+        synchronized (robot) {
+            advanceAiRobotLocked(context, robot);
+        }
+    }
+
+    private void advanceAiRobotLocked(
+            AiPlaybackContext context,
+            AiPlaybackContext.RobotTimeline robot
+    ) {
+        if (robot.isFailed()) {
+            return;
+        }
+        if (robot.isHeld()) {
+            publishAi(context, robot, null);
+            return;
+        }
+        int guard = 0;
+        while (!robot.isFinished() && guard++ < MAX_STEPS_PER_TICK) {
+            if (context.isQuiescing() && robot.shouldHold(context.getClockMillis())) {
+                robot.hold();
+                publishAi(context, robot, null);
+                return;
+            }
+            AiPlaybackContext.TimedStep step = robot.currentStep();
+            if (step == null) {
+                return;
+            }
+            if (context.getClockMillis() < step.startAtMillis()) {
+                robot.setStatus(step.taskId() == null ? RobotStatus.IDLE : RobotStatus.ASSIGNED);
+                robot.setCurrentTaskId(step.taskId());
+                publishAi(context, robot, null);
+                return;
+            }
+            if (!robot.isStepStarted()) {
+                startAiStep(robot, step);
+                robot.setStepStarted(true);
+            }
+            if (context.getClockMillis() < step.endAtMillis()) {
+                publishAi(context, robot, step);
+                return;
+            }
+            completeAiStep(robot, step);
+            robot.advanceStep();
+        }
+        if (context.isQuiescing() && robot.shouldHold(context.getClockMillis())) {
+            robot.hold();
+            publishAi(context, robot, null);
+            return;
+        }
+        if (robot.isFinished()) {
+            robot.setStatus(RobotStatus.IDLE);
+            if (!context.isQuiescing()) {
+                robot.setCurrentTaskId(null);
+            } else {
+                robot.hold();
+            }
+            publishAi(context, robot, null);
+        }
+    }
+
+    private boolean canAdvanceAiPlan(SimulationRunStatus status) {
+        return status == SimulationRunStatus.RUNNING
+                || status == SimulationRunStatus.QUIESCING
+                || status == SimulationRunStatus.REPLANNING
+                || status == SimulationRunStatus.PENDING_ACTIVATION;
+    }
+
+    private void activatePendingPlan(
+            SimulationRun run,
+            AiPlaybackContext oldContext,
+            PendingAiPlan pending
+    ) {
+        AiPlaybackContext next = pending.context();
+        if (oldContext.getClockMillis() < next.getClockMillis()) {
+            return;
+        }
+        validateActivationState(oldContext.getSimulationRunId(), next);
+        finalizeSupersededTasks(oldContext, next);
+        assignPlannedTasks(pending.assignedRobotByTask());
+        pendingAiPlans.remove(oldContext.getSimulationRunId());
+        aiContexts.put(oldContext.getSimulationRunId(), next);
+        run.finishReplanning();
+        markPlanActivated(next.getSimulationRunId(), next.getPlanId());
+        inventoryReservationService.releaseSupersededPlan(
+                next.getSimulationRunId(), next.getPlanId());
+        messagingTemplate.convertAndSend(RUN_TOPIC, SimulationRunResponse.from(run));
+        log.info("[AI playback] activated replan runId={}, oldPlanId={}, newPlanId={}, simTimeMs={}",
+                oldContext.getSimulationRunId(), oldContext.getPlanId(), next.getPlanId(), next.getClockMillis());
+    }
+
+    private void validateActivationState(Long simulationRunId, AiPlaybackContext next) {
+        Map<Long, RobotState> actualByRobot = simulationRunStateStore.findAll(simulationRunId)
+                .stream()
+                .collect(Collectors.toMap(RobotState::robotId, value -> value));
+        for (AiPlaybackContext.RobotTimeline robot : next.getRobots()) {
+            RobotState actual = actualByRobot.get(robot.getRobotId());
+            if (actual == null || actual.nextNodeId() != null
+                    || !Objects.equals(robot.getCurrentNodeId(), actual.currentNodeId())) {
+                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            }
+        }
+    }
+
+    private void finalizeSupersededTasks(
+            AiPlaybackContext oldContext,
+            AiPlaybackContext nextContext
+    ) {
+        Set<Long> completedByOldPlan = new HashSet<>(oldContext.getTaskIds());
+        completedByOldPlan.removeAll(nextContext.getTaskIds());
+        AiPlaybackContext completed = new AiPlaybackContext(
+                oldContext.getSimulationRunId(),
+                oldContext.getWarehouseId(),
+                oldContext.getWarehouseCode(),
+                oldContext.getPlanId(),
+                oldContext.getPlanVersion(),
+                oldContext.getSimulationId(),
+                oldContext.getClockMillis(),
+                oldContext.getClockMillis(),
+                List.of(),
+                completedByOldPlan,
+                oldContext.getSpeed()
+        );
+        finalizeAiTasks(completed);
+    }
+
+    private void markPlanActivated(Long simulationRunId, String planId) {
+        if (planId == null) {
+            return;
+        }
+        try {
+            jdbcTemplate.update(
+                    "update laro_ext.simulation_plan "
+                            + "set status = 'READY', activated_at = now() "
+                            + "where plan_id = ? and simulation_run_id = ?",
+                    planId,
+                    simulationRunId
+            );
+            jdbcTemplate.update(
+                    "update laro_ext.simulation_plan "
+                            + "set status = 'SUPERSEDED' "
+                            + "where plan_id = (select base_plan_id from laro_ext.simulation_plan "
+                            + "where plan_id = ? and simulation_run_id = ?) "
+                            + "and simulation_run_id = ?",
+                    planId,
+                    simulationRunId,
+                    simulationRunId
+            );
+        } catch (RuntimeException exception) {
+            log.warn("[AI playback] activation persistence failed: planId={}, reason={}",
+                    planId, exception.getMessage());
+        }
+    }
+
+    private void recoverFromActivationFailure(
+            SimulationRun run,
+            AiPlaybackContext oldContext,
+            PendingAiPlan pending,
+            RuntimeException exception
+    ) {
+        pendingAiPlans.remove(oldContext.getSimulationRunId());
+        oldContext.cancelQuiesce();
+        if (run.getStatus() == SimulationRunStatus.PENDING_ACTIVATION
+                || run.getStatus() == SimulationRunStatus.REPLANNING
+                || run.getStatus() == SimulationRunStatus.QUIESCING) {
+            run.finishReplanning();
+            messagingTemplate.convertAndSend(RUN_TOPIC, SimulationRunResponse.from(run));
+        }
+        try {
+            jdbcTemplate.update(
+                    "update laro_ext.simulation_plan set status = 'FAILED' "
+                            + "where plan_id = ? and simulation_run_id = ?",
+                    pending.context().getPlanId(),
+                    oldContext.getSimulationRunId()
+            );
+        } catch (RuntimeException persistenceException) {
+            log.warn("[AI playback] failed replan status persistence failed: planId={}, reason={}",
+                    pending.context().getPlanId(), persistenceException.getMessage());
+        }
+        inventoryReservationService.releaseActiveForPlan(
+                oldContext.getSimulationRunId(), pending.context().getPlanId());
+        log.error("[AI playback] pending plan discarded; old plan resumed: runId={}, planId={}",
+                oldContext.getSimulationRunId(), pending.context().getPlanId(), exception);
+    }
+
+    private void startAiStep(
+            AiPlaybackContext.RobotTimeline robot,
+            AiPlaybackContext.TimedStep step
+    ) {
+        robot.setCurrentTaskId(step.taskId());
+        switch (step.type()) {
+            case MOVE -> {
+                robot.setCurrentNodeId(step.fromNodeId());
+                robot.setStatus(RobotStatus.MOVING);
+                robot.consumeMoveBattery();
+            }
+            case WAIT -> {
+                robot.setCurrentNodeId(step.nodeId());
+                robot.setStatus(step.taskId() == null ? RobotStatus.IDLE : RobotStatus.ASSIGNED);
+            }
+            case SERVICE -> {
+                robot.setCurrentNodeId(step.nodeId());
+                robot.setStatus(serviceStatus(step.serviceKind(), step.taskId()));
+                robot.consumeWorkBattery();
+                startTask(step.taskId());
+            }
+        }
+    }
+
+    private void completeAiStep(
+            AiPlaybackContext.RobotTimeline robot,
+            AiPlaybackContext.TimedStep step
+    ) {
+        if (step.type() == AiPlaybackContext.StepType.MOVE) {
+            robot.setCurrentNodeId(step.toNodeId());
+        } else if (step.nodeId() != null) {
+            robot.setCurrentNodeId(step.nodeId());
+        }
+        if (step.type() == AiPlaybackContext.StepType.SERVICE) {
+            String kind = step.serviceKind() == null
+                    ? ""
+                    : step.serviceKind().toUpperCase(Locale.ROOT);
+            try {
+                taskService.applyInventoryAtServiceCompletion(step.taskId(), kind);
+            } catch (RuntimeException exception) {
+                log.warn("[AI playback] rack inventory update failed: taskId={}, serviceKind={}, reason={}",
+                        step.taskId(), kind, exception.getMessage());
+                throw exception;
+            }
+            robot.setCarryingLoad(carryingLoadAfterServiceCompletion(
+                    robot.isCarryingLoad(),
+                    kind
+            ));
+        }
+    }
+
+    static boolean carryingLoadAfterServiceCompletion(boolean carryingLoad, String serviceKind) {
+        return switch (serviceKind == null ? "" : serviceKind.toUpperCase(Locale.ROOT)) {
+            case "PICKUP" -> true;
+            case "DROP", "STATION" -> false;
+            default -> carryingLoad;
+        };
+    }
+
+    private RobotStatus serviceStatus(String serviceKind, Long taskId) {
+        String kind = serviceKind == null ? "" : serviceKind.toUpperCase(Locale.ROOT);
+        return switch (kind) {
+            case "PICKUP" -> RobotStatus.PICKING;
+            case "DROP" -> taskRepository.findById(taskId == null ? -1L : taskId)
+                    .map(task -> task.getTaskType() == TaskType.INBOUND
+                            ? RobotStatus.PUTAWAY
+                            : RobotStatus.RELOCATION)
+                    .orElse(RobotStatus.WORKING);
+            case "CHARGE" -> RobotStatus.CHARGING;
+            case "RETURN", "EMPTY_TOTE_BUFFER", "PARK" -> RobotStatus.RELOCATION;
+            default -> RobotStatus.WORKING;
+        };
+    }
+
+    private void finalizeAiTasks(AiPlaybackContext context) {
+        for (Long taskId : context.getTaskIds()) {
+            Task task = taskRepository.findById(taskId).orElse(null);
+            if (task == null || task.getStatus() == TaskStatus.DONE
+                    || task.getStatus() == TaskStatus.FAILED
+                    || task.getStatus() == TaskStatus.CANCELLED) {
+                continue;
+            }
+            try {
+                if (task.getStatus() == TaskStatus.ASSIGNED) {
+                    task.start();
+                    broadcastTask(task);
+                }
+                if (task.getStatus() == TaskStatus.IN_PROGRESS) {
+                    taskService.completeTask(taskId);
+                }
+            } catch (RuntimeException exception) {
+                log.warn("[AI playback] task completion failed: taskId={}, reason={}",
+                        taskId, exception.getMessage());
+            }
+        }
+    }
+
+    private void publishAi(
+            AiPlaybackContext context,
+            AiPlaybackContext.RobotTimeline robot,
+            AiPlaybackContext.TimedStep activeStep
+    ) {
+        Long currentNodeId = robot.getCurrentNodeId();
+        Long nextNodeId = null;
+        Double arrivalInSeconds = null;
+        String movementStepId = null;
+        Long movementStartAtMillis = null;
+        Long movementEndAtMillis = null;
+        Double movementProgress = null;
+        if (activeStep != null && activeStep.type() == AiPlaybackContext.StepType.MOVE) {
+            currentNodeId = activeStep.fromNodeId();
+            nextNodeId = activeStep.toNodeId();
+            long remainingMillis = Math.max(0, activeStep.endAtMillis() - context.getClockMillis());
+            arrivalInSeconds = remainingMillis / 1000.0 / context.getSpeed();
+            movementStepId = activeStep.stepId();
+            movementStartAtMillis = activeStep.startAtMillis();
+            movementEndAtMillis = activeStep.endAtMillis();
+            movementProgress = movementProgress(
+                    context.getClockMillis(),
+                    movementStartAtMillis,
+                    movementEndAtMillis
+            );
+        }
+
+        TaskType taskType = taskRepository.findById(
+                        robot.getCurrentTaskId() == null ? -1L : robot.getCurrentTaskId())
+                .map(Task::getTaskType)
+                .orElse(null);
+        String serviceKind = activeStep != null
+                && activeStep.type() == AiPlaybackContext.StepType.SERVICE
+                ? activeStep.serviceKind()
+                : null;
+        Double serviceProgress = null;
+        if (activeStep != null && activeStep.type() == AiPlaybackContext.StepType.SERVICE) {
+            long durationMillis = Math.max(
+                    1L,
+                    activeStep.endAtMillis() - activeStep.startAtMillis()
+            );
+            serviceProgress = Math.max(
+                    0.0,
+                    Math.min(
+                            1.0,
+                            (context.getClockMillis() - activeStep.startAtMillis())
+                                    / (double) durationMillis
+                    )
+            );
+        }
+        RobotStatus activity = visualActivity(robot, activeStep, taskType);
+
+        RobotState state = new RobotState(
+                robot.getRobotId(),
+                context.getWarehouseId(),
+                currentNodeId,
+                nodeCodeCache.get(currentNodeId),
+                nextNodeId,
+                nextNodeId == null ? null : nodeCodeCache.get(nextNodeId),
+                arrivalInSeconds,
+                movementStepId,
+                movementStartAtMillis,
+                movementEndAtMillis,
+                context.getClockMillis(),
+                movementProgress,
+                robot.getBatteryLevel(),
+                robot.getStatus(),
+                robot.getCurrentTaskId(),
+                taskType == null ? null : taskType.name(),
+                activity,
+                serviceKind,
+                serviceProgress,
+                robot.isCarryingLoad(),
+                LocalDateTime.now()
+        );
+        simulationRunStateStore.save(context.getSimulationRunId(), state);
+        messagingTemplate.convertAndSend(
+                robotTopic(context.getSimulationRunId()),
+                RobotStateResponse.from(state)
+        );
+    }
+
+    private double movementProgress(long nowMillis, long startMillis, long endMillis) {
+        long durationMillis = Math.max(1L, endMillis - startMillis);
+        return Math.max(
+                0.0,
+                Math.min(1.0, (nowMillis - startMillis) / (double) durationMillis)
+        );
+    }
+
+    private RobotStatus visualActivity(
+            AiPlaybackContext.RobotTimeline robot,
+            AiPlaybackContext.TimedStep activeStep,
+            TaskType taskType
+    ) {
+        if (activeStep != null && activeStep.type() == AiPlaybackContext.StepType.SERVICE) {
+            return robot.getStatus();
+        }
+        if (!robot.isCarryingLoad()) {
+            return robot.getStatus();
+        }
+        if (taskType == TaskType.INBOUND) {
+            return RobotStatus.PUTAWAY;
+        }
+        if (taskType == TaskType.OUTBOUND) {
+            return RobotStatus.RELOCATION;
+        }
+        return robot.getStatus();
     }
 
     private void advance(PlaybackContext context, long tickMillis) {
@@ -388,6 +1206,7 @@ public class SimulationPlaybackService {
             robot.moveTo(nextNode);
             robot.setStatus(RobotStatus.MOVING);
             robot.consumeMoveBattery();
+            robot.setMovementStartAtMillis(context.getClockMillis());
             robot.setBusyUntilMillis(
                     context.getClockMillis() + context.getMoveMillisPerNode());
 
@@ -470,6 +1289,8 @@ public class SimulationPlaybackService {
             return;
         }
 
+        taskService.applyInventoryAtServiceCompletion(task.getId(), "PICKUP");
+
         // 도착지가 랙이면 랙 앞 통로까지만 이동한다
         List<Long> path = pathToWorkPosition(
                 context, robot, task.getEndNode().getId());
@@ -486,6 +1307,7 @@ public class SimulationPlaybackService {
 
         if (taskId != null) {
             try {
+                taskService.applyInventoryAtServiceCompletion(taskId, "DROP");
                 taskService.completeTask(taskId);
                 log.info("[재생] 시뮬 {}초 - 작업 {} 완료 (로봇 {})",
                         context.clockSeconds(), taskId, robot.getRobotId());
@@ -528,6 +1350,10 @@ public class SimulationPlaybackService {
         Long nextNodeId = null;
         String nextNodeCode = null;
         Double arrivalInSeconds = null;
+        String movementStepId = null;
+        Long movementStartAtMillis = null;
+        Long movementEndAtMillis = null;
+        Double movementProgress = null;
 
         if (robot.getStatus() == RobotStatus.MOVING) {
             // 현재 이동이 끝나기까지 남은 시간
@@ -540,6 +1366,17 @@ public class SimulationPlaybackService {
                 nextNodeCode = nodeCodeCache.get(nextNodeId);
                 // 배속을 반영한 실제 경과 시간(초)으로 환산
                 arrivalInSeconds = remainingMillis / 1000.0 / context.getSpeed();
+                movementStartAtMillis = robot.getMovementStartAtMillis();
+                movementEndAtMillis = robot.getBusyUntilMillis();
+                movementStepId = "legacy-" + robot.getRobotId()
+                        + "-" + robot.getPreviousNodeId()
+                        + "-" + robot.getCurrentNodeId()
+                        + "-" + movementStartAtMillis;
+                movementProgress = movementProgress(
+                        context.getClockMillis(),
+                        movementStartAtMillis,
+                        movementEndAtMillis
+                );
             }
         }
 
@@ -556,9 +1393,19 @@ public class SimulationPlaybackService {
                 nextNodeId,
                 nextNodeCode,
                 arrivalInSeconds,
+                movementStepId,
+                movementStartAtMillis,
+                movementEndAtMillis,
+                context.getClockMillis(),
+                movementProgress,
                 robot.batteryPercent(),
                 robot.getStatus(),
                 robot.getCurrentTaskId(),
+                null,
+                robot.getStatus(),
+                null,
+                null,
+                false,
                 LocalDateTime.now()
         );
 
@@ -575,6 +1422,8 @@ public class SimulationPlaybackService {
 
     public void clear(Long simulationRunId) {
         contexts.remove(simulationRunId);
+        aiContexts.remove(simulationRunId);
+        pendingAiPlans.remove(simulationRunId);
     }
 
     /**
@@ -588,6 +1437,19 @@ public class SimulationPlaybackService {
      * @return 재생 중이어서 실제로 반영했으면 true
      */
     public boolean markRobotError(Long simulationRunId, Long robotId) {
+        AiPlaybackContext aiContext = aiContexts.get(simulationRunId);
+        if (aiContext != null && robotId != null) {
+            for (AiPlaybackContext.RobotTimeline robot : aiContext.getRobots()) {
+                if (!robotId.equals(robot.getRobotId())) {
+                    continue;
+                }
+                robot.setFailed(true);
+                robot.setStatus(RobotStatus.ERROR);
+                publishAi(aiContext, robot, null);
+                failAiRobotTasks(aiContext, robotId);
+                return true;
+            }
+        }
         PlaybackContext context = contexts.get(simulationRunId);
 
         if (context == null || robotId == null) {
@@ -624,6 +1486,14 @@ public class SimulationPlaybackService {
      * @return 재생 중이어서 실제로 반영했으면 true
      */
     public boolean changeSpeed(Long simulationRunId, double newSpeed) {
+        AiPlaybackContext aiContext = aiContexts.get(simulationRunId);
+        if (aiContext != null) {
+            aiContext.changeSpeed(newSpeed);
+            for (AiPlaybackContext.RobotTimeline robot : aiContext.getRobots()) {
+                publishAi(aiContext, robot, robot.currentStep());
+            }
+            return true;
+        }
         PlaybackContext context = contexts.get(simulationRunId);
 
         if (context == null) {
@@ -641,13 +1511,85 @@ public class SimulationPlaybackService {
     }
 
     public boolean isPlaying(Long simulationRunId) {
-        return contexts.containsKey(simulationRunId);
+        return aiContexts.containsKey(simulationRunId)
+                || contexts.containsKey(simulationRunId);
+    }
+
+    public boolean hasActiveAiPlan(Long simulationRunId) {
+        return aiContexts.containsKey(simulationRunId);
+    }
+
+    public ActiveAiPlan activeAiPlan(Long simulationRunId) {
+        AiPlaybackContext context = aiContexts.get(simulationRunId);
+        if (context == null) {
+            throw new BusinessException(ErrorCode.LARO_PLAN_NOT_EXECUTABLE);
+        }
+        return new ActiveAiPlan(
+                context.getPlanId(),
+                context.getPlanVersion(),
+                context.getWarehouseId(),
+                context.getWarehouseCode(),
+                context.getSimulationId(),
+                context.getClockMillis()
+        );
+    }
+
+    public void beginQuiescing(Long simulationRunId) {
+        AiPlaybackContext context = aiContexts.get(simulationRunId);
+        if (context == null || pendingAiPlans.containsKey(simulationRunId)) {
+            throw new BusinessException(ErrorCode.LARO_PLAN_NOT_EXECUTABLE);
+        }
+        context.requestQuiesce();
+    }
+
+    public boolean isReadyForReplanRequest(Long simulationRunId) {
+        AiPlaybackContext context = aiContexts.get(simulationRunId);
+        return context != null && context.readyForReplanRequest();
+    }
+
+    public void cancelQuiescing(Long simulationRunId) {
+        AiPlaybackContext context = aiContexts.get(simulationRunId);
+        if (context != null) {
+            context.cancelQuiesce();
+        }
+        pendingAiPlans.remove(simulationRunId);
     }
 
     /** 현재 시뮬레이션 시각(ms). 진행 중이 아니면 0. */
     public long currentClockMillis(Long simulationRunId) {
+        AiPlaybackContext aiContext = aiContexts.get(simulationRunId);
+        if (aiContext != null) {
+            return aiContext.getClockMillis();
+        }
         PlaybackContext context = contexts.get(simulationRunId);
         return context == null ? 0 : context.getClockMillis();
+    }
+
+    private void failAiRobotTasks(AiPlaybackContext context, Long robotId) {
+        AiPlaybackContext.RobotTimeline timeline = context.getRobots().stream()
+                .filter(value -> robotId.equals(value.getRobotId()))
+                .findFirst()
+                .orElse(null);
+        if (timeline == null) {
+            return;
+        }
+        Set<Long> robotTaskIds = timeline.getSteps().stream()
+                .map(AiPlaybackContext.TimedStep::taskId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
+        for (Long taskId : robotTaskIds) {
+            taskRepository.findById(taskId).ifPresent(task -> {
+                if (task.getStatus() == TaskStatus.ASSIGNED
+                        || task.getStatus() == TaskStatus.IN_PROGRESS) {
+                    try {
+                        taskService.failTask(taskId);
+                    } catch (RuntimeException exception) {
+                        log.warn("[AI playback] task failure update failed: taskId={}, reason={}",
+                                taskId, exception.getMessage());
+                    }
+                }
+            });
+        }
     }
 
     private boolean isTerminated(SimulationRunStatus status) {
@@ -656,6 +1598,27 @@ public class SimulationPlaybackService {
                 || status == SimulationRunStatus.STOPPED
                 || status == SimulationRunStatus.CREATED;
     }
+
+    public record ActiveAiPlan(
+            String planId,
+            Integer planVersion,
+            Long warehouseNumericId,
+            String warehouseCode,
+            String simulationId,
+            long clockMillis
+    ) {}
+
+    private record PreparedAiPlan(
+            AiPlaybackContext context,
+            Map<Long, Robot> assignedRobotByTask,
+            Map<String, Long> robotIdsByAiCode,
+            Map<String, Long> nodeIdsByCode
+    ) {}
+
+    private record PendingAiPlan(
+            AiPlaybackContext context,
+            Map<Long, Robot> assignedRobotByTask
+    ) {}
 
     /**
      * 랙 노드마다 "앞에 설 수 있는 통로 노드"를 찾아둔다.
@@ -668,7 +1631,10 @@ public class SimulationPlaybackService {
             Map<Long, Set<Long>> adjacency
     ) {
         Set<Long> rackNodeIds = warehouseNodeRepository
-                .findAllByWarehouse_IdAndNodeType(warehouseId, NodeType.RACK_STORAGE)
+                .findAllByWarehouse_IdAndNodeTypeAndActiveTrue(
+                        warehouseId,
+                        NodeType.RACK_STORAGE
+                )
                 .stream()
                 .map(WarehouseNode::getId)
                 .collect(Collectors.toSet());
@@ -736,7 +1702,8 @@ public class SimulationPlaybackService {
     }
 
     private void cacheNodeCodes(Long warehouseId) {
-        for (WarehouseNode node : warehouseNodeRepository.findAllByWarehouse_Id(warehouseId)) {
+        for (WarehouseNode node : warehouseNodeRepository
+                .findAllByWarehouse_IdAndActiveTrue(warehouseId)) {
             if (node.getNodeCode() != null) {
                 nodeCodeCache.put(node.getId(), node.getNodeCode());
             }

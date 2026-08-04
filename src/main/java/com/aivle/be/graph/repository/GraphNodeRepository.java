@@ -6,7 +6,7 @@ import org.springframework.data.neo4j.repository.Neo4jRepository;
 import java.util.List;
 
 public interface GraphNodeRepository
-        extends Neo4jRepository<GraphNode, Long> {
+        extends Neo4jRepository<GraphNode, String> {
 
-    List<GraphNode> findAllByWarehouseId(Long warehouseId);
+    List<GraphNode> findAllByWarehouseId(String warehouseId);
 }

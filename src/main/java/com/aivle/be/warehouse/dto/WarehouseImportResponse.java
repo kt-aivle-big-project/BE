@@ -11,6 +11,7 @@ public record WarehouseImportResponse(
         String name,
 
         int nodeCount,
+        int routeNodeCount,
         int edgeCount,
         int rackCount,
         int chargingStationCount,

@@ -6,6 +6,7 @@ import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouseitem.entity.WarehouseItem;
+import com.aivle.be.warehousenode.domain.NodeType;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -18,6 +19,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -26,7 +28,13 @@ import java.time.LocalDateTime;
 import static lombok.AccessLevel.PROTECTED;
 
 @Entity
-@Table(name = "task")
+@Table(
+        name = "task",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_task_run_external_operation",
+                columnNames = {"simulation_run_id", "external_operation_id"}
+        )
+)
 @Getter
 @NoArgsConstructor(access = PROTECTED)
 public class Task {
@@ -73,6 +81,13 @@ public class Task {
     @Column(name = "release_at_seconds")
     private Integer releaseAtSeconds;
 
+    @Column(name = "external_operation_id", length = 128)
+    private String externalOperationId;
+
+    /** AI가 입고 계획에서 선택한 실제 선반 층. null은 레거시 자동 배정을 뜻한다. */
+    @Column(name = "target_rack_level")
+    private Integer targetRackLevel;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private TaskStatus status;
@@ -88,6 +103,14 @@ public class Task {
 
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
+
+    /**
+     * Physical rack inventory is changed when the relevant rack service ends,
+     * not when the whole route eventually becomes DONE. This timestamp keeps
+     * the inventory side effect idempotent across playback ticks and fallbacks.
+     */
+    @Column(name = "inventory_applied_at")
+    private LocalDateTime inventoryAppliedAt;
 
     public Task(Warehouse warehouse, WarehouseNode startNode, WarehouseNode endNode,
                 TaskType taskType, WarehouseItem warehouseItem) {
@@ -135,6 +158,55 @@ public class Task {
      */
     public void scheduleAt(Integer releaseAtSeconds) {
         this.releaseAtSeconds = releaseAtSeconds;
+    }
+
+    /** AI operation_id와 BE 작업을 재시도 가능한 형태로 연결한다. */
+    public void bindExternalOperationId(String externalOperationId) {
+        this.externalOperationId = externalOperationId;
+    }
+
+    /**
+     * 입고 계획이 선택한 선반 층을 실행 작업에 고정한다.
+     * 같은 operation의 재시도는 같은 층만 허용한다.
+     */
+    public void reserveTargetRackLevel(Integer targetRackLevel) {
+        if (targetRackLevel == null) {
+            return;
+        }
+        if (taskType != TaskType.INBOUND || targetRackLevel < 1 || targetRackLevel > 3) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        if (this.targetRackLevel != null && !this.targetRackLevel.equals(targetRackLevel)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        this.targetRackLevel = targetRackLevel;
+    }
+
+    /**
+     * Binds the physical putaway destination selected by the AI plan.
+     * Route/access nodes belong to the executable timeline and must never be
+     * stored as the business destination of an inbound Task.
+     */
+    public void planInboundDestination(WarehouseNode rackNode, Integer rackLevel) {
+        if (taskType != TaskType.INBOUND
+                || rackNode == null
+                || rackNode.getNodeType() != NodeType.RACK_STORAGE) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        if (warehouse == null
+                || rackNode.getWarehouse() == null
+                || !warehouse.getId().equals(rackNode.getWarehouse().getId())) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        if (isInventoryApplied()) {
+            if (!rackNode.getId().equals(endNode.getId())) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+            reserveTargetRackLevel(rackLevel);
+            return;
+        }
+        this.endNode = rackNode;
+        reserveTargetRackLevel(rackLevel);
     }
 
     /**
@@ -191,6 +263,16 @@ public class Task {
         }
         this.status = TaskStatus.DONE;
         this.completedAt = LocalDateTime.now();
+    }
+
+    public boolean isInventoryApplied() {
+        return inventoryAppliedAt != null;
+    }
+
+    public void markInventoryApplied() {
+        if (inventoryAppliedAt == null) {
+            inventoryAppliedAt = LocalDateTime.now();
+        }
     }
 
     public void fail() {

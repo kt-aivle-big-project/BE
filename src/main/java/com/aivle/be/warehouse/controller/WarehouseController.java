@@ -132,4 +132,15 @@ public class WarehouseController {
                 warehouseLayoutService.getLayout(warehouseId)
         );
     }
+
+    /** 기존 창고의 기본 정보와 노드·엣지 지도를 코드 기준으로 갱신한다. */
+    @PutMapping("/{warehouseId}/layout")
+    public ResponseEntity<WarehouseImportResponse> updateWarehouseLayout(
+            @PathVariable Long warehouseId,
+            @Valid @RequestBody WarehouseImportRequest request
+    ) {
+        return ResponseEntity.ok(
+                warehouseImportService.updateWarehouseLayout(warehouseId, request)
+        );
+    }
 }

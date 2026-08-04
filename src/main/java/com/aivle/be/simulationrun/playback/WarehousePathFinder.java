@@ -35,7 +35,7 @@ public class WarehousePathFinder {
     @Transactional(readOnly = true)
     public Map<Long, Set<Long>> loadAdjacency(Long warehouseId) {
         List<WarehouseEdge> edges =
-                warehouseEdgeRepository.findAllByFromNode_Warehouse_Id(warehouseId);
+                warehouseEdgeRepository.findAllActiveByWarehouseId(warehouseId);
 
         Map<Long, Set<Long>> adjacency = new HashMap<>();
 

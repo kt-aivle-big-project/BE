@@ -19,10 +19,10 @@ public class SimulationPlaybackScheduler {
 
     private final SimulationPlaybackService playbackService;
 
-    @Value("${simulation.playback.tick-ms:500}")
+    @Value("${simulation.playback.tick-ms:100}")
     private long tickMs;
 
-    @Scheduled(fixedRateString = "${simulation.playback.tick-ms:500}")
+    @Scheduled(fixedRateString = "${simulation.playback.tick-ms:100}")
     public void tick() {
         try {
             playbackService.tick(tickMs);

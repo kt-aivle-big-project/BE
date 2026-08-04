@@ -24,6 +24,11 @@ public enum ErrorCode {
     ROBOT_STATE_DATA_CORRUPTED(HttpStatus.INTERNAL_SERVER_ERROR, "ROBOT_STATE_008", "저장된 로봇 상태 데이터가 올바르지 않습니다."),
 
     SHARED_WAREHOUSE_READ_ONLY(HttpStatus.FORBIDDEN, "WAREHOUSE_002", "공용 창고는 수정하거나 삭제할 수 없습니다."),
+    WAREHOUSE_NODE_IN_ACTIVE_TASK(
+            HttpStatus.CONFLICT,
+            "WAREHOUSE_003",
+            "진행 가능한 시뮬레이션 작업이 사용하는 노드는 제거할 수 없습니다. 해당 시뮬레이션을 중지한 뒤 다시 저장해 주세요."
+    ),
     WAREHOUSE_NOT_FOUND(HttpStatus.NOT_FOUND, "WAREHOUSE_001", "존재하지 않는 창고입니다."),
     ROBOT_STATE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_001", "로봇의 현재 상태를 찾을 수 없습니다."),
     NODE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_002", "존재하지 않는 창고 노드입니다."),
@@ -66,6 +71,23 @@ public enum ErrorCode {
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "COMMON_001", "입력값이 올바르지 않습니다."),
 
     DUPLICATE_EMAIL(HttpStatus.CONFLICT, "USER_001", "이미 사용 중인 이메일입니다."),
+    FULFILLMENT_COMMAND_NOT_GENERATED(
+            HttpStatus.CONFLICT,
+            "FULFILLMENT_COMMAND_001",
+            "재고, 빈 보관 위치 또는 입출고 노드가 부족하여 명령을 생성할 수 없습니다."
+    ),
+
+    LARO_PLAN_NOT_EXECUTABLE(
+            HttpStatus.CONFLICT,
+            "LARO_PLAN_001",
+            "AI 계획이 READY 상태가 아니거나 실행 단계가 없습니다."
+    ),
+    LARO_PLAN_MAPPING_FAILED(
+            HttpStatus.BAD_REQUEST,
+            "LARO_PLAN_002",
+            "AI 계획의 로봇, 노드 또는 작업을 현재 시뮬레이션 데이터와 연결할 수 없습니다."
+    ),
+
     INTERNAL_SERVER_ERROR(
             HttpStatus.INTERNAL_SERVER_ERROR,
             "COMMON_002",

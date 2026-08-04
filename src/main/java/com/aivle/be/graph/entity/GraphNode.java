@@ -4,30 +4,40 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.springframework.data.neo4j.core.schema.Id;
 import org.springframework.data.neo4j.core.schema.Node;
+import org.springframework.data.neo4j.core.schema.Property;
 
-@Node("WarehouseNode")
+/** Read model for the shared LARO RouteNode contract. */
+@Node("RouteNode")
 @Getter
 @NoArgsConstructor
 public class GraphNode {
 
     @Id
-    private Long nodeId;
+    @Property("scope_id")
+    private String scopeId;
 
-    private Long warehouseId;
-    private String zoneId;
+    @Property("id")
+    private String nodeId;
+
+    @Property("warehouse_id")
+    private String warehouseId;
+
+    private String type;
     private Double x;
     private Double y;
 
     public GraphNode(
-            Long nodeId,
-            Long warehouseId,
-            String zoneId,
+            String scopeId,
+            String nodeId,
+            String warehouseId,
+            String type,
             Double x,
             Double y
     ) {
+        this.scopeId = scopeId;
         this.nodeId = nodeId;
         this.warehouseId = warehouseId;
-        this.zoneId = zoneId;
+        this.type = type;
         this.x = x;
         this.y = y;
     }
