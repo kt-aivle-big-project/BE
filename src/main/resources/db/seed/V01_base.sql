@@ -29,12 +29,16 @@ ON CONFLICT DO NOTHING;
 DO '
 BEGIN
 IF NOT EXISTS (SELECT 1 FROM product) THEN
-INSERT INTO product (product_id, product_code, product_name) VALUES
-  (1, ''ITEM-001'', ''식품''),
-  (2, ''ITEM-002'', ''음료''),
-  (3, ''ITEM-003'', ''생활용품''),
-  (4, ''ITEM-004'', ''전자제품''),
-  (5, ''ITEM-005'', ''의류'')
+INSERT INTO product (
+    product_id, product_code, product_name, category, unit,
+    units_per_box, unit_weight_kg, unit_volume_liter,
+    temperature_zone, fragile
+) VALUES
+  (1, ''ITEM-001'', ''Bootstrap Item 001'', ''BOOTSTRAP'', ''BOX'', 1, 1.000, 1.000, ''AMBIENT'', false),
+  (2, ''ITEM-002'', ''Bootstrap Item 002'', ''BOOTSTRAP'', ''BOX'', 1, 1.000, 1.000, ''AMBIENT'', false),
+  (3, ''ITEM-003'', ''Bootstrap Item 003'', ''BOOTSTRAP'', ''BOX'', 1, 1.000, 1.000, ''AMBIENT'', false),
+  (4, ''ITEM-004'', ''Bootstrap Item 004'', ''BOOTSTRAP'', ''BOX'', 1, 1.000, 1.000, ''AMBIENT'', false),
+  (5, ''ITEM-005'', ''Bootstrap Item 005'', ''BOOTSTRAP'', ''BOX'', 1, 1.000, 1.000, ''AMBIENT'', false)
 ON CONFLICT DO NOTHING;
 END IF;
 END
