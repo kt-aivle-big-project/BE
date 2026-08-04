@@ -2,6 +2,10 @@ package com.aivle.be.simulationrun.playback;
 
 import com.aivle.be.chargingstation.entity.ChargingStation;
 import com.aivle.be.chargingstation.repository.ChargingStationRepository;
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.optimization.entity.ReoptimizationPlanStage;
+import com.aivle.be.optimization.staging.ReoptimizationActivationPlan;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.controller.response.RobotStateResponse;
@@ -710,9 +714,50 @@ public class SimulationPlaybackService {
     }
 
     /**
+     * Installs a DB-applied AI plan without repository I/O, publishing, or
+     * changing any legacy execution field. Robots and the simulation clock
+     * remain frozen after this method succeeds.
+     */
+    public RuntimeReoptimizationPlan installReoptimizationPlan(
+            Long simulationRunId,
+            ReoptimizationActivationPlan activationPlan
+    ) {
+        if (activationPlan == null
+                || activationPlan.status()
+                != ReoptimizationPlanStage.Status.DB_APPLIED) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED
+            );
+        }
+
+        RuntimeReoptimizationPlan runtimePlan;
+        try {
+            runtimePlan = RuntimeReoptimizationPlan.from(activationPlan);
+        } catch (RuntimeException exception) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED,
+                    exception
+            );
+        }
+        PlaybackContext context = contexts.get(simulationRunId);
+        if (context == null) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RUNTIME_CONTEXT_NOT_FOUND
+            );
+        }
+
+        synchronized (context) {
+            return context.installReoptimizationPlan(runtimePlan);
+        }
+    }
+
+    /**
      * 재계획 완료 후 정상 로봇들의 정지를 해제한다.
      */
-    public boolean finishReplanning(Long simulationRunId) {
+    public boolean finishReplanning(
+            Long simulationRunId,
+            String replanId
+    ) {
         PlaybackContext context = contexts.get(simulationRunId);
 
         if (context == null) {
@@ -720,7 +765,7 @@ public class SimulationPlaybackService {
         }
 
         synchronized (context) {
-            context.finishReplanning();
+            context.finishReplanning(replanId);
 
             for (RobotRuntime robot : context.getRobots()) {
                 if (robot.getStatus() != RobotStatus.ERROR

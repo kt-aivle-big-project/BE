@@ -20,6 +20,7 @@ import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.playback.PlaybackContext;
 import com.aivle.be.simulationrun.playback.ReplanningSnapshot;
 import com.aivle.be.simulationrun.playback.RobotRuntime;
+import com.aivle.be.simulationrun.playback.RuntimeTaskPlan;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.playback.WarehousePathFinder;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
@@ -70,6 +71,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -438,7 +440,7 @@ class ReoptimizationServiceTest {
                         BusinessException.class,
                         exception -> assertThat(exception.getErrorCode())
                                 .isEqualTo(
-                                        ErrorCode.REOPTIMIZATION_PLAN_ACTIVATION_NOT_IMPLEMENTED
+                                        ErrorCode.REOPTIMIZATION_PLAN_RUNTIME_ACTIVATION_NOT_IMPLEMENTED
                                 )
                 );
 
@@ -449,6 +451,15 @@ class ReoptimizationServiceTest {
         assertThat(new ArrayList<>(fixture.runtime().getRemainingPath()))
                 .containsExactly(20L, 30L);
         assertThat(fixture.runtime().getCurrentTaskId()).isEqualTo(100L);
+        assertThat(fixture.context().getReplanningState()).isEqualTo(
+                PlaybackContext.ReplanningState.PLAN_INSTALLED
+        );
+        assertThat(fixture.runtime().getInstalledReplanId()).isNotNull();
+        assertThat(fixture.runtime().getInstalledSnapshotVersion())
+                .isEqualTo(1L);
+        assertThat(fixture.runtime().getInstalledTaskPlans())
+                .extracting(RuntimeTaskPlan::taskId)
+                .containsExactly(100L);
         ReoptimizationOptimizationRequest capturedRequest = aiRequest.get();
         assertThat(capturedRequest).isNotNull();
         assertThat(UUID.fromString(capturedRequest.replanId()))
@@ -485,6 +496,11 @@ class ReoptimizationServiceTest {
                 .stage(stageCommand.capture());
         verify(fixture.planApplicationService(), times(1))
                 .apply(1L, capturedRequest.replanId(), 1L);
+        verify(fixture.playbackService(), times(1))
+                .installReoptimizationPlan(
+                        anyLong(),
+                        any(ReoptimizationActivationPlan.class)
+                );
         assertThat(stageCommand.getValue().simulationRunId()).isEqualTo(1L);
         assertThat(stageCommand.getValue().replanId())
                 .isEqualTo(capturedRequest.replanId());
@@ -564,6 +580,76 @@ class ReoptimizationServiceTest {
                 ErrorCode.REOPTIMIZATION_PLAN_STAGE_FAILED,
                 true
         );
+    }
+
+    @Test
+    void runtimeInstallationFailureKeepsDbAppliedPlanAndRuntimeFrozen() {
+        RuntimeFixture fixture = runtimeFixture();
+        when(fixture.optimizationClient().reoptimize(any()))
+                .thenAnswer(invocation -> successfulResponse(
+                        invocation.getArgument(
+                                0,
+                                ReoptimizationOptimizationRequest.class
+                        )
+                ));
+        when(fixture.planApplicationService()
+                .apply(anyLong(), any(), anyLong()))
+                .thenAnswer(invocation -> new ReoptimizationActivationPlan(
+                        1L,
+                        invocation.getArgument(0),
+                        invocation.getArgument(1),
+                        invocation.getArgument(2),
+                        0L,
+                        ReoptimizationPlanStage.Status.DB_APPLIED,
+                        List.of(
+                                new ReoptimizationActivationPlan.TaskPlanView(
+                                        999L,
+                                        100L,
+                                        0,
+                                        TaskPlan.ExecutionStage.FULL,
+                                        0L,
+                                        1_000L,
+                                        List.of(
+                                                new ReoptimizationActivationPlan.PathStepView(
+                                                        0, 10L, 0L, 0L
+                                                )
+                                        ),
+                                        List.of(
+                                                new ReoptimizationActivationPlan.PathStepView(
+                                                        0, 30L, 1_000L, 1_000L
+                                                )
+                                        )
+                                )
+                        )
+                ));
+
+        assertThatThrownBy(() -> fixture.service().reoptimize(1L, REQUEST))
+                .isInstanceOfSatisfying(
+                        BusinessException.class,
+                        exception -> assertThat(exception.getErrorCode())
+                                .isEqualTo(
+                                        ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED
+                                )
+                );
+
+        assertThat(fixture.run().status().get())
+                .isEqualTo(SimulationRunStatus.REPLANNING);
+        assertThat(fixture.context().getReplanningState()).isEqualTo(
+                PlaybackContext.ReplanningState.FROZEN
+        );
+        assertThat(fixture.context().getInstalledReoptimizationPlan()).isNull();
+        assertThat(fixture.runtime().getInstalledReplanId()).isNull();
+        assertThat(fixture.runtime().getStatus()).isEqualTo(RobotStatus.PAUSED);
+        assertThat(fixture.runtime().getCurrentTaskId()).isEqualTo(100L);
+        assertThat(new ArrayList<>(fixture.runtime().getRemainingPath()))
+                .containsExactly(20L, 30L);
+        verify(fixture.planStagingService(), times(1)).stage(any());
+        verify(fixture.planApplicationService(), times(1))
+                .apply(anyLong(), any(), anyLong());
+        verify(fixture.pathFinder(), never())
+                .findPath(anyMap(), anyLong(), anyLong());
+        verify(fixture.run().run(), never()).finishReplanning();
+        assertTaskPlanUnchanged(fixture.task());
     }
 
     @Test
@@ -802,7 +888,7 @@ class ReoptimizationServiceTest {
                 .findAllByFromNode_Warehouse_Id(1L))
                 .thenReturn(List.of(edge10To20, edge20To30));
 
-        SimulationPlaybackService playbackService =
+        SimulationPlaybackService playbackService = spy(
                 new SimulationPlaybackService(
                         runRepository,
                         stateStore,
@@ -813,7 +899,8 @@ class ReoptimizationServiceTest {
                         mock(TaskService.class),
                         pathFinder,
                         messagingTemplate
-                );
+                )
+        );
 
         RobotRuntime runtime = new RobotRuntime(
                 10L,
@@ -979,13 +1066,46 @@ class ReoptimizationServiceTest {
     successfulPlanApplicationService() {
         ReoptimizationPlanApplicationService service =
                 mock(ReoptimizationPlanApplicationService.class);
-        ReoptimizationActivationPlan applied =
-                mock(ReoptimizationActivationPlan.class);
-        when(applied.status()).thenReturn(
-                ReoptimizationPlanStage.Status.DB_APPLIED
-        );
         when(service.apply(anyLong(), any(), anyLong()))
-                .thenReturn(applied);
+                .thenAnswer(invocation -> {
+                    Long simulationRunId = invocation.getArgument(0);
+                    String replanId = invocation.getArgument(1);
+                    Long snapshotVersion = invocation.getArgument(2);
+                    ReoptimizationActivationPlan.TaskPlanView taskPlan =
+                            new ReoptimizationActivationPlan.TaskPlanView(
+                                    10L,
+                                    100L,
+                                    0,
+                                    TaskPlan.ExecutionStage.FULL,
+                                    0L,
+                                    2_000L,
+                                    List.of(
+                                            new ReoptimizationActivationPlan.PathStepView(
+                                                    0, 10L, 0L, 0L
+                                            ),
+                                            new ReoptimizationActivationPlan.PathStepView(
+                                                    1, 20L, 1_000L, 1_000L
+                                            )
+                                    ),
+                                    List.of(
+                                            new ReoptimizationActivationPlan.PathStepView(
+                                                    0, 20L, 1_000L, 1_000L
+                                            ),
+                                            new ReoptimizationActivationPlan.PathStepView(
+                                                    1, 30L, 2_000L, 2_000L
+                                            )
+                                    )
+                            );
+                    return new ReoptimizationActivationPlan(
+                            1L,
+                            simulationRunId,
+                            replanId,
+                            snapshotVersion,
+                            0L,
+                            ReoptimizationPlanStage.Status.DB_APPLIED,
+                            List.of(taskPlan)
+                    );
+                });
         return service;
     }
 

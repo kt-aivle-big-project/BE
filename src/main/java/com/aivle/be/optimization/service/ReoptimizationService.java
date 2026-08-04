@@ -194,7 +194,7 @@ public class ReoptimizationService {
                 response,
                 runtimeSnapshot
         );
-        throw rejectionUntilPlanActivationIsImplemented(response);
+        throw rejectionUntilRuntimeActivationIsImplemented(response);
     }
 
     private void stageAndApplyValidatedPlan(
@@ -235,6 +235,10 @@ public class ReoptimizationService {
                     ErrorCode.REOPTIMIZATION_PLAN_APPLY_FAILED
             );
         }
+        simulationPlaybackService.installReoptimizationPlan(
+                request.simulationRunId(),
+                applied
+        );
     }
 
     private void validateRunningSimulation(Long simulationRunId) {
@@ -395,7 +399,7 @@ public class ReoptimizationService {
         }
     }
 
-    private BusinessException rejectionUntilPlanActivationIsImplemented(
+    private BusinessException rejectionUntilRuntimeActivationIsImplemented(
             ReoptimizationResponse response
     ) {
         if (response.status() == null
@@ -414,11 +418,12 @@ public class ReoptimizationService {
         }
 
         /*
-         * Phase 2-3B에서는 DB 작업 배정까지 반영한다.
-         * Runtime task/path, ready queue, resume는 변경하지 않는다.
+         * Phase 2-4A installs the immutable AI plan beside the legacy
+         * execution fields. Activation, ready queues, and resume remain
+         * unchanged until Phase 2-4B.
          */
         return new BusinessException(
-                ErrorCode.REOPTIMIZATION_PLAN_ACTIVATION_NOT_IMPLEMENTED
+                ErrorCode.REOPTIMIZATION_PLAN_RUNTIME_ACTIVATION_NOT_IMPLEMENTED
         );
     }
 

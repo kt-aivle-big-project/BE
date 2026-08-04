@@ -1,6 +1,10 @@
 package com.aivle.be.simulationrun.playback;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.optimization.dto.response.TaskPlan;
 import com.aivle.be.robotstate.domain.RobotStatus;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -70,6 +74,25 @@ public class RobotRuntime {
     // 남은 이동 경로
     private final Deque<Long> remainingPath = new ArrayDeque<>();
 
+    @Setter(AccessLevel.NONE)
+    private String installedReplanId;
+
+    @Setter(AccessLevel.NONE)
+    private Long installedSnapshotVersion;
+
+    @Setter(AccessLevel.NONE)
+    private List<RuntimeTaskPlan> installedTaskPlans = List.of();
+
+    @Setter(AccessLevel.NONE)
+    private int currentPlanTaskIndex = -1;
+
+    @Setter(AccessLevel.NONE)
+    private PlannedPathSegment currentPlanPathSegment =
+            PlannedPathSegment.NONE;
+
+    @Setter(AccessLevel.NONE)
+    private int currentPlanPathStepIndex = -1;
+
     public RobotRuntime(
             Long robotId,
             Long startNodeId,
@@ -103,6 +126,69 @@ public class RobotRuntime {
      */
     public Long peekNextNode() {
         return remainingPath.peek();
+    }
+
+    PreparedReoptimizationPlan prepareReoptimizationPlan(
+            RuntimeRobotPlan robotPlan,
+            String replanId,
+            Long snapshotVersion,
+            boolean mayReplaceActivatedPlan
+    ) {
+        if (!robotId.equals(robotPlan.robotId())) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED
+            );
+        }
+
+        List<RuntimeTaskPlan> taskPlans = robotPlan.taskPlans();
+        for (int expected = 0; expected < taskPlans.size(); expected++) {
+            RuntimeTaskPlan taskPlan = taskPlans.get(expected);
+            boolean invalidFull = taskPlan.executionStage()
+                    == TaskPlan.ExecutionStage.FULL
+                    && taskPlan.pathToStart().isEmpty();
+            boolean invalidToEnd = taskPlan.executionStage()
+                    == TaskPlan.ExecutionStage.TO_END
+                    && !taskPlan.pathToStart().isEmpty();
+            if (taskPlan.sequence() != expected
+                    || taskPlan.pathToEnd().isEmpty()
+                    || invalidFull
+                    || invalidToEnd) {
+                throw new BusinessException(
+                        ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED
+                );
+            }
+        }
+
+        if (installedReplanId != null) {
+            boolean samePlan = installedReplanId.equals(replanId)
+                    && installedSnapshotVersion.equals(snapshotVersion)
+                    && installedTaskPlans.equals(taskPlans);
+            if (!samePlan && !mayReplaceActivatedPlan) {
+                throw new BusinessException(
+                        ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_ALREADY_INSTALLED
+                );
+            }
+        }
+
+        return new PreparedReoptimizationPlan(
+                replanId,
+                snapshotVersion,
+                taskPlans,
+                taskPlans.isEmpty() ? -1 : 0,
+                PlannedPathSegment.NONE,
+                -1
+        );
+    }
+
+    void installPreparedReoptimizationPlan(
+            PreparedReoptimizationPlan prepared
+    ) {
+        installedReplanId = prepared.replanId();
+        installedSnapshotVersion = prepared.snapshotVersion();
+        installedTaskPlans = prepared.taskPlans();
+        currentPlanTaskIndex = prepared.currentTaskPlanIndex();
+        currentPlanPathSegment = prepared.pathSegment();
+        currentPlanPathStepIndex = prepared.pathStepIndex();
     }
 
     public boolean isIdle() {
@@ -227,5 +313,25 @@ public class RobotRuntime {
 
     private double nonNegativeRate(Double rate) {
         return rate == null ? 0 : Math.max(0, rate);
+    }
+
+    public enum PlannedPathSegment {
+        NONE,
+        TO_START,
+        TO_END
+    }
+
+    record PreparedReoptimizationPlan(
+            String replanId,
+            Long snapshotVersion,
+            List<RuntimeTaskPlan> taskPlans,
+            int currentTaskPlanIndex,
+            PlannedPathSegment pathSegment,
+            int pathStepIndex
+    ) {
+
+        PreparedReoptimizationPlan {
+            taskPlans = List.copyOf(taskPlans);
+        }
     }
 }

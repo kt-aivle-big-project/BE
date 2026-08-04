@@ -1,14 +1,21 @@
 package com.aivle.be.simulationrun.playback;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.robotstate.domain.RobotStatus;
 import lombok.Getter;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 시뮬레이션 실행 1건의 재생 상태.
@@ -59,6 +66,12 @@ public class PlaybackContext {
 
     // 현재 snapshot에 결합된 재계획 요청 ID
     private String activeReplanId;
+
+    private ReplanningState replanningState = ReplanningState.NONE;
+
+    private RuntimeReoptimizationPlan installedReoptimizationPlan;
+
+    private String activatedReplanId;
 
     // 동작별 소요 시간(ms)
     private final long moveMillisPerNode;
@@ -112,6 +125,8 @@ public class PlaybackContext {
         if (!replanRequested) {
             replanningSnapshotVersion++;
             activeReplanId = null;
+            installedReoptimizationPlan = null;
+            replanningState = ReplanningState.STOPPING;
         }
         this.replanRequested = true;
     }
@@ -120,8 +135,13 @@ public class PlaybackContext {
      * 정상 로봇이 모두 재계획 정지 상태가 되었는지 확인한다.
      */
     public boolean areAllRobotsStoppedForReplanning() {
-        return robots.stream()
+        boolean stopped = robots.stream()
                 .allMatch(RobotRuntime::isStoppedForReplanning);
+        if (replanRequested && stopped
+                && replanningState == ReplanningState.STOPPING) {
+            replanningState = ReplanningState.FROZEN;
+        }
+        return stopped;
     }
 
     /**
@@ -164,6 +184,7 @@ public class PlaybackContext {
             String replanId
     ) {
         if (!replanRequested
+                || replanningState != ReplanningState.FROZEN
                 || replanningSnapshotVersion != snapshotVersion) {
             return false;
         }
@@ -177,13 +198,138 @@ public class PlaybackContext {
         return true;
     }
 
+    public RuntimeReoptimizationPlan installReoptimizationPlan(
+            RuntimeReoptimizationPlan plan
+    ) {
+        validateInstallCorrelation(plan);
+
+        Map<Long, RuntimeRobotPlan> requestedPlans = new HashMap<>();
+        Set<Long> taskIds = new HashSet<>();
+        for (RuntimeRobotPlan robotPlan : plan.robotPlans()) {
+            if (requestedPlans.put(robotPlan.robotId(), robotPlan) != null) {
+                installFailed();
+            }
+            for (RuntimeTaskPlan taskPlan : robotPlan.taskPlans()) {
+                if (!taskIds.add(taskPlan.taskId())) {
+                    installFailed();
+                }
+            }
+        }
+
+        List<RobotRuntime> orderedRobots = robots.stream()
+                .sorted(Comparator.comparing(RobotRuntime::getRobotId))
+                .toList();
+        Set<Long> participantRobotIds = orderedRobots.stream()
+                .map(RobotRuntime::getRobotId)
+                .collect(Collectors.toSet());
+        if (!participantRobotIds.containsAll(requestedPlans.keySet())) {
+            installFailed();
+        }
+
+        List<RobotRuntime.PreparedReoptimizationPlan> preparedPlans =
+                new ArrayList<>();
+        List<RuntimeRobotPlan> normalizedRobotPlans = new ArrayList<>();
+
+        for (RobotRuntime robot : orderedRobots) {
+            RuntimeRobotPlan robotPlan = requestedPlans.getOrDefault(
+                    robot.getRobotId(),
+                    new RuntimeRobotPlan(robot.getRobotId(), List.of())
+            );
+            boolean unavailable = robot.getStatus() == RobotStatus.ERROR
+                    || robot.getStatus() == RobotStatus.OFFLINE;
+            if (unavailable && !robotPlan.taskPlans().isEmpty()) {
+                installFailed();
+            }
+            if (!unavailable
+                    && (!robot.isPausedForReplanning()
+                    || robot.getStatus() != RobotStatus.PAUSED)) {
+                throw new BusinessException(
+                        ErrorCode.REOPTIMIZATION_RUNTIME_STATE_INVALID
+                );
+            }
+
+            preparedPlans.add(robot.prepareReoptimizationPlan(
+                    robotPlan,
+                    plan.replanId(),
+                    plan.snapshotVersion(),
+                    activatedReplanId != null
+                            && activatedReplanId.equals(
+                            robot.getInstalledReplanId()
+                    )
+            ));
+            normalizedRobotPlans.add(robotPlan);
+        }
+
+        RuntimeReoptimizationPlan normalized =
+                new RuntimeReoptimizationPlan(
+                        plan.simulationRunId(),
+                        plan.replanId(),
+                        plan.snapshotVersion(),
+                        plan.simulationClockMillis(),
+                        normalizedRobotPlans
+                );
+        if (replanningState == ReplanningState.PLAN_INSTALLED) {
+            if (normalized.equals(installedReoptimizationPlan)) {
+                return installedReoptimizationPlan;
+            }
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_ALREADY_INSTALLED
+            );
+        }
+
+        for (int index = 0; index < orderedRobots.size(); index++) {
+            orderedRobots.get(index).installPreparedReoptimizationPlan(
+                    preparedPlans.get(index)
+            );
+        }
+        installedReoptimizationPlan = normalized;
+        replanningState = ReplanningState.PLAN_INSTALLED;
+        return installedReoptimizationPlan;
+    }
+
+    private void validateInstallCorrelation(
+            RuntimeReoptimizationPlan plan
+    ) {
+        if (!replanRequested
+                || replanningState != ReplanningState.FROZEN
+                && replanningState != ReplanningState.PLAN_INSTALLED) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RUNTIME_STATE_INVALID
+            );
+        }
+        if (!simulationRunId.equals(plan.simulationRunId())
+                || !Objects.equals(activeReplanId, plan.replanId())
+                || replanningSnapshotVersion != plan.snapshotVersion()
+                || clockMillis != plan.simulationClockMillis()
+                || !areAllRobotsStoppedForReplanning()) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_PLAN_STALE
+            );
+        }
+    }
+
+    private void installFailed() {
+        throw new BusinessException(
+                ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED
+        );
+    }
+
     /**
      * 재계획 완료 후 모든 정상 로봇의 정지를 해제한다.
      */
-    public void finishReplanning() {
+    public void finishReplanning(String replanId) {
+        if (!Objects.equals(activeReplanId, replanId)
+                || replanningState
+                != ReplanningState.PLAN_INSTALLED) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_PLAN_STALE
+            );
+        }
         robots.forEach(RobotRuntime::resumeAfterReplanning);
         this.replanRequested = false;
+        this.activatedReplanId = activeReplanId;
         this.activeReplanId = null;
+        this.replanningState = ReplanningState.ACTIVE;
     }
 
     /**
@@ -264,5 +410,13 @@ public class PlaybackContext {
      * 예약된 작업 하나. (발생 시각은 시뮬 시작 기준 ms)
      */
     public record ScheduledTask(Long taskId, long releaseAtMillis) {
+    }
+
+    public enum ReplanningState {
+        NONE,
+        STOPPING,
+        FROZEN,
+        PLAN_INSTALLED,
+        ACTIVE
     }
 }

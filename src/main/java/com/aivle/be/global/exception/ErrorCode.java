@@ -174,6 +174,32 @@ public enum ErrorCode {
             "DB 적용이 끝난 재계획 계획의 Runtime 활성화는 아직 구현되지 않았습니다."
     ),
 
+    REOPTIMIZATION_RUNTIME_CONTEXT_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "SIMULATION_RUN_036",
+            "재계획 계획을 설치할 Runtime context를 찾을 수 없습니다."
+    ),
+    REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_037",
+            "재계획 계획을 Runtime에 원자적으로 설치하지 못했습니다."
+    ),
+    REOPTIMIZATION_RUNTIME_PLAN_ALREADY_INSTALLED(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_038",
+            "다른 재계획 계획이 이미 Runtime에 설치되어 있습니다."
+    ),
+    REOPTIMIZATION_RUNTIME_STATE_INVALID(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_039",
+            "Runtime context가 재계획 계획을 설치할 수 있는 상태가 아닙니다."
+    ),
+    REOPTIMIZATION_PLAN_RUNTIME_ACTIVATION_NOT_IMPLEMENTED(
+            HttpStatus.NOT_IMPLEMENTED,
+            "SIMULATION_RUN_040",
+            "Runtime 실행 활성화와 전체 로봇 동시 재개는 아직 구현되지 않았습니다."
+    ),
+
     STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),
 
     WAREHOUSE_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "WAREHOUSE_ITEM_001", "존재하지 않는 창고 품목입니다."),
