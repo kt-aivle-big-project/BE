@@ -47,6 +47,8 @@ public record ReoptimizationActivationPlan(
             TaskPlan.ExecutionStage executionStage,
             Long estimatedStartTimeMillis,
             Long estimatedCompletionTimeMillis,
+            OperationWindowView pickingWindow,
+            OperationWindowView droppingWindow,
             List<PathStepView> pathToStart,
             List<PathStepView> pathToEnd
     ) {
@@ -54,6 +56,51 @@ public record ReoptimizationActivationPlan(
         public TaskPlanView {
             pathToStart = List.copyOf(pathToStart);
             pathToEnd = List.copyOf(pathToEnd);
+        }
+
+        public TaskPlanView(
+                Long robotId,
+                Long taskId,
+                Integer sequence,
+                TaskPlan.ExecutionStage executionStage,
+                Long estimatedStartTimeMillis,
+                Long estimatedCompletionTimeMillis,
+                List<PathStepView> pathToStart,
+                List<PathStepView> pathToEnd
+        ) {
+            this(
+                    robotId,
+                    taskId,
+                    sequence,
+                    executionStage,
+                    estimatedStartTimeMillis,
+                    estimatedCompletionTimeMillis,
+                    inferredPicking(executionStage, pathToStart, pathToEnd),
+                    inferredDropping(pathToEnd),
+                    pathToStart,
+                    pathToEnd
+            );
+        }
+
+        private static OperationWindowView inferredPicking(
+                TaskPlan.ExecutionStage stage,
+                List<PathStepView> pathToStart,
+                List<PathStepView> pathToEnd
+        ) {
+            if (stage == TaskPlan.ExecutionStage.TO_END) {
+                return null;
+            }
+            PathStepView end = pathToStart.get(pathToStart.size() - 1);
+            long start = end.departureTimeMillis();
+            return new OperationWindowView(end.nodeId(), start, start + 1);
+        }
+
+        private static OperationWindowView inferredDropping(
+                List<PathStepView> pathToEnd
+        ) {
+            PathStepView end = pathToEnd.get(pathToEnd.size() - 1);
+            long start = end.departureTimeMillis();
+            return new OperationWindowView(end.nodeId(), start, start + 1);
         }
 
         private static TaskPlanView from(
@@ -66,6 +113,16 @@ public record ReoptimizationActivationPlan(
                     taskPlan.getExecutionStage(),
                     taskPlan.getEstimatedStartTimeMillis(),
                     taskPlan.getEstimatedCompletionTimeMillis(),
+                    OperationWindowView.of(
+                            taskPlan.getPickingNodeId(),
+                            taskPlan.getPickingStartTimeMillis(),
+                            taskPlan.getPickingEndTimeMillis()
+                    ),
+                    OperationWindowView.of(
+                            taskPlan.getDroppingNodeId(),
+                            taskPlan.getDroppingStartTimeMillis(),
+                            taskPlan.getDroppingEndTimeMillis()
+                    ),
                     steps(
                             taskPlan,
                             ReoptimizationPlanStageCommand
@@ -87,6 +144,27 @@ public record ReoptimizationActivationPlan(
                     .filter(step -> step.getSegmentType() == segmentType)
                     .map(PathStepView::from)
                     .toList();
+        }
+    }
+
+    public record OperationWindowView(
+            Long nodeId,
+            Long startTimeMillis,
+            Long endTimeMillis
+    ) {
+        private static OperationWindowView of(
+                Long nodeId,
+                Long startTimeMillis,
+                Long endTimeMillis
+        ) {
+            return nodeId == null || startTimeMillis == null
+                    || endTimeMillis == null
+                    ? null
+                    : new OperationWindowView(
+                            nodeId,
+                            startTimeMillis,
+                            endTimeMillis
+                    );
         }
     }
 

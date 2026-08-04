@@ -8,14 +8,18 @@
     {
       "robotId": 10, "taskId": 100, "sequence": 0, "executionStage": "FULL",
       "pathToStart": [{"nodeId": 10, "arrivalTimeMillis": 1000, "departureTimeMillis": 1000}, {"nodeId": 20, "arrivalTimeMillis": 2000, "departureTimeMillis": 2000}],
-      "pathToEnd": [{"nodeId": 20, "arrivalTimeMillis": 2000, "departureTimeMillis": 2000}, {"nodeId": 30, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}],
-      "estimatedStartTimeMillis": 1000, "estimatedCompletionTimeMillis": 3000
+      "pathToEnd": [{"nodeId": 20, "arrivalTimeMillis": 2001, "departureTimeMillis": 2001}, {"nodeId": 30, "arrivalTimeMillis": 3001, "departureTimeMillis": 3001}],
+      "pickingWindow": {"nodeId": 20, "startTimeMillis": 2000, "endTimeMillis": 2001},
+      "droppingWindow": {"nodeId": 30, "startTimeMillis": 3001, "endTimeMillis": 3002},
+      "estimatedStartTimeMillis": 1000, "estimatedCompletionTimeMillis": 3002
     },
     {
       "robotId": 10, "taskId": 101, "sequence": 1, "executionStage": "FULL",
-      "pathToStart": [{"nodeId": 30, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}, {"nodeId": 40, "arrivalTimeMillis": 4000, "departureTimeMillis": 4000}],
-      "pathToEnd": [{"nodeId": 40, "arrivalTimeMillis": 4000, "departureTimeMillis": 4000}, {"nodeId": 50, "arrivalTimeMillis": 5000, "departureTimeMillis": 5000}],
-      "estimatedStartTimeMillis": 3000, "estimatedCompletionTimeMillis": 5000
+      "pathToStart": [{"nodeId": 30, "arrivalTimeMillis": 3002, "departureTimeMillis": 3002}, {"nodeId": 40, "arrivalTimeMillis": 4002, "departureTimeMillis": 4002}],
+      "pathToEnd": [{"nodeId": 40, "arrivalTimeMillis": 4003, "departureTimeMillis": 4003}, {"nodeId": 50, "arrivalTimeMillis": 5003, "departureTimeMillis": 5003}],
+      "pickingWindow": {"nodeId": 40, "startTimeMillis": 4002, "endTimeMillis": 4003},
+      "droppingWindow": {"nodeId": 50, "startTimeMillis": 5003, "endTimeMillis": 5004},
+      "estimatedStartTimeMillis": 3002, "estimatedCompletionTimeMillis": 5004
     }
   ],
   "unassignedTaskIds": [],

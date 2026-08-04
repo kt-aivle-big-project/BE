@@ -1,8 +1,8 @@
 {
-    "requestId":  "invalid-path-node",
+    "requestId":  "invalid-missing-picking",
     "replanId":  "fixture-replan-id",
     "simulationRunId":  1,
-    "snapshotVersion":  7,
+    "snapshotVersion":  1,
     "status":  "SUCCEEDED",
     "taskPlans":  [
                       {
@@ -17,14 +17,14 @@
                                                   "departureTimeMillis":  1000
                                               },
                                               {
-                                                  "nodeId":  999,
+                                                  "nodeId":  20,
                                                   "arrivalTimeMillis":  2000,
                                                   "departureTimeMillis":  2000
                                               }
                                           ],
                           "pathToEnd":  [
                                             {
-                                                "nodeId":  999,
+                                                "nodeId":  20,
                                                 "arrivalTimeMillis":  2001,
                                                 "departureTimeMillis":  2001
                                             },
@@ -34,22 +34,22 @@
                                                 "departureTimeMillis":  3001
                                             }
                                         ],
-                          "estimatedStartTimeMillis":  1000,
-                          "estimatedCompletionTimeMillis":  3002,
-                          "pickingWindow":  {
-                                                "nodeId":  999,
-                                                "startTimeMillis":  2000,
-                                                "endTimeMillis":  2001
-                                            },
                           "droppingWindow":  {
                                                  "nodeId":  30,
                                                  "startTimeMillis":  3001,
                                                  "endTimeMillis":  3002
-                                             }
+                                             },
+                          "estimatedStartTimeMillis":  1000,
+                          "estimatedCompletionTimeMillis":  3002,
+                          "pickingWindow":  {
+                                                "nodeId":  20,
+                                                "startTimeMillis":  2000,
+                                                "endTimeMillis":  2001
+                                            }
                       }
                   ],
     "unassignedTaskIds":  [
 
                           ],
-    "message":  "node 999 does not belong to the warehouse"
+    "message":  "missing picking"
 }

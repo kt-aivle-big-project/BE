@@ -420,7 +420,7 @@ class ReoptimizationServiceTest {
     }
 
     @Test
-    void successfulResponseDoesNotResumeOrInvokeWarehousePathFinder() {
+    void successfulResponseActivatesRuntimeWithoutWarehousePathFinder() {
         RuntimeFixture fixture = runtimeFixture();
         AtomicReference<ReoptimizationOptimizationRequest> aiRequest =
                 new AtomicReference<>();
@@ -435,24 +435,20 @@ class ReoptimizationServiceTest {
                     return successfulResponse(request);
                 });
 
-        assertThatThrownBy(() -> fixture.service().reoptimize(1L, REQUEST))
-                .isInstanceOfSatisfying(
-                        BusinessException.class,
-                        exception -> assertThat(exception.getErrorCode())
-                                .isEqualTo(
-                                        ErrorCode.REOPTIMIZATION_PLAN_RUNTIME_ACTIVATION_NOT_IMPLEMENTED
-                                )
-                );
+        ReoptimizationResponse result = fixture.service().reoptimize(
+                1L,
+                REQUEST
+        );
 
-        assertThat(fixture.run().status().get())
-                .isEqualTo(SimulationRunStatus.REPLANNING);
-        assertThat(fixture.context().isReplanRequested()).isTrue();
-        assertThat(fixture.runtime().isPausedForReplanning()).isTrue();
+        assertThat(result.status())
+                .isEqualTo(ReoptimizationResponse.Status.SUCCEEDED);
+        assertThat(fixture.context().isReplanRequested()).isFalse();
+        assertThat(fixture.runtime().isPausedForReplanning()).isFalse();
         assertThat(new ArrayList<>(fixture.runtime().getRemainingPath()))
-                .containsExactly(20L, 30L);
-        assertThat(fixture.runtime().getCurrentTaskId()).isEqualTo(100L);
+                .isEmpty();
+        assertThat(fixture.runtime().getCurrentTaskId()).isNull();
         assertThat(fixture.context().getReplanningState()).isEqualTo(
-                PlaybackContext.ReplanningState.PLAN_INSTALLED
+                PlaybackContext.ReplanningState.ACTIVE
         );
         assertThat(fixture.runtime().getInstalledReplanId()).isNotNull();
         assertThat(fixture.runtime().getInstalledSnapshotVersion())
@@ -500,6 +496,11 @@ class ReoptimizationServiceTest {
                 .installReoptimizationPlan(
                         anyLong(),
                         any(ReoptimizationActivationPlan.class)
+                );
+        verify(fixture.playbackService(), times(1))
+                .activateInstalledReoptimizationPlan(
+                        1L,
+                        capturedRequest.replanId()
                 );
         assertThat(stageCommand.getValue().simulationRunId()).isEqualTo(1L);
         assertThat(stageCommand.getValue().replanId())
@@ -1031,6 +1032,7 @@ class ReoptimizationServiceTest {
                 optimizationClient,
                 mock(ReoptimizationPlanStagingService.class),
                 successfulPlanApplicationService(),
+                mock(ReoptimizationPlanActivationService.class),
                 playbackService,
                 mock(SimpMessagingTemplate.class),
                 new TransactionTemplate(transactionManager)
@@ -1056,6 +1058,7 @@ class ReoptimizationServiceTest {
                 optimizationClient,
                 planStagingService,
                 planApplicationService,
+                mock(ReoptimizationPlanActivationService.class),
                 playbackService,
                 mock(SimpMessagingTemplate.class),
                 new TransactionTemplate(transactionManager)
@@ -1160,6 +1163,11 @@ class ReoptimizationServiceTest {
         ReoptimizationOptimizationRequest.TaskInput task =
                 request.remainingTasks().get(0);
         long start = request.simulationClockMillis();
+        long pickingEnd = start + 1_000L
+                + request.pickingDurationMillis();
+        long destinationArrival = pickingEnd + 1_000L;
+        long completion = destinationArrival
+                + request.droppingDurationMillis();
         TaskPlan plan = new TaskPlan(
                 robot.robotId(),
                 task.taskId(),
@@ -1180,17 +1188,27 @@ class ReoptimizationServiceTest {
                 List.of(
                         new PathStep(
                                 task.startNodeId(),
-                                start + 1_000L,
-                                start + 1_000L
+                                pickingEnd,
+                                pickingEnd
                         ),
                         new PathStep(
                                 task.endNodeId(),
-                                start + 2_000L,
-                                start + 2_000L
+                                destinationArrival,
+                                destinationArrival
                         )
                 ),
+                new com.aivle.be.optimization.dto.response.TaskOperationWindow(
+                        task.startNodeId(),
+                        start + 1_000L,
+                        pickingEnd
+                ),
+                new com.aivle.be.optimization.dto.response.TaskOperationWindow(
+                        task.endNodeId(),
+                        destinationArrival,
+                        completion
+                ),
                 start,
-                start + 2_000L
+                completion
         );
 
         return new ReoptimizationResponse(

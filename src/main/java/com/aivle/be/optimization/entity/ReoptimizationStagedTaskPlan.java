@@ -85,6 +85,24 @@ public class ReoptimizationStagedTaskPlan {
     @Column(name = "estimated_completion_time_millis", nullable = false)
     private Long estimatedCompletionTimeMillis;
 
+    @Column(name = "picking_node_id")
+    private Long pickingNodeId;
+
+    @Column(name = "picking_start_time_millis")
+    private Long pickingStartTimeMillis;
+
+    @Column(name = "picking_end_time_millis")
+    private Long pickingEndTimeMillis;
+
+    @Column(name = "dropping_node_id")
+    private Long droppingNodeId;
+
+    @Column(name = "dropping_start_time_millis")
+    private Long droppingStartTimeMillis;
+
+    @Column(name = "dropping_end_time_millis")
+    private Long droppingEndTimeMillis;
+
     @OneToMany(
             mappedBy = "taskPlan",
             cascade = CascadeType.ALL,
@@ -112,6 +130,20 @@ public class ReoptimizationStagedTaskPlan {
                 command.estimatedStartTimeMillis();
         taskPlan.estimatedCompletionTimeMillis =
                 command.estimatedCompletionTimeMillis();
+        if (command.pickingWindow() != null) {
+            taskPlan.pickingNodeId = command.pickingWindow().nodeId();
+            taskPlan.pickingStartTimeMillis =
+                    command.pickingWindow().startTimeMillis();
+            taskPlan.pickingEndTimeMillis =
+                    command.pickingWindow().endTimeMillis();
+        }
+        if (command.droppingWindow() != null) {
+            taskPlan.droppingNodeId = command.droppingWindow().nodeId();
+            taskPlan.droppingStartTimeMillis =
+                    command.droppingWindow().startTimeMillis();
+            taskPlan.droppingEndTimeMillis =
+                    command.droppingWindow().endTimeMillis();
+        }
         command.pathSteps().stream()
                 .map(ReoptimizationStagedPathStep::create)
                 .forEach(taskPlan::addPathStep);

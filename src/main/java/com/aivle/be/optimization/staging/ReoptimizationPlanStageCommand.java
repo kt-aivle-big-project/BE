@@ -5,6 +5,7 @@ import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.response.PathStep;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import com.aivle.be.optimization.dto.response.TaskPlan;
+import com.aivle.be.optimization.dto.response.TaskOperationWindow;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -126,6 +127,8 @@ public record ReoptimizationPlanStageCommand(
             Long endNodeId,
             Long estimatedStartTimeMillis,
             Long estimatedCompletionTimeMillis,
+            OperationWindowCommand pickingWindow,
+            OperationWindowCommand droppingWindow,
             List<PathStepCommand> pathSteps
     ) {
 
@@ -133,6 +136,27 @@ public record ReoptimizationPlanStageCommand(
             pathSteps = pathSteps == null
                     ? List.of()
                     : List.copyOf(pathSteps);
+        }
+
+        public TaskPlanCommand(
+                Long robotId,
+                Long taskId,
+                Integer sequence,
+                TaskPlan.ExecutionStage executionStage,
+                Long snapshotAssignedRobotId,
+                String snapshotTaskStatus,
+                Long startNodeId,
+                Long endNodeId,
+                Long estimatedStartTimeMillis,
+                Long estimatedCompletionTimeMillis,
+                List<PathStepCommand> pathSteps
+        ) {
+            this(
+                    robotId, taskId, sequence, executionStage,
+                    snapshotAssignedRobotId, snapshotTaskStatus,
+                    startNodeId, endNodeId, estimatedStartTimeMillis,
+                    estimatedCompletionTimeMillis, null, null, pathSteps
+            );
         }
 
         private static TaskPlanCommand from(
@@ -166,6 +190,8 @@ public record ReoptimizationPlanStageCommand(
                     task.endNodeId(),
                     plan.estimatedStartTimeMillis(),
                     plan.estimatedCompletionTimeMillis(),
+                    OperationWindowCommand.from(plan.pickingWindow()),
+                    OperationWindowCommand.from(plan.droppingWindow()),
                     steps
             );
         }
@@ -185,6 +211,22 @@ public record ReoptimizationPlanStageCommand(
                         step.departureTimeMillis()
                 ));
             }
+        }
+    }
+
+    public record OperationWindowCommand(
+            Long nodeId,
+            Long startTimeMillis,
+            Long endTimeMillis
+    ) {
+        private static OperationWindowCommand from(
+                TaskOperationWindow window
+        ) {
+            return window == null ? null : new OperationWindowCommand(
+                    window.nodeId(),
+                    window.startTimeMillis(),
+                    window.endTimeMillis()
+            );
         }
     }
 

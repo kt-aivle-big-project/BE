@@ -29,8 +29,8 @@ import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.warehouseedge.entity.WarehouseEdge;
 import com.aivle.be.warehouseedge.repository.WarehouseEdgeRepository;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
-import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,7 +47,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 public class ReoptimizationService {
 
     private static final List<TaskStatus> ACTIVE_TASK_STATUSES = List.of(
@@ -69,6 +68,7 @@ public class ReoptimizationService {
     private final OptimizationClient optimizationClient;
     private final ReoptimizationPlanStagingService planStagingService;
     private final ReoptimizationPlanApplicationService planApplicationService;
+    private final ReoptimizationPlanActivationService planActivationService;
     private final SimulationPlaybackService simulationPlaybackService;
     private final SimpMessagingTemplate messagingTemplate;
     private final TransactionTemplate transactionTemplate;
@@ -82,6 +82,33 @@ public class ReoptimizationService {
      */
     private final ConcurrentMap<Long, Object> activeReoptimizations =
             new ConcurrentHashMap<>();
+
+    @Autowired
+    public ReoptimizationService(
+            SimulationRunRepository simulationRunRepository,
+            TaskRepository taskRepository,
+            WarehouseNodeRepository warehouseNodeRepository,
+            WarehouseEdgeRepository warehouseEdgeRepository,
+            OptimizationClient optimizationClient,
+            ReoptimizationPlanStagingService planStagingService,
+            ReoptimizationPlanApplicationService planApplicationService,
+            ReoptimizationPlanActivationService planActivationService,
+            SimulationPlaybackService simulationPlaybackService,
+            SimpMessagingTemplate messagingTemplate,
+            TransactionTemplate transactionTemplate
+    ) {
+        this.simulationRunRepository = simulationRunRepository;
+        this.taskRepository = taskRepository;
+        this.warehouseNodeRepository = warehouseNodeRepository;
+        this.warehouseEdgeRepository = warehouseEdgeRepository;
+        this.optimizationClient = optimizationClient;
+        this.planStagingService = planStagingService;
+        this.planApplicationService = planApplicationService;
+        this.planActivationService = planActivationService;
+        this.simulationPlaybackService = simulationPlaybackService;
+        this.messagingTemplate = messagingTemplate;
+        this.transactionTemplate = transactionTemplate;
+    }
 
     /**
      * 외부 호출자가 트랜잭션 안에 있어도 coordinator 전체에서는 이를 suspend한다.
@@ -109,6 +136,27 @@ public class ReoptimizationService {
         } finally {
             activeReoptimizations.remove(simulationRunId, flightToken);
         }
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public boolean recoverActivatedReoptimizationPlan(
+            Long simulationRunId,
+            String replanId,
+            Long snapshotVersion
+    ) {
+        ReoptimizationActivationPlan activated = planActivationService.activate(
+                simulationRunId,
+                replanId,
+                snapshotVersion
+        );
+        if (activated.status()
+                != ReoptimizationPlanStage.Status.ACTIVATED) {
+            return false;
+        }
+        return simulationPlaybackService.recoverActivatedReoptimizationPlan(
+                simulationRunId,
+                replanId
+        );
     }
 
     private ReoptimizationResponse reoptimizeSingleFlight(
@@ -192,15 +240,20 @@ public class ReoptimizationService {
         stageAndApplyValidatedPlan(
                 fastApiRequest,
                 response,
-                runtimeSnapshot
+                runtimeSnapshot,
+                request
         );
-        throw rejectionUntilRuntimeActivationIsImplemented(response);
+        if (response.status() != ReoptimizationResponse.Status.SUCCEEDED) {
+            throw rejectionUntilRuntimeActivationIsImplemented(response);
+        }
+        return response;
     }
 
     private void stageAndApplyValidatedPlan(
             ReoptimizationOptimizationRequest request,
             ReoptimizationResponse response,
-            ReplanningSnapshot requestedSnapshot
+            ReplanningSnapshot requestedSnapshot,
+            ReoptimizationRequest originalRequest
     ) {
         if (response.status()
                 != ReoptimizationResponse.Status.SUCCEEDED) {
@@ -238,6 +291,28 @@ public class ReoptimizationService {
         simulationPlaybackService.installReoptimizationPlan(
                 request.simulationRunId(),
                 applied
+        );
+        planActivationService.activate(
+                request.simulationRunId(),
+                request.replanId(),
+                request.snapshotVersion()
+        );
+        if (!simulationPlaybackService.activateInstalledReoptimizationPlan(
+                request.simulationRunId(),
+                request.replanId()
+        )) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RUNTIME_CONTEXT_NOT_FOUND
+            );
+        }
+        publishReoptimizationCompletedAfterCommit(
+                request.simulationRunId(),
+                null,
+                originalRequest,
+                response,
+                response.taskPlans().stream().map(plan -> plan.taskId()).toList(),
+                response.taskPlans().stream().map(plan -> plan.robotId())
+                        .distinct().toList()
         );
     }
 
@@ -339,6 +414,8 @@ public class ReoptimizationService {
                             request.triggerRobotId(),
                             request.blockedEdgeIds(),
                             request.description(),
+                            runtimeSnapshot.pickingDurationMillis(),
+                            runtimeSnapshot.droppingDurationMillis(),
                             robots,
                             tasks
                     );
@@ -422,15 +499,17 @@ public class ReoptimizationService {
          * execution fields. Activation, ready queues, and resume remain
          * unchanged until Phase 2-4B.
          */
-        return new BusinessException(
-                ErrorCode.REOPTIMIZATION_PLAN_RUNTIME_ACTIVATION_NOT_IMPLEMENTED
-        );
+        return new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
     }
 
     private void validatePlanContract(
             ReoptimizationOptimizationRequest request,
             ReoptimizationResponse response
     ) {
+        if (request.pickingDurationMillis() == null
+                || request.droppingDurationMillis() == null) {
+            return;
+        }
         try {
             ReoptimizationPlanContractValidator.validate(
                     request,

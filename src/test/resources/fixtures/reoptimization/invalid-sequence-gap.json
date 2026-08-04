@@ -1,23 +1,97 @@
 {
-  "requestId": "invalid-sequence-gap",
-  "replanId": "fixture-replan-id",
-  "simulationRunId": 1,
-  "snapshotVersion": 7,
-  "status": "SUCCEEDED",
-  "taskPlans": [
-    {
-      "robotId": 10, "taskId": 100, "sequence": 0, "executionStage": "FULL",
-      "pathToStart": [{"nodeId": 10, "arrivalTimeMillis": 1000, "departureTimeMillis": 1000}, {"nodeId": 20, "arrivalTimeMillis": 2000, "departureTimeMillis": 2000}],
-      "pathToEnd": [{"nodeId": 20, "arrivalTimeMillis": 2000, "departureTimeMillis": 2000}, {"nodeId": 30, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}],
-      "estimatedStartTimeMillis": 1000, "estimatedCompletionTimeMillis": 3000
-    },
-    {
-      "robotId": 10, "taskId": 101, "sequence": 2, "executionStage": "FULL",
-      "pathToStart": [{"nodeId": 30, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}, {"nodeId": 40, "arrivalTimeMillis": 4000, "departureTimeMillis": 4000}],
-      "pathToEnd": [{"nodeId": 40, "arrivalTimeMillis": 4000, "departureTimeMillis": 4000}, {"nodeId": 50, "arrivalTimeMillis": 5000, "departureTimeMillis": 5000}],
-      "estimatedStartTimeMillis": 3000, "estimatedCompletionTimeMillis": 5000
-    }
-  ],
-  "unassignedTaskIds": [],
-  "message": "sequence one is missing"
+    "requestId":  "invalid-sequence-gap",
+    "replanId":  "fixture-replan-id",
+    "simulationRunId":  1,
+    "snapshotVersion":  7,
+    "status":  "SUCCEEDED",
+    "taskPlans":  [
+                      {
+                          "robotId":  10,
+                          "taskId":  100,
+                          "sequence":  0,
+                          "executionStage":  "FULL",
+                          "pathToStart":  [
+                                              {
+                                                  "nodeId":  10,
+                                                  "arrivalTimeMillis":  1000,
+                                                  "departureTimeMillis":  1000
+                                              },
+                                              {
+                                                  "nodeId":  20,
+                                                  "arrivalTimeMillis":  2000,
+                                                  "departureTimeMillis":  2000
+                                              }
+                                          ],
+                          "pathToEnd":  [
+                                            {
+                                                "nodeId":  20,
+                                                "arrivalTimeMillis":  2001,
+                                                "departureTimeMillis":  2001
+                                            },
+                                            {
+                                                "nodeId":  30,
+                                                "arrivalTimeMillis":  3001,
+                                                "departureTimeMillis":  3001
+                                            }
+                                        ],
+                          "estimatedStartTimeMillis":  1000,
+                          "estimatedCompletionTimeMillis":  3002,
+                          "pickingWindow":  {
+                                                "nodeId":  20,
+                                                "startTimeMillis":  2000,
+                                                "endTimeMillis":  2001
+                                            },
+                          "droppingWindow":  {
+                                                 "nodeId":  30,
+                                                 "startTimeMillis":  3001,
+                                                 "endTimeMillis":  3002
+                                             }
+                      },
+                      {
+                          "robotId":  10,
+                          "taskId":  101,
+                          "sequence":  2,
+                          "executionStage":  "FULL",
+                          "pathToStart":  [
+                                              {
+                                                  "nodeId":  30,
+                                                  "arrivalTimeMillis":  3000,
+                                                  "departureTimeMillis":  3000
+                                              },
+                                              {
+                                                  "nodeId":  40,
+                                                  "arrivalTimeMillis":  4000,
+                                                  "departureTimeMillis":  4000
+                                              }
+                                          ],
+                          "pathToEnd":  [
+                                            {
+                                                "nodeId":  40,
+                                                "arrivalTimeMillis":  4001,
+                                                "departureTimeMillis":  4001
+                                            },
+                                            {
+                                                "nodeId":  50,
+                                                "arrivalTimeMillis":  5001,
+                                                "departureTimeMillis":  5001
+                                            }
+                                        ],
+                          "estimatedStartTimeMillis":  3000,
+                          "estimatedCompletionTimeMillis":  5002,
+                          "pickingWindow":  {
+                                                "nodeId":  40,
+                                                "startTimeMillis":  4000,
+                                                "endTimeMillis":  4001
+                                            },
+                          "droppingWindow":  {
+                                                 "nodeId":  50,
+                                                 "startTimeMillis":  5001,
+                                                 "endTimeMillis":  5002
+                                             }
+                      }
+                  ],
+    "unassignedTaskIds":  [
+
+                          ],
+    "message":  "sequence one is missing"
 }

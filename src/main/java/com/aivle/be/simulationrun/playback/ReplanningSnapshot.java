@@ -12,11 +12,31 @@ public record ReplanningSnapshot(
         Long simulationRunId,
         Long snapshotVersion,
         Long simulationClockMillis,
+        Long pickingDurationMillis,
+        Long droppingDurationMillis,
         List<RobotSnapshot> robots
 ) {
 
     public ReplanningSnapshot {
         robots = robots == null ? List.of() : List.copyOf(robots);
+    }
+
+    public ReplanningSnapshot(
+            String replanId,
+            Long simulationRunId,
+            Long snapshotVersion,
+            Long simulationClockMillis,
+            List<RobotSnapshot> robots
+    ) {
+        this(
+                replanId,
+                simulationRunId,
+                snapshotVersion,
+                simulationClockMillis,
+                null,
+                null,
+                robots
+        );
     }
 
     public record RobotSnapshot(

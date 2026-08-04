@@ -175,6 +175,8 @@ public class PlaybackContext {
                 simulationRunId,
                 replanningSnapshotVersion,
                 clockMillis,
+                pickingMillis,
+                loadingMillis,
                 robotSnapshots
         );
     }
@@ -318,6 +320,10 @@ public class PlaybackContext {
      * 재계획 완료 후 모든 정상 로봇의 정지를 해제한다.
      */
     public void finishReplanning(String replanId) {
+        if (Objects.equals(activatedReplanId, replanId)
+                && replanningState == ReplanningState.ACTIVE) {
+            return;
+        }
         if (!Objects.equals(activeReplanId, replanId)
                 || replanningState
                 != ReplanningState.PLAN_INSTALLED) {
@@ -325,7 +331,19 @@ public class PlaybackContext {
                     ErrorCode.REOPTIMIZATION_PLAN_STALE
             );
         }
-        robots.forEach(RobotRuntime::resumeAfterReplanning);
+        List<RobotRuntime> normalRobots = robots.stream()
+                .filter(robot -> robot.getStatus() != RobotStatus.ERROR
+                        && robot.getStatus() != RobotStatus.OFFLINE)
+                .toList();
+        if (normalRobots.stream().anyMatch(robot ->
+                !robot.canActivateInstalledReoptimizationPlan(replanId))) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RUNTIME_STATE_INVALID
+            );
+        }
+        normalRobots.forEach(robot ->
+                robot.activateInstalledReoptimizationPlan(replanId)
+        );
         this.replanRequested = false;
         this.activatedReplanId = activeReplanId;
         this.activeReplanId = null;
@@ -393,6 +411,13 @@ public class PlaybackContext {
      * 모든 작업이 발생했고, 대기열도 비었고, 모든 로봇이 유휴 상태인가.
      */
     public boolean isFinished() {
+        if (replanningState == ReplanningState.ACTIVE
+                && activatedReplanId != null) {
+            return robots.stream()
+                    .filter(robot -> robot.getStatus() != RobotStatus.ERROR
+                            && robot.getStatus() != RobotStatus.OFFLINE)
+                    .allMatch(RobotRuntime::isReoptimizationPlanCompleted);
+        }
         return pendingTasks.isEmpty()
                 && readyTaskIds.isEmpty()
                 && robots.stream().allMatch(RobotRuntime::isIdle);

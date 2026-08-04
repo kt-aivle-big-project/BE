@@ -75,6 +75,8 @@ public record ReoptimizationPlanStageView(
             Long endNodeId,
             Long estimatedStartTimeMillis,
             Long estimatedCompletionTimeMillis,
+            OperationWindowView pickingWindow,
+            OperationWindowView droppingWindow,
             List<PathStepView> pathSteps
     ) {
 
@@ -97,10 +99,41 @@ public record ReoptimizationPlanStageView(
                     taskPlan.getEndNodeId(),
                     taskPlan.getEstimatedStartTimeMillis(),
                     taskPlan.getEstimatedCompletionTimeMillis(),
+                    OperationWindowView.of(
+                            taskPlan.getPickingNodeId(),
+                            taskPlan.getPickingStartTimeMillis(),
+                            taskPlan.getPickingEndTimeMillis()
+                    ),
+                    OperationWindowView.of(
+                            taskPlan.getDroppingNodeId(),
+                            taskPlan.getDroppingStartTimeMillis(),
+                            taskPlan.getDroppingEndTimeMillis()
+                    ),
                     taskPlan.getPathSteps().stream()
                             .map(PathStepView::from)
                             .toList()
             );
+        }
+    }
+
+    public record OperationWindowView(
+            Long nodeId,
+            Long startTimeMillis,
+            Long endTimeMillis
+    ) {
+        private static OperationWindowView of(
+                Long nodeId,
+                Long startTimeMillis,
+                Long endTimeMillis
+        ) {
+            return nodeId == null || startTimeMillis == null
+                    || endTimeMillis == null
+                    ? null
+                    : new OperationWindowView(
+                            nodeId,
+                            startTimeMillis,
+                            endTimeMillis
+                    );
         }
     }
 

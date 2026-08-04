@@ -16,6 +16,8 @@ public record TaskPlan(
         ExecutionStage executionStage,
         List<PathStep> pathToStart,
         List<PathStep> pathToEnd,
+        TaskOperationWindow pickingWindow,
+        TaskOperationWindow droppingWindow,
         Long estimatedStartTimeMillis,
         Long estimatedCompletionTimeMillis
 ) {
@@ -94,13 +96,39 @@ public record TaskPlan(
             );
         }
 
-        if (!estimatedCompletionTimeMillis.equals(
-                lastStep.departureTimeMillis()
-        )) {
+        Long expectedCompletion = droppingWindow == null
+                ? lastStep.departureTimeMillis()
+                : droppingWindow.endTimeMillis();
+        if (!estimatedCompletionTimeMillis.equals(expectedCompletion)) {
             throw new IllegalArgumentException(
-                    "estimatedCompletionTimeMillis must match the last departure"
+                    "estimatedCompletionTimeMillis must match dropping end"
             );
         }
+    }
+
+    /** Compatibility constructor for pre-operation-window callers. */
+    public TaskPlan(
+            Long robotId,
+            Long taskId,
+            Integer sequence,
+            ExecutionStage executionStage,
+            List<PathStep> pathToStart,
+            List<PathStep> pathToEnd,
+            Long estimatedStartTimeMillis,
+            Long estimatedCompletionTimeMillis
+    ) {
+        this(
+                robotId,
+                taskId,
+                sequence,
+                executionStage,
+                pathToStart,
+                pathToEnd,
+                null,
+                null,
+                estimatedStartTimeMillis,
+                estimatedCompletionTimeMillis
+        );
     }
 
     private static void validateMonotonicPath(

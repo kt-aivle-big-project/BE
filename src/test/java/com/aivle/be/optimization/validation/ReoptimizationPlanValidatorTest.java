@@ -6,6 +6,7 @@ import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.response.PathStep;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import com.aivle.be.optimization.dto.response.TaskPlan;
+import com.aivle.be.optimization.dto.response.TaskOperationWindow;
 import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.simulationrun.playback.ReplanningSnapshot;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,33 @@ class ReoptimizationPlanValidatorTest {
         Scenario scenario = baseScenario();
 
         assertValid(scenario, validMultipleRobotResponse());
+    }
+
+    @Test
+    void rejectsNodeConflictCreatedByOperationOccupancy() {
+        Scenario scenario = nodeConflictScenario();
+        TaskPlan first = new TaskPlan(
+                10L, 100L, 0, TaskPlan.ExecutionStage.FULL,
+                List.of(step(10L, 1_000L), step(20L, 2_000L)),
+                List.of(step(20L, 2_100L), step(30L, 3_000L)),
+                new TaskOperationWindow(20L, 2_000L, 2_100L),
+                new TaskOperationWindow(30L, 3_000L, 3_100L),
+                1_000L, 3_100L
+        );
+        TaskPlan second = new TaskPlan(
+                11L, 101L, 0, TaskPlan.ExecutionStage.FULL,
+                List.of(step(40L, 1_000L), step(20L, 2_050L)),
+                List.of(step(20L, 2_150L), step(50L, 3_200L)),
+                new TaskOperationWindow(20L, 2_050L, 2_150L),
+                new TaskOperationWindow(50L, 3_200L, 3_300L),
+                1_000L, 3_300L
+        );
+
+        assertInvalid(
+                scenario,
+                succeeded(List.of(first, second)),
+                ErrorCode.REOPTIMIZATION_PLAN_CONFLICT
+        );
     }
 
     @Test

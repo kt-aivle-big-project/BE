@@ -86,8 +86,20 @@ public record RuntimeReoptimizationPlan(
                 taskPlan.pathToEnd().stream()
                         .map(RuntimeReoptimizationPlan::toPathStep)
                         .toList(),
+                toOperationWindow(taskPlan.pickingWindow()),
+                toOperationWindow(taskPlan.droppingWindow()),
                 taskPlan.estimatedStartTimeMillis(),
                 taskPlan.estimatedCompletionTimeMillis()
+        );
+    }
+
+    private static RuntimeOperationWindow toOperationWindow(
+            ReoptimizationActivationPlan.OperationWindowView window
+    ) {
+        return window == null ? null : new RuntimeOperationWindow(
+                window.nodeId(),
+                window.startTimeMillis(),
+                window.endTimeMillis()
         );
     }
 

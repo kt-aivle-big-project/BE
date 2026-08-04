@@ -1,0 +1,27 @@
+{
+  "requestId": "success-operation-wait",
+  "replanId": "fixture-replan-id",
+  "simulationRunId": 1,
+  "snapshotVersion": 1,
+  "status": "SUCCEEDED",
+  "taskPlans": [{
+    "robotId": 10,
+    "taskId": 100,
+    "sequence": 0,
+    "executionStage": "FULL",
+    "pathToStart": [
+      {"nodeId": 10, "arrivalTimeMillis": 1000, "departureTimeMillis": 2000},
+      {"nodeId": 20, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}
+    ],
+    "pathToEnd": [
+      {"nodeId": 20, "arrivalTimeMillis": 3001, "departureTimeMillis": 4000},
+      {"nodeId": 30, "arrivalTimeMillis": 5000, "departureTimeMillis": 5000}
+    ],
+    "pickingWindow": {"nodeId": 20, "startTimeMillis": 3000, "endTimeMillis": 3001},
+    "droppingWindow": {"nodeId": 30, "startTimeMillis": 5000, "endTimeMillis": 5001},
+    "estimatedStartTimeMillis": 1000,
+    "estimatedCompletionTimeMillis": 5001
+  }],
+  "unassignedTaskIds": [],
+  "message": "operation plan with explicit node waits"
+}

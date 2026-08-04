@@ -1,17 +1,55 @@
 {
-  "requestId": "invalid-path-disconnected-edge",
-  "replanId": "fixture-replan-id",
-  "simulationRunId": 1,
-  "snapshotVersion": 7,
-  "status": "SUCCEEDED",
-  "taskPlans": [
-    {
-      "robotId": 10, "taskId": 100, "sequence": 0, "executionStage": "FULL",
-      "pathToStart": [{"nodeId": 10, "arrivalTimeMillis": 1000, "departureTimeMillis": 1000}, {"nodeId": 20, "arrivalTimeMillis": 2000, "departureTimeMillis": 2000}],
-      "pathToEnd": [{"nodeId": 20, "arrivalTimeMillis": 2000, "departureTimeMillis": 2000}, {"nodeId": 60, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}],
-      "estimatedStartTimeMillis": 1000, "estimatedCompletionTimeMillis": 3000
-    }
-  ],
-  "unassignedTaskIds": [],
-  "message": "nodes 20 and 60 are disconnected"
+    "requestId":  "invalid-path-disconnected-edge",
+    "replanId":  "fixture-replan-id",
+    "simulationRunId":  1,
+    "snapshotVersion":  7,
+    "status":  "SUCCEEDED",
+    "taskPlans":  [
+                      {
+                          "robotId":  10,
+                          "taskId":  100,
+                          "sequence":  0,
+                          "executionStage":  "FULL",
+                          "pathToStart":  [
+                                              {
+                                                  "nodeId":  10,
+                                                  "arrivalTimeMillis":  1000,
+                                                  "departureTimeMillis":  1000
+                                              },
+                                              {
+                                                  "nodeId":  20,
+                                                  "arrivalTimeMillis":  2000,
+                                                  "departureTimeMillis":  2000
+                                              }
+                                          ],
+                          "pathToEnd":  [
+                                            {
+                                                "nodeId":  20,
+                                                "arrivalTimeMillis":  2001,
+                                                "departureTimeMillis":  2001
+                                            },
+                                            {
+                                                "nodeId":  60,
+                                                "arrivalTimeMillis":  3001,
+                                                "departureTimeMillis":  3001
+                                            }
+                                        ],
+                          "estimatedStartTimeMillis":  1000,
+                          "estimatedCompletionTimeMillis":  3002,
+                          "pickingWindow":  {
+                                                "nodeId":  20,
+                                                "startTimeMillis":  2000,
+                                                "endTimeMillis":  2001
+                                            },
+                          "droppingWindow":  {
+                                                 "nodeId":  60,
+                                                 "startTimeMillis":  3001,
+                                                 "endTimeMillis":  3002
+                                             }
+                      }
+                  ],
+    "unassignedTaskIds":  [
+
+                          ],
+    "message":  "nodes 20 and 60 are disconnected"
 }

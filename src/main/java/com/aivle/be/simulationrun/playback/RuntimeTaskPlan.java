@@ -12,6 +12,8 @@ public record RuntimeTaskPlan(
         TaskPlan.ExecutionStage executionStage,
         List<RuntimePathStep> pathToStart,
         List<RuntimePathStep> pathToEnd,
+        RuntimeOperationWindow pickingWindow,
+        RuntimeOperationWindow droppingWindow,
         Long estimatedStartTimeMillis,
         Long estimatedCompletionTimeMillis
 ) {
@@ -37,5 +39,21 @@ public record RuntimeTaskPlan(
         pathToEnd = pathToEnd == null
                 ? List.of()
                 : List.copyOf(pathToEnd);
+        if (executionStage == TaskPlan.ExecutionStage.FULL
+                && pickingWindow == null) {
+            throw new IllegalArgumentException(
+                    "FULL runtime task requires pickingWindow"
+            );
+        }
+        if (executionStage == TaskPlan.ExecutionStage.TO_END
+                && pickingWindow != null) {
+            throw new IllegalArgumentException(
+                    "TO_END runtime task must not have pickingWindow"
+            );
+        }
+        Objects.requireNonNull(
+                droppingWindow,
+                "droppingWindow is required"
+        );
     }
 }

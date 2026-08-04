@@ -171,6 +171,15 @@ public class ReoptimizationPlanStage {
         status = Status.DB_APPLIED;
     }
 
+    public void markActivated() {
+        if (status != Status.DB_APPLIED) {
+            throw new IllegalStateException(
+                    "Only a DB_APPLIED plan can become ACTIVATED"
+            );
+        }
+        status = Status.ACTIVATED;
+    }
+
     public enum Status {
         STAGED,
         DB_APPLIED,

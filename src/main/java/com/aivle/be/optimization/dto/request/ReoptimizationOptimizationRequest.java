@@ -16,6 +16,9 @@ public record ReoptimizationOptimizationRequest(
         List<Long> blockedEdgeIds,
         String description,
 
+        Long pickingDurationMillis,
+        Long droppingDurationMillis,
+
         List<RobotStateInput> robots,
         List<TaskInput> remainingTasks
 ) {
@@ -28,6 +31,47 @@ public record ReoptimizationOptimizationRequest(
         remainingTasks = remainingTasks == null
                 ? List.of()
                 : List.copyOf(remainingTasks);
+        if (pickingDurationMillis != null && pickingDurationMillis <= 0) {
+            throw new IllegalArgumentException(
+                    "pickingDurationMillis must be positive"
+            );
+        }
+        if (droppingDurationMillis != null && droppingDurationMillis <= 0) {
+            throw new IllegalArgumentException(
+                    "droppingDurationMillis must be positive"
+            );
+        }
+    }
+
+    /** Compatibility constructor for tests that exercise the pre-window contract. */
+    public ReoptimizationOptimizationRequest(
+            String replanId,
+            Long simulationRunId,
+            Long snapshotVersion,
+            Long simulationClockMillis,
+            Long warehouseId,
+            ReoptimizationReason reason,
+            Long triggerRobotId,
+            List<Long> blockedEdgeIds,
+            String description,
+            List<RobotStateInput> robots,
+            List<TaskInput> remainingTasks
+    ) {
+        this(
+                replanId,
+                simulationRunId,
+                snapshotVersion,
+                simulationClockMillis,
+                warehouseId,
+                reason,
+                triggerRobotId,
+                blockedEdgeIds,
+                description,
+                null,
+                null,
+                robots,
+                remainingTasks
+        );
     }
 
     public record RobotStateInput(

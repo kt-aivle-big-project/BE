@@ -15,11 +15,13 @@
         {"nodeId": 20, "arrivalTimeMillis": 5000, "departureTimeMillis": 6000}
       ],
       "pathToEnd": [
-        {"nodeId": 20, "arrivalTimeMillis": 6000, "departureTimeMillis": 6000},
-        {"nodeId": 30, "arrivalTimeMillis": 9000, "departureTimeMillis": 9000}
+        {"nodeId": 20, "arrivalTimeMillis": 6001, "departureTimeMillis": 6001},
+        {"nodeId": 30, "arrivalTimeMillis": 9001, "departureTimeMillis": 9001}
       ],
+      "pickingWindow": {"nodeId": 20, "startTimeMillis": 6000, "endTimeMillis": 6001},
+      "droppingWindow": {"nodeId": 30, "startTimeMillis": 9001, "endTimeMillis": 9002},
       "estimatedStartTimeMillis": 1000,
-      "estimatedCompletionTimeMillis": 9000
+      "estimatedCompletionTimeMillis": 9002
     }
   ],
   "unassignedTaskIds": [],

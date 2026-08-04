@@ -5,6 +5,7 @@ import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.response.PathStep;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import com.aivle.be.optimization.dto.response.TaskPlan;
+import com.aivle.be.optimization.dto.response.TaskOperationWindow;
 import com.aivle.be.simulationrun.playback.ReplanningSnapshot;
 
 import java.util.ArrayList;
@@ -230,6 +231,18 @@ public final class ReoptimizationPlanValidator {
             List<List<PathStep>> segments = new ArrayList<>();
 
             for (TaskPlan plan : sortedBySequence(entry.getValue())) {
+                addOperationOccupancy(
+                        input,
+                        robotId,
+                        plan.pickingWindow(),
+                        nodeOccupancies
+                );
+                addOperationOccupancy(
+                        input,
+                        robotId,
+                        plan.droppingWindow(),
+                        nodeOccupancies
+                );
                 if (!plan.pathToStart().isEmpty()) {
                     segments.add(plan.pathToStart());
                 }
@@ -263,6 +276,29 @@ public final class ReoptimizationPlanValidator {
 
         validateNodeConflicts(nodeOccupancies);
         validateEdgeConflicts(edgeOccupancies);
+    }
+
+    private static void addOperationOccupancy(
+            ReoptimizationPlanValidationInput input,
+            Long robotId,
+            TaskOperationWindow window,
+            List<NodeOccupancy> occupancies
+    ) {
+        if (window == null) {
+            return;
+        }
+        if (!input.validNodeIds().contains(window.nodeId())) {
+            fail(
+                    ErrorCode.REOPTIMIZATION_PLAN_PATH_INVALID,
+                    "Operation window references a node outside the warehouse"
+            );
+        }
+        occupancies.add(new NodeOccupancy(
+                robotId,
+                window.nodeId(),
+                window.startTimeMillis(),
+                window.endTimeMillis()
+        ));
     }
 
     private static void validatePathSegment(

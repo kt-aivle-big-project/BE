@@ -45,7 +45,13 @@ class ReoptimizationResponseJsonTest {
                     assertThat(plan.estimatedStartTimeMillis())
                             .isEqualTo(1_000L);
                     assertThat(plan.estimatedCompletionTimeMillis())
-                            .isEqualTo(8_000L);
+                            .isEqualTo(18_000L);
+                    assertThat(plan.pickingWindow()).isEqualTo(
+                            new TaskOperationWindow(20L, 4_000L, 9_000L)
+                    );
+                    assertThat(plan.droppingWindow()).isEqualTo(
+                            new TaskOperationWindow(30L, 13_000L, 18_000L)
+                    );
                 });
         assertThat(response.unassignedTaskIds()).isEmpty();
     }

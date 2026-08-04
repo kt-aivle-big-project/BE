@@ -3,6 +3,7 @@ package com.aivle.be.optimization.validation;
 import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
 import com.aivle.be.optimization.dto.response.TaskPlan;
+import com.aivle.be.optimization.dto.response.TaskOperationWindow;
 
 import java.util.Map;
 import java.util.function.Function;
@@ -67,7 +68,96 @@ public final class ReoptimizationPlanContractValidator {
 
             if (robot != null && task != null) {
                 validateTaskEndpoints(robot, task, plan);
+                validateOperationWindows(request, plan);
             }
+        }
+    }
+
+    private static void validateOperationWindows(
+            ReoptimizationOptimizationRequest request,
+            TaskPlan plan
+    ) {
+        if (request.pickingDurationMillis() == null
+                || request.droppingDurationMillis() == null) {
+            return;
+        }
+        TaskOperationWindow picking = plan.pickingWindow();
+        TaskOperationWindow dropping = plan.droppingWindow();
+
+        if (dropping == null) {
+            throw new IllegalArgumentException(
+                    "Every task plan requires droppingWindow"
+            );
+        }
+        validateWindow(
+                dropping,
+                request.droppingDurationMillis(),
+                request.simulationClockMillis(),
+                "droppingWindow"
+        );
+
+        if (plan.executionStage() == TaskPlan.ExecutionStage.FULL) {
+            if (picking == null) {
+                throw new IllegalArgumentException(
+                        "FULL task plan requires pickingWindow"
+                );
+            }
+            validateWindow(
+                    picking,
+                    request.pickingDurationMillis(),
+                    request.simulationClockMillis(),
+                    "pickingWindow"
+            );
+            var lastToStart = plan.pathToStart().get(
+                    plan.pathToStart().size() - 1
+            );
+            var firstToEnd = plan.pathToEnd().get(0);
+            if (!picking.nodeId().equals(lastToStart.nodeId())
+                    || !picking.startTimeMillis().equals(
+                    lastToStart.departureTimeMillis()
+            )
+                    || !picking.nodeId().equals(firstToEnd.nodeId())
+                    || !picking.endTimeMillis().equals(
+                    firstToEnd.arrivalTimeMillis()
+            )) {
+                throw new IllegalArgumentException(
+                        "Picking window must connect pathToStart and pathToEnd"
+                );
+            }
+        } else if (picking != null) {
+            throw new IllegalArgumentException(
+                    "TO_END task plan must not have pickingWindow"
+            );
+        }
+
+        var lastToEnd = plan.pathToEnd().get(
+                plan.pathToEnd().size() - 1
+        );
+        if (!dropping.nodeId().equals(lastToEnd.nodeId())
+                || !dropping.startTimeMillis().equals(
+                lastToEnd.departureTimeMillis()
+        )
+                || !dropping.endTimeMillis().equals(
+                plan.estimatedCompletionTimeMillis()
+        )) {
+            throw new IllegalArgumentException(
+                    "Dropping window must follow pathToEnd and end the task"
+            );
+        }
+    }
+
+    private static void validateWindow(
+            TaskOperationWindow window,
+            Long requiredDurationMillis,
+            Long simulationClockMillis,
+            String fieldName
+    ) {
+        if (window.startTimeMillis() < simulationClockMillis
+                || window.endTimeMillis() - window.startTimeMillis()
+                != requiredDurationMillis) {
+            throw new IllegalArgumentException(
+                    fieldName + " must use the requested positive duration"
+            );
         }
     }
 

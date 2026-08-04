@@ -1,0 +1,24 @@
+{
+  "requestId": "success-to-end",
+  "replanId": "fixture-replan-id",
+  "simulationRunId": 1,
+  "snapshotVersion": 1,
+  "status": "SUCCEEDED",
+  "taskPlans": [{
+    "robotId": 10,
+    "taskId": 100,
+    "sequence": 0,
+    "executionStage": "TO_END",
+    "pathToStart": [],
+    "pathToEnd": [
+      {"nodeId": 20, "arrivalTimeMillis": 1000, "departureTimeMillis": 1000},
+      {"nodeId": 30, "arrivalTimeMillis": 3000, "departureTimeMillis": 3000}
+    ],
+    "pickingWindow": null,
+    "droppingWindow": {"nodeId": 30, "startTimeMillis": 3000, "endTimeMillis": 3001},
+    "estimatedStartTimeMillis": 1000,
+    "estimatedCompletionTimeMillis": 3001
+  }],
+  "unassignedTaskIds": [],
+  "message": "continue carrying task to destination"
+}

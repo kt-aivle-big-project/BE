@@ -230,6 +230,13 @@ public class SimulationPlaybackService {
 
         long simulatedMillis = context.advanceClock(tickMillis);
 
+        if (context.getReplanningState()
+                == PlaybackContext.ReplanningState.ACTIVE
+                && context.getActivatedReplanId() != null) {
+            advanceReoptimizationPlan(context);
+            return;
+        }
+
         // 1) 발생 시각이 된 작업 투입
         for (Long taskId : context.releaseDueTasks()) {
             log.info("[재생] 시뮬 {}초 - 작업 {} 발생",
@@ -680,6 +687,221 @@ public class SimulationPlaybackService {
         }
     }
 
+    private void advanceReoptimizationPlan(PlaybackContext context) {
+        for (RobotRuntime robot : context.getRobots()) {
+            if (robot.getStatus() == RobotStatus.ERROR
+                    || robot.getStatus() == RobotStatus.OFFLINE) {
+                continue;
+            }
+            int guard = 0;
+            boolean progressed = true;
+            while (progressed && guard++ < MAX_STEPS_PER_TICK) {
+                progressed = advanceReoptimizationRobot(
+                        context,
+                        robot
+                );
+            }
+        }
+    }
+
+    private boolean advanceReoptimizationRobot(
+            PlaybackContext context,
+            RobotRuntime robot
+    ) {
+        RuntimeTaskPlan plan = robot.currentRuntimeTaskPlan();
+        if (plan == null) {
+            return false;
+        }
+        long now = context.getClockMillis();
+        return switch (robot.getReoptimizationExecutionState()) {
+            case WAITING -> beginRuntimeTask(robot, plan, now);
+            case MOVING_TO_START -> {
+                if (!advanceRuntimePath(
+                        context,
+                        robot,
+                        plan.pathToStart(),
+                        RobotRuntime.PlannedPathSegment.TO_START
+                )) {
+                    yield false;
+                }
+                if (now < plan.pickingWindow().startTimeMillis()) {
+                    robot.setBusyUntilMillis(
+                            plan.pickingWindow().startTimeMillis()
+                    );
+                    yield false;
+                }
+                startRuntimeTask(context, robot, plan);
+                yield true;
+            }
+            case PICKING -> {
+                if (now < plan.pickingWindow().endTimeMillis()) {
+                    robot.setBusyUntilMillis(
+                            plan.pickingWindow().endTimeMillis()
+                    );
+                    yield false;
+                }
+                robot.transitionReoptimizationState(
+                        RobotRuntime.ReoptimizationExecutionState.MOVING_TO_END
+                );
+                robot.setReoptimizationPathCursor(
+                        RobotRuntime.PlannedPathSegment.TO_END,
+                        0
+                );
+                robot.setPhase(RobotRuntime.Phase.MOVING_TO_END);
+                yield true;
+            }
+            case MOVING_TO_END -> {
+                if (!advanceRuntimePath(
+                        context,
+                        robot,
+                        plan.pathToEnd(),
+                        RobotRuntime.PlannedPathSegment.TO_END
+                )) {
+                    yield false;
+                }
+                if (now < plan.droppingWindow().startTimeMillis()) {
+                    robot.setBusyUntilMillis(
+                            plan.droppingWindow().startTimeMillis()
+                    );
+                    yield false;
+                }
+                robot.transitionReoptimizationState(
+                        RobotRuntime.ReoptimizationExecutionState.DROPPING
+                );
+                robot.setPhase(RobotRuntime.Phase.DROPPING);
+                robot.setStatus(RobotStatus.WORKING);
+                robot.setBusyUntilMillis(
+                        plan.droppingWindow().endTimeMillis()
+                );
+                publish(context, robot);
+                yield true;
+            }
+            case DROPPING -> {
+                if (now < plan.droppingWindow().endTimeMillis()) {
+                    yield false;
+                }
+                taskService.completeTask(plan.taskId());
+                robot.completeCurrentRuntimeTask();
+                robot.stopMoving();
+                publish(context, robot);
+                yield true;
+            }
+            case COMPLETED -> false;
+        };
+    }
+
+    private boolean beginRuntimeTask(
+            RobotRuntime robot,
+            RuntimeTaskPlan plan,
+            long now
+    ) {
+        if (now < plan.estimatedStartTimeMillis()) {
+            robot.setBusyUntilMillis(plan.estimatedStartTimeMillis());
+            return false;
+        }
+        if (plan.executionStage()
+                == com.aivle.be.optimization.dto.response.TaskPlan
+                .ExecutionStage.FULL) {
+            robot.transitionReoptimizationState(
+                    RobotRuntime.ReoptimizationExecutionState.MOVING_TO_START
+            );
+            robot.setReoptimizationPathCursor(
+                    RobotRuntime.PlannedPathSegment.TO_START,
+                    0
+            );
+            robot.setPhase(RobotRuntime.Phase.MOVING_TO_START);
+        } else {
+            robot.transitionReoptimizationState(
+                    RobotRuntime.ReoptimizationExecutionState.MOVING_TO_END
+            );
+            robot.setReoptimizationPathCursor(
+                    RobotRuntime.PlannedPathSegment.TO_END,
+                    0
+            );
+            robot.setPhase(RobotRuntime.Phase.MOVING_TO_END);
+            robot.setCurrentTaskId(plan.taskId());
+        }
+        return true;
+    }
+
+    private void startRuntimeTask(
+            PlaybackContext context,
+            RobotRuntime robot,
+            RuntimeTaskPlan plan
+    ) {
+        Task task = taskRepository.findById(plan.taskId()).orElseThrow();
+        if (task.getStatus() == TaskStatus.ASSIGNED) {
+            taskService.startTask(plan.taskId());
+        }
+        robot.setCurrentTaskId(plan.taskId());
+        robot.transitionReoptimizationState(
+                RobotRuntime.ReoptimizationExecutionState.PICKING
+        );
+        robot.setPhase(RobotRuntime.Phase.PICKING);
+        robot.setStatus(RobotStatus.PICKING);
+        robot.setBusyUntilMillis(plan.pickingWindow().endTimeMillis());
+        publish(context, robot);
+    }
+
+    private boolean advanceRuntimePath(
+            PlaybackContext context,
+            RobotRuntime robot,
+            List<RuntimePathStep> path,
+            RobotRuntime.PlannedPathSegment segment
+    ) {
+        int index = Math.max(0, robot.getCurrentPlanPathStepIndex());
+        long now = context.getClockMillis();
+        while (index < path.size()) {
+            RuntimePathStep current = path.get(index);
+            if (index == path.size() - 1) {
+                if (now < current.departureTimeMillis()) {
+                    robot.setBusyUntilMillis(current.departureTimeMillis());
+                    return false;
+                }
+                robot.setCurrentNodeId(current.nodeId());
+                robot.stopMoving();
+                robot.setReoptimizationPathCursor(segment, path.size());
+                publish(context, robot);
+                return true;
+            }
+
+            RuntimePathStep next = path.get(index + 1);
+            if (now < current.departureTimeMillis()) {
+                robot.setCurrentNodeId(current.nodeId());
+                robot.stopMoving();
+                robot.setBusyUntilMillis(current.departureTimeMillis());
+                return false;
+            }
+            if (current.nodeId().equals(next.nodeId())) {
+                if (now < next.arrivalTimeMillis()) {
+                    robot.setBusyUntilMillis(next.arrivalTimeMillis());
+                    return false;
+                }
+            } else if (now < next.arrivalTimeMillis()) {
+                if (robot.getPreviousNodeId() == null) {
+                    robot.setCurrentNodeId(current.nodeId());
+                    robot.moveTo(next.nodeId());
+                    robot.consumeMoveBattery();
+                    robot.setStatus(RobotStatus.MOVING);
+                    publish(context, robot);
+                }
+                robot.setBusyUntilMillis(next.arrivalTimeMillis());
+                return false;
+            } else {
+                if (robot.getPreviousNodeId() == null) {
+                    robot.setCurrentNodeId(current.nodeId());
+                    robot.moveTo(next.nodeId());
+                    robot.consumeMoveBattery();
+                }
+                robot.stopMoving();
+            }
+            index++;
+            robot.setCurrentNodeId(next.nodeId());
+            robot.setReoptimizationPathCursor(segment, index);
+        }
+        return true;
+    }
+
     /**
      * 모든 로봇이 안전 정지한 동일 context lock 안에서 AI 요청 snapshot을 만든다.
      */
@@ -754,7 +976,7 @@ public class SimulationPlaybackService {
     /**
      * 재계획 완료 후 정상 로봇들의 정지를 해제한다.
      */
-    public boolean finishReplanning(
+    public boolean activateInstalledReoptimizationPlan(
             Long simulationRunId,
             String replanId
     ) {
@@ -776,6 +998,21 @@ public class SimulationPlaybackService {
 
             return true;
         }
+    }
+
+    public boolean recoverActivatedReoptimizationPlan(
+            Long simulationRunId,
+            String replanId
+    ) {
+        return activateInstalledReoptimizationPlan(
+                simulationRunId,
+                replanId
+        );
+    }
+
+    /** Kept as a compatibility alias for existing callers. */
+    public boolean finishReplanning(Long simulationRunId, String replanId) {
+        return activateInstalledReoptimizationPlan(simulationRunId, replanId);
     }
 
     public void clear(Long simulationRunId) {
