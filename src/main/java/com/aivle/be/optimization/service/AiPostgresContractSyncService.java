@@ -81,34 +81,29 @@ public class AiPostgresContractSyncService {
                 """, wid, chute, chute));
 
         map.nodes().stream()
-                .filter(node -> "outbound_station_access".equals(node.type()))
-                .filter(node -> node.station_id() != null)
+                .filter(node -> isType(node, "outbound_station_access", "outbound_access"))
                 .collect(java.util.stream.Collectors.groupingBy(
-                        WarehouseImportRequest.MapNode::station_id,
+                        node -> node.station_id() == null ? node.id() : node.station_id(),
                         java.util.LinkedHashMap::new,
-                        java.util.stream.Collectors.mapping(
-                                WarehouseImportRequest.MapNode::id,
-                                java.util.stream.Collectors.toList()
-                        )
+                        java.util.stream.Collectors.flatMapping(
+                                node -> outboundAccessIds(node).stream(),
+                                java.util.stream.Collectors.toList())
                 ))
                 .forEach((stationId, accessIds) ->
                         syncStation(wid, stationId, accessIds, chutes));
         map.nodes().stream()
-                .filter(node -> "inbound_handoff_access".equals(node.type()))
-                .filter(node -> node.handoff_id() != null)
+                .filter(node -> isType(node, "inbound_handoff_access", "inbound_access"))
                 .collect(java.util.stream.Collectors.groupingBy(
-                        WarehouseImportRequest.MapNode::handoff_id,
+                        node -> node.handoff_id() == null ? node.id() : node.handoff_id(),
                         java.util.LinkedHashMap::new,
-                        java.util.stream.Collectors.mapping(
-                                WarehouseImportRequest.MapNode::id,
-                                java.util.stream.Collectors.toList()
-                        )
+                        java.util.stream.Collectors.flatMapping(
+                                node -> inboundAccessIds(node).stream(),
+                                java.util.stream.Collectors.toList())
                 ))
                 .forEach((handoffId, accessIds) ->
                         syncHandoff(wid, handoffId, accessIds));
         map.nodes().stream()
                 .filter(node -> "empty_tote_buffer_access".equals(node.type()))
-                .filter(node -> node.buffer_id() != null)
                 .forEach(node -> jdbc.update("""
                         INSERT INTO empty_tote_buffers
                           (warehouse_id, buffer_id, access_node_ids, capacity, status)
@@ -116,9 +111,31 @@ public class AiPostgresContractSyncService {
                         ON CONFLICT (warehouse_id, buffer_id) DO UPDATE
                         SET access_node_ids=EXCLUDED.access_node_ids,
                             status=EXCLUDED.status
-                        """, wid, node.buffer_id(), node.id()));
+                        """, wid,
+                        node.buffer_id() == null ? node.id() : node.buffer_id(),
+                        node.id()));
 
         syncInventory(warehouseId, wid);
+    }
+
+    private boolean isType(
+            WarehouseImportRequest.MapNode node,
+            String canonicalType,
+            String compatibleType
+    ) {
+        return canonicalType.equals(node.type()) || compatibleType.equals(node.type());
+    }
+
+    private List<String> inboundAccessIds(WarehouseImportRequest.MapNode node) {
+        return "inbound_access".equals(node.type())
+                ? AiRouteGraphSyncService.inboundServiceAccessIds(node.id())
+                : List.of(node.id());
+    }
+
+    private List<String> outboundAccessIds(WarehouseImportRequest.MapNode node) {
+        return "outbound_access".equals(node.type())
+                ? AiRouteGraphSyncService.outboundServiceAccessIds(node.id())
+                : List.of(node.id());
     }
 
     @Transactional

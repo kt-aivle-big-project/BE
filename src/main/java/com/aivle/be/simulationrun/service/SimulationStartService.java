@@ -1,6 +1,8 @@
 package com.aivle.be.simulationrun.service;
 
 import com.aivle.be.auth.security.AuthenticatedRequester;
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.graph.service.AiRouteGraphSyncService;
 import com.aivle.be.optimization.dto.request.LaroPlanRequest;
 import com.aivle.be.optimization.dto.response.LaroPlanResponse;
@@ -61,6 +63,10 @@ public class SimulationStartService {
                         "inbound_item_arrived", null, inboundId, null, null, null, Map.of()
                 )
         ));
+
+        if (events.isEmpty() && command == null) {
+            throw new BusinessException(ErrorCode.NO_PLANNABLE_TASKS);
+        }
 
         LaroPlanResponse plan = laroPlanningService.createAndInstallPlan(
                 simulationRunId,

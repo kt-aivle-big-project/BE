@@ -6,6 +6,8 @@ import org.springframework.data.neo4j.core.Neo4jClient;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -31,12 +33,39 @@ public class AiRouteGraphSyncService {
 
     public String sync(Long warehouseId, WarehouseImportRequest.MapPayload map) {
         String aiWarehouseId = toAiWarehouseId(warehouseId);
-        List<Map<String, Object>> nodes = map.nodes().stream()
+        List<WarehouseImportRequest.MapNode> sourceNodes = List.copyOf(map.nodes());
+        Set<String> sourceNodeIds = sourceNodes.stream()
+                .map(WarehouseImportRequest.MapNode::id)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        Set<String> logicalFacilityNodeIds = sourceNodes.stream()
+                .filter(node -> isLogicalFacilityNode(node.type()))
+                .map(WarehouseImportRequest.MapNode::id)
+                .collect(java.util.stream.Collectors.toSet());
+
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        sourceNodes.stream()
                 .map(node -> toNode(aiWarehouseId, node))
-                .toList();
-        List<Map<String, Object>> edges = map.edges().stream()
+                .forEach(nodes::add);
+
+        List<Map<String, Object>> edges = new ArrayList<>();
+        map.edges().stream()
+                .filter(edge -> sourceNodeIds.contains(edge.source())
+                        && sourceNodeIds.contains(edge.target()))
+                .filter(edge -> !logicalFacilityNodeIds.contains(edge.source())
+                        && !logicalFacilityNodeIds.contains(edge.target()))
                 .map(edge -> toEdge(aiWarehouseId, edge))
-                .toList();
+                .forEach(edges::add);
+
+        sourceNodes.stream()
+                .filter(node -> "inbound_access".equals(lower(node.type())))
+                .forEach(node -> addGeneratedServiceSpurs(
+                        aiWarehouseId, node, "inbound_handoff_access",
+                        node.id(), "HANDOFF", nodes, edges));
+        sourceNodes.stream()
+                .filter(node -> "outbound_access".equals(lower(node.type())))
+                .forEach(node -> addGeneratedServiceSpurs(
+                        aiWarehouseId, node, "outbound_station_access",
+                        node.id(), "STATION", nodes, edges));
 
         neo4jClient.query("""
                 MATCH (n:RouteNode {warehouse_id: $warehouseId})
@@ -82,11 +111,89 @@ public class AiRouteGraphSyncService {
         return "WH-%03d".formatted(warehouseId);
     }
 
+    public static List<String> inboundServiceAccessIds(String nodeId) {
+        return serviceAccessIds(nodeId, "HANDOFF");
+    }
+
+    public static List<String> outboundServiceAccessIds(String nodeId) {
+        return serviceAccessIds(nodeId, "STATION");
+    }
+
+    private static List<String> serviceAccessIds(String nodeId, String facilityKind) {
+        return List.of(
+                nodeId + "_" + facilityKind + "_ACCESS_A",
+                nodeId + "_" + facilityKind + "_ACCESS_B"
+        );
+    }
+
+    private boolean isLogicalFacilityNode(String type) {
+        String normalized = lower(type);
+        return "inbound".equals(normalized) || "outbound".equals(normalized);
+    }
+
+    private void addGeneratedServiceSpurs(
+            String warehouseId,
+            WarehouseImportRequest.MapNode source,
+            String serviceType,
+            String facilityId,
+            String facilityKind,
+            List<Map<String, Object>> nodes,
+            List<Map<String, Object>> edges
+    ) {
+        List<String> accessIds = serviceAccessIds(source.id(), facilityKind);
+        for (int index = 0; index < accessIds.size(); index++) {
+            String accessId = accessIds.get(index);
+            Map<String, Object> node = new LinkedHashMap<>();
+            put(node, "warehouse_id", warehouseId);
+            put(node, "scope_id", warehouseId + "::" + accessId);
+            put(node, "id", accessId);
+            put(node, "type", serviceType);
+            put(node, "x", source.x() == null ? null : source.x() + (index == 0 ? -0.01 : 0.01));
+            put(node, "y", source.y());
+            if ("inbound_handoff_access".equals(serviceType)) {
+                put(node, "handoff_id", facilityId);
+            } else {
+                put(node, "station_id", facilityId);
+            }
+            put(node, "service_access", true);
+            put(node, "service_only", true);
+            put(node, "transit_allowed", false);
+            nodes.add(node);
+
+            edges.add(generatedServiceEdge(
+                    warehouseId, accessId + "_IN", source.id(), accessId));
+            edges.add(generatedServiceEdge(
+                    warehouseId, accessId + "_OUT", accessId, source.id()));
+        }
+    }
+
+    private Map<String, Object> generatedServiceEdge(
+            String warehouseId,
+            String edgeId,
+            String source,
+            String target
+    ) {
+        Map<String, Object> edge = new LinkedHashMap<>();
+        put(edge, "warehouse_id", warehouseId);
+        put(edge, "scope_id", warehouseId + "::" + edgeId);
+        put(edge, "id", edgeId);
+        put(edge, "source", source);
+        put(edge, "target", target);
+        put(edge, "source_scope_id", warehouseId + "::" + source);
+        put(edge, "target_scope_id", warehouseId + "::" + target);
+        put(edge, "type", "service_access");
+        put(edge, "distance_m", 0.1);
+        put(edge, "speed_limit_mps", 1.0);
+        put(edge, "nominal_travel_time_ms", 100L);
+        put(edge, "cost", 0.1);
+        return edge;
+    }
+
     private Map<String, Object> toNode(
             String warehouseId,
             WarehouseImportRequest.MapNode source
     ) {
-        String type = lower(source.type());
+        String type = canonicalNodeType(lower(source.type()));
         Map<String, Object> node = new LinkedHashMap<>();
         put(node, "warehouse_id", warehouseId);
         put(node, "scope_id", warehouseId + "::" + source.id());
@@ -95,9 +202,12 @@ public class AiRouteGraphSyncService {
         put(node, "x", source.x());
         put(node, "y", source.y());
         put(node, "rack_id", source.rack_id());
-        put(node, "handoff_id", source.handoff_id());
-        put(node, "station_id", source.station_id());
-        put(node, "buffer_id", source.buffer_id());
+        put(node, "handoff_id", facilityId(
+                type, "inbound_handoff_access", source.handoff_id(), source.id()));
+        put(node, "station_id", facilityId(
+                type, "outbound_station_access", source.station_id(), source.id()));
+        put(node, "buffer_id", facilityId(
+                type, "empty_tote_buffer_access", source.buffer_id(), source.id()));
         put(node, "resource_id", source.resource_id());
         put(node, "side", source.side());
         put(node, "adjacent_route_node", source.adjacent_route_node());
@@ -109,6 +219,22 @@ public class AiRouteGraphSyncService {
         put(node, "transit_allowed",
                 source.transit_allowed() != null ? source.transit_allowed() : !serviceAccess);
         return node;
+    }
+
+    private String canonicalNodeType(String type) {
+        return type;
+    }
+
+    private String facilityId(
+            String nodeType,
+            String facilityNodeType,
+            String explicitId,
+            String nodeId
+    ) {
+        if (explicitId != null && !explicitId.isBlank()) {
+            return explicitId;
+        }
+        return facilityNodeType.equals(nodeType) ? nodeId : null;
     }
 
     private Map<String, Object> toEdge(

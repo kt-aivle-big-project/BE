@@ -1,7 +1,10 @@
 package com.aivle.be.warehouse.service;
 
+import com.aivle.be.graph.service.AiRouteGraphSyncService;
+import com.aivle.be.optimization.service.AiPostgresContractSyncService;
 import com.aivle.be.warehouse.dto.WarehouseImportRequest;
 import com.aivle.be.warehouse.dto.WarehouseImportResponse;
+import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -26,8 +29,9 @@ import java.util.List;
  * <p>그래서 기본 창고도 화면 업로드와 똑같이 {@link WarehouseImportService} 를 태운다.
  * 변환 규칙은 이제 한 곳에만 있고, 지도가 바뀌면 {@code db/maps} 의 JSON 만 갈아끼우면 된다.
  *
- * <p>공용 창고가 하나라도 있으면 아무 일도 하지 않는다.
- * 공용 창고는 화면에서 지울 수 없으므로 한 번 들어가면 계속 남아 있다.
+ * <p>기본 창고가 이미 BE DB에 있더라도 지도 JSON을 다시 읽어 AI PostgreSQL과
+ * Neo4j 계약을 동기화한다. BE DB는 유지한 채 Docker 볼륨 재생성 등으로 사라진
+ * AI 계약 데이터만 복구할 수 있어야 하기 때문이다.
  */
 @Component
 @RequiredArgsConstructor
@@ -71,23 +75,48 @@ public class DefaultWarehouseSeeder implements ApplicationRunner {
 
     private final WarehouseRepository warehouseRepository;
     private final WarehouseImportService warehouseImportService;
+    private final AiRouteGraphSyncService aiRouteGraphSyncService;
+    private final AiPostgresContractSyncService aiPostgresContractSyncService;
+    private final WarehouseMapContractStore warehouseMapContractStore;
     private final ObjectMapper objectMapper;
 
     @Override
     public void run(ApplicationArguments args) {
-        if (!warehouseRepository.findShared().isEmpty()) {
-            log.debug("[기본 창고] 이미 있어 건너뜁니다.");
-            return;
-        }
-
         for (DefaultWarehouse spec : DEFAULTS) {
             try {
-                seed(spec);
+                Warehouse existing = warehouseRepository.findById(spec.id()).orElse(null);
+                if (existing == null) {
+                    seed(spec);
+                } else if (existing.isShared()) {
+                    syncAiContract(spec, existing);
+                } else {
+                    log.warn("[기본 창고] id={}가 개인 창고에 사용 중이라 기본 창고 생성을 건너뜁니다.",
+                            spec.id());
+                }
             } catch (Exception exception) {
-                // 한 창고가 실패해도 나머지는 넣는다. 앱은 계속 뜨게 둔다.
-                log.error("[기본 창고] {} 생성 실패 - {}", spec.name(), exception.getMessage(), exception);
+                // 한 창고가 실패해도 나머지 창고의 생성·동기화는 계속한다.
+                log.error("[기본 창고] {} 생성 또는 AI 동기화 실패 - {}",
+                        spec.name(), exception.getMessage(), exception);
             }
         }
+    }
+
+    private void syncAiContract(DefaultWarehouse spec, Warehouse warehouse) throws Exception {
+        WarehouseImportRequest.MapPayload map = readMap(spec.file());
+        if (!warehouseImportService.hasSamePhysicalNodes(warehouse.getId(), map)) {
+            log.error("[기본 창고] {} (id={})의 기존 BE 지도와 bundled JSON이 달라 AI 동기화를 건너뜁니다. 기존 지도를 자동 변경하지 않습니다.",
+                    warehouse.getName(), warehouse.getId());
+            return;
+        }
+        warehouseMapContractStore.save(warehouse.getId(), map);
+        aiRouteGraphSyncService.sync(warehouse.getId(), map);
+        aiPostgresContractSyncService.syncImportedWarehouse(
+                warehouse.getId(),
+                warehouse.getName(),
+                map
+        );
+        log.info("[기본 창고] {} (id={}) 지도 일치 확인 및 AI PostgreSQL·Neo4j 계약 동기화 완료",
+                warehouse.getName(), warehouse.getId());
     }
 
     private void seed(DefaultWarehouse spec) throws Exception {

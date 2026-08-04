@@ -10,6 +10,7 @@ import com.aivle.be.warehouse.dto.WarehouseCreateRequest;
 import com.aivle.be.warehouse.dto.WarehouseGraphResponse;
 import com.aivle.be.warehouse.dto.WarehouseImportRequest;
 import com.aivle.be.warehouse.dto.WarehouseImportResponse;
+import com.aivle.be.warehouse.dto.WarehouseMapSyncResponse;
 import com.aivle.be.warehouse.service.WarehouseImportService;
 import com.aivle.be.warehouse.dto.WarehouseResponse;
 import com.aivle.be.warehouse.service.WarehouseGraphService;
@@ -77,6 +78,17 @@ public class WarehouseController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(warehouseImportService.importWarehouse(request, parseUserId(userId)));
+    }
+
+    @PostMapping("/{warehouseId}/map/resync")
+    public ResponseEntity<WarehouseMapSyncResponse> resyncMap(
+            @PathVariable Long warehouseId,
+            Authentication authentication
+    ) {
+        validateReadAccess(authentication, warehouseId);
+        return ResponseEntity.ok(
+                warehouseImportService.resyncMapContract(warehouseId)
+        );
     }
 
     /**

@@ -103,6 +103,7 @@ public class WarehouseService {
 
         // 참조하는 쪽 -> 참조받는 쪽 순서
         String[] statements = {
+                "DELETE FROM warehouse_map_contract WHERE warehouse_id = ?",
                 "DELETE FROM event WHERE warehouse_id = ?",
                 "DELETE FROM task WHERE warehouse_id = ?",
                 "DELETE FROM simulation_run_robots WHERE simulation_run_id IN "

@@ -25,6 +25,8 @@ public enum ErrorCode {
 
     SHARED_WAREHOUSE_READ_ONLY(HttpStatus.FORBIDDEN, "WAREHOUSE_002", "공용 창고는 수정하거나 삭제할 수 없습니다."),
     WAREHOUSE_NOT_FOUND(HttpStatus.NOT_FOUND, "WAREHOUSE_001", "존재하지 않는 창고입니다."),
+    WAREHOUSE_MAP_CONTRACT_NOT_FOUND(HttpStatus.CONFLICT, "WAREHOUSE_003", "저장된 원본 지도 계약이 없습니다. 지도를 다시 등록해 주세요."),
+    WAREHOUSE_MAP_INVALID(HttpStatus.BAD_REQUEST, "WAREHOUSE_004", "지도 노드 또는 간선 계약이 올바르지 않습니다."),
     ROBOT_STATE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_001", "로봇의 현재 상태를 찾을 수 없습니다."),
     NODE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_002", "존재하지 않는 창고 노드입니다."),
     INVALID_ROBOT_LOCATION(HttpStatus.BAD_REQUEST, "ROBOT_STATE_003", "로봇과 현재 노드의 창고가 일치하지 않습니다."),
@@ -58,6 +60,7 @@ public enum ErrorCode {
 
     INVALID_INBOUND_RATIO(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_011", "입고 품목 구성 비율의 합계는 100%여야 합니다."),
     INVALID_SIMULATION_SPEED(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_012", "허용되지 않는 실행 배속입니다."),
+    NO_PLANNABLE_TASKS(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_013", "AI 계획을 생성할 입고·출고 작업이 없습니다."),
 
     STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),
 

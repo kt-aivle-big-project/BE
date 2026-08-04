@@ -21,6 +21,7 @@ import com.aivle.be.user.entity.User;
 import com.aivle.be.user.repository.UserRepository;
 import com.aivle.be.warehouse.dto.WarehouseImportRequest;
 import com.aivle.be.warehouse.dto.WarehouseImportResponse;
+import com.aivle.be.warehouse.dto.WarehouseMapSyncResponse;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import com.aivle.be.warehouseedge.entity.WarehouseEdge;
@@ -46,7 +47,9 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 지도 JSON 을 읽어 창고 하나를 통째로 만든다.
@@ -141,6 +144,7 @@ public class WarehouseImportService {
     private final JdbcTemplate jdbcTemplate;
     private final AiRouteGraphSyncService aiRouteGraphSyncService;
     private final AiPostgresContractSyncService aiPostgresContractSyncService;
+    private final WarehouseMapContractStore warehouseMapContractStore;
 
     /** 화면에서 지도를 올려 창고를 만든다. 항상 개인 창고다. */
     @Transactional
@@ -162,6 +166,7 @@ public class WarehouseImportService {
             boolean shared,
             Long fixedId
     ) {
+        validateMapContract(request.map());
         User owner = findOwner(request.userId(), loginUserId);
         Warehouse warehouse = createWarehouse(request, owner, fixedId);
 
@@ -208,6 +213,7 @@ public class WarehouseImportService {
                 request.robotCount()
         );
         createScenarioPresets(warehouse, robotCount);
+        warehouseMapContractStore.save(warehouse.getId(), request.map());
 
         int skipped = request.map().nodes().size() - nodes.size();
         String aiWarehouseId = aiRouteGraphSyncService.sync(
@@ -236,6 +242,88 @@ public class WarehouseImportService {
                 robotCount,
                 skipped
         );
+    }
+
+    /**
+     * Checks whether an existing relational map was created from this raw map.
+     * A bundled default map must never be merged into a different FE map.
+     */
+    @Transactional(readOnly = true)
+    public boolean hasSamePhysicalNodes(
+            Long warehouseId,
+            WarehouseImportRequest.MapPayload map
+    ) {
+        Set<String> actual = warehouseNodeRepository
+                .findAllByWarehouse_Id(warehouseId)
+                .stream()
+                .map(WarehouseNode::getNodeCode)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Set<String> expected = new LinkedHashSet<>();
+        for (WarehouseImportRequest.MapNode raw : map.nodes()) {
+            if (NODE_TYPES.containsKey(lower(raw.type()))) {
+                expected.add(raw.id());
+            }
+            if (RACK_ACCESS_TYPE.equals(lower(raw.type()))) {
+                String rackCode = rackCodeOf(raw);
+                if (rackCode != null) {
+                    expected.add(rackCode);
+                }
+            }
+        }
+        return actual.equals(expected);
+    }
+
+    /** Rebuilds AI projections only; the BE/FE map is never merged or mutated. */
+    @Transactional
+    public WarehouseMapSyncResponse resyncMapContract(Long warehouseId) {
+        Warehouse warehouse = warehouseRepository.findById(warehouseId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
+        WarehouseImportRequest.MapPayload map = warehouseMapContractStore.load(warehouseId);
+        validateMapContract(map);
+        String aiWarehouseId = aiRouteGraphSyncService.sync(warehouseId, map);
+        aiPostgresContractSyncService.syncImportedWarehouse(
+                warehouseId,
+                warehouse.getName(),
+                map
+        );
+        return new WarehouseMapSyncResponse(
+                warehouseId,
+                aiWarehouseId,
+                true,
+                true
+        );
+    }
+
+    private void validateMapContract(WarehouseImportRequest.MapPayload map) {
+        if (map == null || map.nodes() == null || map.nodes().isEmpty()
+                || map.edges() == null || map.edges().isEmpty()) {
+            throw new BusinessException(ErrorCode.WAREHOUSE_MAP_INVALID);
+        }
+
+        Set<String> nodeIds = new LinkedHashSet<>();
+        for (WarehouseImportRequest.MapNode node : map.nodes()) {
+            if (node.id() == null || node.id().isBlank()
+                    || node.type() == null || node.type().isBlank()
+                    || !nodeIds.add(node.id())) {
+                throw new BusinessException(ErrorCode.WAREHOUSE_MAP_INVALID);
+            }
+        }
+
+        Set<String> edgeIds = new LinkedHashSet<>();
+        for (WarehouseImportRequest.MapEdge edge : map.edges()) {
+            if (edge.id() == null || edge.id().isBlank()
+                    || !edgeIds.add(edge.id())
+                    || !nodeIds.contains(edge.source())
+                    || !nodeIds.contains(edge.target())
+                    || edge.source().equals(edge.target())
+                    || (edge.speed_limit_mps() != null
+                    && edge.speed_limit_mps() <= 0)
+                    || (edge.distance_m() != null && edge.distance_m() < 0)) {
+                throw new BusinessException(ErrorCode.WAREHOUSE_MAP_INVALID);
+            }
+        }
     }
 
     /* =========================================================
