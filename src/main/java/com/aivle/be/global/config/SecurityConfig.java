@@ -83,7 +83,8 @@ public class SecurityConfig {
                                 "/api/robots",
                                 "/api/robots/**",
                                 "/api/products",
-                                "/api/products/**"
+                                "/api/products/**",
+                                "/api/operations/**"
                         ).hasAnyRole("USER", "GUEST")
                         .requestMatchers(
                                 HttpMethod.POST,
