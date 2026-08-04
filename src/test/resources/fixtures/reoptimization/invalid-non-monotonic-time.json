@@ -1,0 +1,55 @@
+{
+    "requestId":  "mock-invalid-non-monotonic-request",
+    "replanId":  "fixture-replan-id",
+    "simulationRunId":  1,
+    "snapshotVersion":  1,
+    "status":  "SUCCEEDED",
+    "taskPlans":  [
+                      {
+                          "robotId":  10,
+                          "taskId":  100,
+                          "sequence":  0,
+                          "executionStage":  "FULL",
+                          "pathToStart":  [
+                                              {
+                                                  "nodeId":  10,
+                                                  "arrivalTimeMillis":  1000,
+                                                  "departureTimeMillis":  2000
+                                              },
+                                              {
+                                                  "nodeId":  20,
+                                                  "arrivalTimeMillis":  1500,
+                                                  "departureTimeMillis":  1500
+                                              }
+                                          ],
+                          "pathToEnd":  [
+                                            {
+                                                "nodeId":  20,
+                                                "arrivalTimeMillis":  1501,
+                                                "departureTimeMillis":  1501
+                                            },
+                                            {
+                                                "nodeId":  30,
+                                                "arrivalTimeMillis":  7501,
+                                                "departureTimeMillis":  7501
+                                            }
+                                        ],
+                          "estimatedStartTimeMillis":  1000,
+                          "estimatedCompletionTimeMillis":  7502,
+                          "pickingWindow":  {
+                                                "nodeId":  20,
+                                                "startTimeMillis":  1500,
+                                                "endTimeMillis":  1501
+                                            },
+                          "droppingWindow":  {
+                                                 "nodeId":  30,
+                                                 "startTimeMillis":  7501,
+                                                 "endTimeMillis":  7502
+                                             }
+                      }
+                  ],
+    "unassignedTaskIds":  [
+
+                          ],
+    "message":  "second arrival overlaps the previous node occupancy"
+}

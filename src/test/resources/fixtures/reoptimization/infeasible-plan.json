@@ -1,0 +1,10 @@
+{
+  "requestId": "mock-infeasible-request",
+  "replanId": "fixture-replan-id",
+  "simulationRunId": 1,
+  "snapshotVersion": 1,
+  "status": "INFEASIBLE",
+  "taskPlans": [],
+  "unassignedTaskIds": [100],
+  "message": "no feasible plan"
+}

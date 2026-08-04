@@ -35,7 +35,7 @@ public record ReoptimizationCompletedEvent(
                 simulationRunId,
                 optimizationResultId,
                 response.requestId(),
-                response.status(),
+                response.status().name(),
                 reason,
                 triggerRobotId,
                 changedTaskIds,

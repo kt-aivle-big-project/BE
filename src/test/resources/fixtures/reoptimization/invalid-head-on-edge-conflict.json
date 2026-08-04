@@ -1,0 +1,87 @@
+{
+    "requestId":  "invalid-head-on-edge-conflict",
+    "replanId":  "fixture-replan-id",
+    "simulationRunId":  1,
+    "snapshotVersion":  7,
+    "status":  "SUCCEEDED",
+    "taskPlans":  [
+                      {
+                          "robotId":  10,
+                          "taskId":  100,
+                          "sequence":  0,
+                          "executionStage":  "FULL",
+                          "pathToStart":  [
+                                              {
+                                                  "nodeId":  10,
+                                                  "arrivalTimeMillis":  1000,
+                                                  "departureTimeMillis":  1000
+                                              },
+                                              {
+                                                  "nodeId":  20,
+                                                  "arrivalTimeMillis":  3000,
+                                                  "departureTimeMillis":  3000
+                                              }
+                                          ],
+                          "pathToEnd":  [
+                                            {
+                                                "nodeId":  20,
+                                                "arrivalTimeMillis":  3001,
+                                                "departureTimeMillis":  3001
+                                            }
+                                        ],
+                          "estimatedStartTimeMillis":  1000,
+                          "estimatedCompletionTimeMillis":  3002,
+                          "pickingWindow":  {
+                                                "nodeId":  20,
+                                                "startTimeMillis":  3000,
+                                                "endTimeMillis":  3001
+                                            },
+                          "droppingWindow":  {
+                                                 "nodeId":  20,
+                                                 "startTimeMillis":  3001,
+                                                 "endTimeMillis":  3002
+                                             }
+                      },
+                      {
+                          "robotId":  11,
+                          "taskId":  101,
+                          "sequence":  0,
+                          "executionStage":  "FULL",
+                          "pathToStart":  [
+                                              {
+                                                  "nodeId":  20,
+                                                  "arrivalTimeMillis":  1500,
+                                                  "departureTimeMillis":  1500
+                                              },
+                                              {
+                                                  "nodeId":  10,
+                                                  "arrivalTimeMillis":  2500,
+                                                  "departureTimeMillis":  2500
+                                              }
+                                          ],
+                          "pathToEnd":  [
+                                            {
+                                                "nodeId":  10,
+                                                "arrivalTimeMillis":  2501,
+                                                "departureTimeMillis":  2501
+                                            }
+                                        ],
+                          "estimatedStartTimeMillis":  1500,
+                          "estimatedCompletionTimeMillis":  2502,
+                          "pickingWindow":  {
+                                                "nodeId":  10,
+                                                "startTimeMillis":  2500,
+                                                "endTimeMillis":  2501
+                                            },
+                          "droppingWindow":  {
+                                                 "nodeId":  10,
+                                                 "startTimeMillis":  2501,
+                                                 "endTimeMillis":  2502
+                                             }
+                      }
+                  ],
+    "unassignedTaskIds":  [
+
+                          ],
+    "message":  "robots traverse edge 1 in opposite directions"
+}
