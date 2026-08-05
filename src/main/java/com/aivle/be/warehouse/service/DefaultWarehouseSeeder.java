@@ -106,7 +106,7 @@ public class DefaultWarehouseSeeder implements ApplicationRunner {
         );
 
         WarehouseImportResponse response = warehouseImportService.importWarehouse(
-                request, ADMIN_USER_ID, true, spec.id()
+                request, ADMIN_USER_ID
         );
 
         log.info("[기본 창고] {} (id={}) 노드 {}, 간선 {}, 랙 {}, 충전소 {}, 로봇 {}",

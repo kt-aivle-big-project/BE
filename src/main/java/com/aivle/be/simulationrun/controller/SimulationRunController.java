@@ -2,7 +2,6 @@ package com.aivle.be.simulationrun.controller;
 
 import com.aivle.be.auth.security.AuthenticatedRequester;
 import com.aivle.be.auth.security.AuthenticatedRequesterResolver;
-import com.aivle.be.auth.security.GuestAccessPolicy;
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
@@ -41,7 +40,6 @@ public class SimulationRunController {
     private final SimulationRunService simulationRunService;
     private final TaskService taskService;
     private final AuthenticatedRequesterResolver requesterResolver;
-    private final GuestAccessPolicy guestAccessPolicy;
 
     @Operation(summary = "시뮬레이션 실행 생성")
     @PostMapping
@@ -153,7 +151,6 @@ public class SimulationRunController {
             @PathVariable Long simulationRunId,
             Authentication authentication
     ) {
-        guestAccessPolicy.requireUser(requester(authentication));
         return ResponseEntity.ok(simulationRunService.complete(simulationRunId));
     }
 
@@ -163,7 +160,6 @@ public class SimulationRunController {
             @PathVariable Long simulationRunId,
             Authentication authentication
     ) {
-        guestAccessPolicy.requireUser(requester(authentication));
         return ResponseEntity.ok(simulationRunService.fail(simulationRunId));
     }
 
@@ -224,7 +220,6 @@ public class SimulationRunController {
             @Valid @RequestBody RobotStateUpdateRequest request,
             Authentication authentication
     ) {
-        guestAccessPolicy.requireUser(requester(authentication));
         return ResponseEntity.ok(
                 simulationRunService.updateRobotState(simulationRunId, robotId, request)
         );
