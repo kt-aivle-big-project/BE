@@ -114,6 +114,18 @@ public record WarehouseImportRequest(
             };
         }
 
+        /**
+         * 이 노드가 가리키는 설비 코드.
+         *
+         * <p>지도 JSON 이 설비 코드를 따로 적어 두지 않은 경우가 많다.
+         * 예를 들어 빈 토트 버퍼는 {@code {"id": "ETB_0", "type":
+         * "empty_tote_buffer_access", ...}} 처럼 {@code buffer_id} 없이 온다.
+         * 이때 코드가 비면 Neo4j 계약에 {@code buffer_id} 가 빠져
+         * AI 가 경로 계획을 세우지 못한다.
+         *
+         * <p>설비 접근 노드는 하나가 설비 하나에 대응하므로,
+         * 적힌 코드가 없으면 노드 이름을 그대로 설비 코드로 쓴다.
+         */
         public String resourceCode() {
             if (rack_id != null) {
                 return rack_id;
@@ -127,7 +139,10 @@ public record WarehouseImportRequest(
             if (buffer_id != null) {
                 return buffer_id;
             }
-            return resource_id;
+            if (resource_id != null) {
+                return resource_id;
+            }
+            return resourceType() == null ? null : id;
         }
     }
 

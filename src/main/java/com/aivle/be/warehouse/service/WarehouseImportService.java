@@ -5,6 +5,8 @@ import com.aivle.be.chargingstation.repository.ChargingStationRepository;
 import com.aivle.be.graph.event.WarehouseGraphChangedEvent;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.product.entity.Product;
+import com.aivle.be.product.repository.ProductRepository;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.domain.RobotAvailabilityStatus;
 import com.aivle.be.robot.repository.RobotRepository;
@@ -25,6 +27,8 @@ import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import com.aivle.be.warehouseedge.entity.WarehouseEdge;
 import com.aivle.be.warehouseedge.repository.WarehouseEdgeRepository;
+import com.aivle.be.warehouseitem.entity.WarehouseItem;
+import com.aivle.be.warehouseitem.repository.WarehouseItemRepository;
 import com.aivle.be.warehousenode.domain.NodeType;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
@@ -80,9 +84,24 @@ public class WarehouseImportService {
 
     private static final Logger log = LoggerFactory.getLogger(WarehouseImportService.class);
 
-    /** 지도 JSON 의 타입 -> 우리 노드 타입 */
+    /**
+     * 지도 JSON 의 타입 -> 우리 노드 타입.
+     *
+     * <p>{@code inbound_access} / {@code outbound_access} 는 입출고구 앞의 진입 자리다.
+     * 통로에서 입고구로 가는 길이 전부 이 자리를 거치므로 반드시 저장해야 한다.
+     * 빠뜨리면 양 끝 중 한쪽이 없는 간선이 통째로 버려져
+     * 입고구·출고구가 통로와 끊긴 외딴섬이 된다.
+     *
+     * <p>랙 접근 자리처럼 설비 하나로 합칠 수는 없다.
+     * 랙은 접근 자리 2개가 랙 1개에 대응하지만,
+     * 출고 진입 자리 {@code O_0} 은 출고구 {@code O_A}·{@code O_B}·{@code O_C}
+     * 세 개에 동시에 붙어 있다. 즉 이 자리들은 설비가 아니라 통로 교차점이므로
+     * {@code ROUTE} 로 저장한다.
+     */
     private static final Map<String, NodeType> NODE_TYPES = Map.ofEntries(
             Map.entry("route", NodeType.ROUTE),
+            Map.entry("inbound_access", NodeType.ROUTE),
+            Map.entry("outbound_access", NodeType.ROUTE),
             Map.entry("route_charge_junction", NodeType.ROUTE_CHARGE_JUNCTION),
             Map.entry("rack_storage", NodeType.RACK_STORAGE),
             Map.entry("rack_access", NodeType.RACK_ACCESS),
@@ -115,6 +134,9 @@ public class WarehouseImportService {
 
     private static final int DEFAULT_ROBOT_COUNT = 6;
     private static final double DEFAULT_CHARGING_POWER = 50.0;
+
+    /** 선반 한 대의 층 수. WarehouseItem 이 1~3만 허용한다. */
+    private static final int RACK_LEVELS = 3;
     private static final Set<TaskStatus> OPERATIONAL_TASK_STATUSES = Set.of(
             TaskStatus.PENDING,
             TaskStatus.ASSIGNED,
@@ -139,6 +161,8 @@ public class WarehouseImportService {
     private final RobotSpecRepository robotSpecRepository;
     private final ScenarioRepository scenarioRepository;
     private final UserRepository userRepository;
+    private final ProductRepository productRepository;
+    private final WarehouseItemRepository warehouseItemRepository;
     private final TaskRepository taskRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final WarehouseFacilitySyncService warehouseFacilitySyncService;
@@ -147,11 +171,13 @@ public class WarehouseImportService {
     public WarehouseImportResponse importWarehouse(WarehouseImportRequest request, Long loginUserId) {
         User owner = findOwner(request.userId(), loginUserId);
 
+        int[] dimensions = resolveDimensions(request);
+
         Warehouse warehouse = warehouseRepository.save(
                 Warehouse.create(
                         request.name(),
-                        request.width(),
-                        request.height(),
+                        dimensions[0],
+                        dimensions[1],
                         owner,
                         request.location(),
                         request.description(),
@@ -182,7 +208,8 @@ public class WarehouseImportService {
         List<WarehouseNode> racks = nodesOf(nodes, NodeType.RACK_STORAGE);
 
         createChargingStations(warehouse, chargingSlots);
-        createStorageLocations(warehouse, racks);
+        List<StorageLocation> locations = createStorageLocations(warehouse, racks);
+        int stockedLevels = createInitialInventory(warehouse, locations);
         warehouseFacilitySyncService.synchronizeOutboundFacilities(
                 warehouse.getId(), request.map(), nodeByCode
         );
@@ -199,9 +226,10 @@ public class WarehouseImportService {
 
         eventPublisher.publishEvent(new WarehouseGraphChangedEvent(warehouse.getId()));
 
-        log.info("[창고 가져오기] {} (id={}) 노드 {}, 간선 {}, 랙 {}, 충전소 {}, 로봇 {} (제외 {})",
+        log.info("[창고 가져오기] {} (id={}) 노드 {}, 간선 {}, 랙 {}, 충전소 {}, 로봇 {}, 초기 재고 {}칸 (제외 {})",
                 warehouse.getName(), warehouse.getId(),
-                nodes.size(), edgeCount, racks.size(), chargingSlots.size(), robotCount, skipped);
+                nodes.size(), edgeCount, racks.size(), chargingSlots.size(),
+                robotCount, stockedLevels, skipped);
 
         return new WarehouseImportResponse(
                 warehouse.getId(),
@@ -282,10 +310,14 @@ public class WarehouseImportService {
         }
 
         int skipped = 0;
+        List<String> skippedNodes = new ArrayList<>();
         for (WarehouseImportRequest.MapNode raw : request.map().nodes()) {
             NodeType nodeType = NODE_TYPES.get(lower(raw.type()));
             if (nodeType == null) {
+                // 모르는 종류의 노드는 저장하지 않는다.
+                // 그 노드에 붙은 간선까지 같이 사라지므로 이름을 남긴다.
                 skipped += 1;
+                skippedNodes.add("%s(%s)".formatted(raw.id(), raw.type()));
                 continue;
             }
             WarehouseNode.RouteProperties properties = new WarehouseNode.RouteProperties(
@@ -326,16 +358,30 @@ public class WarehouseImportService {
         }
         warehouseNodeRepository.flush();
 
+        if (!skippedNodes.isEmpty()) {
+            log.warn("[창고 수정] id={} 종류를 알 수 없어 저장하지 않은 노드 {}개: {}",
+                    warehouseId, skippedNodes.size(),
+                    skippedNodes.size() > 20
+                            ? skippedNodes.subList(0, 20) + " ..."
+                            : skippedNodes);
+        }
+
         List<WarehouseEdge> existingEdges = warehouseEdgeRepository
                 .findAllByFromNode_Warehouse_Id(warehouseId);
         Map<String, WarehouseEdge> edgeByCode = new LinkedHashMap<>();
         existingEdges.forEach(edge -> edgeByCode.put(edge.getEdgeCode(), edge));
         Set<String> requestedEdgeCodes = new LinkedHashSet<>();
+        List<String> droppedEdges = new ArrayList<>();
 
         for (WarehouseImportRequest.MapEdge raw : request.map().edges()) {
             WarehouseNode source = nodeByCode.get(raw.source());
             WarehouseNode target = nodeByCode.get(raw.target());
             if (source == null || target == null || source == target) {
+                // 끝점 노드를 못 찾은 간선은 저장되지 않는다.
+                // 조용히 버리면 "저장은 되는데 간선만 안 생긴다" 로 보이므로
+                // 어느 노드 이름이 어긋났는지 남긴다.
+                droppedEdges.add("%s(%s->%s)".formatted(
+                        raw.id(), raw.source(), raw.target()));
                 continue;
             }
             String edgeCode = raw.id();
@@ -343,6 +389,9 @@ public class WarehouseImportService {
                 edgeCode = raw.source() + "::" + raw.target();
             }
             if (!requestedEdgeCodes.add(edgeCode)) {
+                // 같은 코드를 두 번 보내면 뒤에 온 간선은 저장되지 않는다.
+                droppedEdges.add("%s(중복, %s->%s)".formatted(
+                        edgeCode, raw.source(), raw.target()));
                 continue;
             }
             double distance = raw.distance_m() == null ? 1.0 : raw.distance_m();
@@ -384,6 +433,18 @@ public class WarehouseImportService {
                 .toList();
         warehouseEdgeRepository.deleteAll(removedEdges);
         warehouseEdgeRepository.flush();
+
+        log.info("[창고 수정] id={} 요청 노드 {} (제외 {}), 요청 간선 {} -> 저장 {}, 삭제 {}",
+                warehouseId, request.map().nodes().size(), skipped,
+                request.map().edges().size(), requestedEdgeCodes.size(),
+                removedEdges.size());
+        if (!droppedEdges.isEmpty()) {
+            log.warn("[창고 수정] id={} 끝점을 찾지 못해 버린 간선 {}개: {}",
+                    warehouseId, droppedEdges.size(),
+                    droppedEdges.size() > 20
+                            ? droppedEdges.subList(0, 20) + " ..."
+                            : droppedEdges);
+        }
 
         removedNodes.forEach(WarehouseNode::retire);
         warehouseNodeRepository.flush();
@@ -683,7 +744,7 @@ public class WarehouseImportService {
     }
 
     /** 랙마다 보관 자리를 하나씩 만든다. 재고는 여기에 붙는다. */
-    private void createStorageLocations(Warehouse warehouse, List<WarehouseNode> racks) {
+    private List<StorageLocation> createStorageLocations(Warehouse warehouse, List<WarehouseNode> racks) {
         LocalDateTime now = LocalDateTime.now();
         List<StorageLocation> locations = new ArrayList<>();
 
@@ -699,7 +760,61 @@ public class WarehouseImportService {
             locations.add(location);
         }
 
-        storageLocationRepository.saveAll(locations);
+        return storageLocationRepository.saveAll(locations);
+    }
+
+    /**
+     * 새로 만든 창고의 랙 앞쪽 절반을 3층까지 채운다.
+     *
+     * <p>기본 창고는 {@code V05_inventory.sql} 이 재고를 깔아 주지만,
+     * 지도를 올려 만든 창고에는 그 시드가 없다. 재고가 0이면
+     *
+     * <pre>
+     *   화면 - 선반 3칸이 전부 빈칸으로만 보인다
+     *   실행 - 출고 작업이 하나도 만들어지지 않는다
+     * </pre>
+     *
+     * <p>재고는 BOX 단위라 수량은 품목의 {@code unitsPerBox} 를 그대로 쓴다.
+     * 뒤쪽 절반은 비워 둬야 입고 작업이 들어갈 자리가 생긴다.
+     *
+     * @return 채운 칸 수 (랙 수 × 층 수)
+     */
+    private int createInitialInventory(Warehouse warehouse, List<StorageLocation> locations) {
+        List<Product> products = productRepository.findAllByOrderByProductCodeAsc()
+                .stream()
+                .filter(product -> product.getUnitsPerBox() != null && product.getUnitsPerBox() > 0)
+                .toList();
+
+        if (products.isEmpty() || locations.isEmpty()) {
+            log.warn("[창고 가져오기] 초기 재고 생략 - 품목 {}종, 보관위치 {}곳",
+                    products.size(), locations.size());
+            return 0;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        int stockedRacks = Math.max(1, locations.size() / 2);
+        List<WarehouseItem> items = new ArrayList<>();
+
+        for (int index = 0; index < stockedRacks; index++) {
+            StorageLocation location = locations.get(index);
+
+            for (int level = 1; level <= RACK_LEVELS; level++) {
+                Product product = products.get((index * RACK_LEVELS + level - 1) % products.size());
+
+                items.add(WarehouseItem.create(
+                        warehouse,
+                        location,
+                        level,
+                        location.getNode(),
+                        product,
+                        now,
+                        product.getUnitsPerBox()
+                ));
+            }
+        }
+
+        warehouseItemRepository.saveAll(items);
+        return items.size();
     }
 
     /** 로봇은 충전 슬롯에서 시작한다. */
@@ -788,6 +903,47 @@ public class WarehouseImportService {
     /* =========================================================
        보조
     ========================================================= */
+
+    /**
+     * 창고의 가로·세로를 지도 좌표에서 정한다.
+     *
+     * <p>지도 JSON 의 좌표는 파워포인트 인치라 사용자가 입력한 폭·높이와
+     * 아무 관계가 없다. 입력값을 그대로 쓰면 화면의 도면 영역이
+     * 노드가 실제로 차지하는 범위와 어긋나 도면이 잘리거나 구석에 작게 박힌다.
+     *
+     * <p>그래서 노드 좌표의 최댓값을 올림해 창고 크기로 삼는다.
+     * 좌표를 읽을 수 없을 때만 요청값으로 되돌아간다.
+     *
+     * @return {가로, 세로}
+     */
+    private int[] resolveDimensions(WarehouseImportRequest request) {
+        List<WarehouseImportRequest.MapNode> rawNodes = request.map() == null
+                ? List.of()
+                : request.map().nodes();
+
+        double maxX = rawNodes.stream()
+                .map(WarehouseImportRequest.MapNode::x)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(Double.NaN);
+        double maxY = rawNodes.stream()
+                .map(WarehouseImportRequest.MapNode::y)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(Double.NaN);
+
+        if (Double.isNaN(maxX) || Double.isNaN(maxY)) {
+            return new int[]{request.width(), request.height()};
+        }
+
+        // 가장자리 노드가 경계선에 딱 붙지 않도록 한 칸 여유를 준다.
+        return new int[]{
+                Math.max(1, (int) Math.ceil(maxX) + 1),
+                Math.max(1, (int) Math.ceil(maxY) + 1)
+        };
+    }
 
     private User findOwner(Long requestedUserId, Long loginUserId) {
         Long userId = requestedUserId != null ? requestedUserId : loginUserId;
