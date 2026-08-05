@@ -2,6 +2,7 @@ package com.aivle.be.global.config;
 
 import com.aivle.be.auth.jwt.JwtAuthenticationFilter;
 import com.aivle.be.auth.jwt.JwtAuthenticationEntryPoint;
+import com.aivle.be.auth.jwt.JwtAccessDeniedHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,15 +25,18 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
+    private final JwtAccessDeniedHandler jwtAccessDeniedHandler;
     private final List<String> allowedOrigins;
 
     public SecurityConfig(
             JwtAuthenticationFilter jwtAuthenticationFilter,
             JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint,
+            JwtAccessDeniedHandler jwtAccessDeniedHandler,
             @Value("${cors.allowed-origins}") String allowedOrigins
     ) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.jwtAuthenticationEntryPoint = jwtAuthenticationEntryPoint;
+        this.jwtAccessDeniedHandler = jwtAccessDeniedHandler;
         this.allowedOrigins = Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim)
                 .filter(origin -> !origin.isEmpty())
@@ -42,6 +46,7 @@ public class SecurityConfig {
     private static final String[] PUBLIC_PATHS = {
             "/api/auth/signup",
             "/api/auth/login",
+            "/api/auth/guest",
             "/api/auth/refresh",
             "/api/auth/logout",
             "/swagger-ui.html",
@@ -64,11 +69,48 @@ public class SecurityConfig {
                 )
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint(jwtAuthenticationEntryPoint)
+                        .accessDeniedHandler(jwtAccessDeniedHandler)
                 )
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(PUBLIC_PATHS).permitAll()
-                        .anyRequest().authenticated()
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/warehouses",
+                                "/api/warehouses/**",
+                                "/api/scenarios",
+                                "/api/scenarios/**",
+                                "/api/robots",
+                                "/api/robots/**",
+                                "/api/products",
+                                "/api/products/**",
+                                "/api/operations/**"
+                        ).hasAnyRole("USER", "GUEST")
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/simulation-runs",
+                                "/api/simulation-runs/*/start",
+                                "/api/simulation-runs/*/pause",
+                                "/api/simulation-runs/*/resume",
+                                "/api/simulation-runs/*/reset",
+                                "/api/simulation-runs/*/stop",
+                                "/api/simulation-runs/stop-active",
+                                "/api/optimizations/simulation-runs/*/reoptimize"
+                        ).hasAnyRole("USER", "GUEST")
+                        .requestMatchers(
+                                HttpMethod.PATCH,
+                                "/api/simulation-runs/*/speed"
+                        ).hasAnyRole("USER", "GUEST")
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/simulation-runs/my",
+                                "/api/simulation-runs/*/status",
+                                "/api/simulation-runs/*/robots",
+                                "/api/simulation-runs/*/tasks",
+                                "/api/simulation-runs/*/robots/states",
+                                "/api/optimizations/simulation-runs/*/reoptimization-histories"
+                        ).hasAnyRole("USER", "GUEST")
+                        .anyRequest().hasRole("USER")
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();

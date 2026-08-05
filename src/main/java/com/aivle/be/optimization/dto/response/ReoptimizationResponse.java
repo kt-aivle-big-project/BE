@@ -4,22 +4,27 @@ import java.util.List;
 
 public record ReoptimizationResponse(
         String requestId,
-        String status,
-        List<TaskAssignment> assignments,
-        List<RobotRoute> routes
+        String replanId,
+        Long simulationRunId,
+        Long snapshotVersion,
+        Status status,
+        List<TaskPlan> taskPlans,
+        List<Long> unassignedTaskIds,
+        String message
 ) {
 
-    public record TaskAssignment(
-            Long taskId,
-            Long robotId
-    ) {
+    public ReoptimizationResponse {
+        taskPlans = taskPlans == null
+                ? List.of()
+                : List.copyOf(taskPlans);
+        unassignedTaskIds = unassignedTaskIds == null
+                ? List.of()
+                : List.copyOf(unassignedTaskIds);
     }
 
-    public record RobotRoute(
-            Long robotId,
-            List<Long> nodePath,
-            Double totalDistance,
-            Double estimatedTime
-    ) {
+    public enum Status {
+        SUCCEEDED,
+        INFEASIBLE,
+        FAILED
     }
 }

@@ -4,43 +4,12 @@ import com.aivle.be.optimization.dto.request.OptimizationRequest;
 import com.aivle.be.optimization.dto.request.ReoptimizationOptimizationRequest;
 import com.aivle.be.optimization.dto.response.OptimizationResponse;
 import com.aivle.be.optimization.dto.response.ReoptimizationResponse;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
-@Component
-public class OptimizationClient {
+public interface OptimizationClient {
 
-    private final RestClient restClient;
+    OptimizationResponse optimize(OptimizationRequest request);
 
-    public OptimizationClient(
-            @Value("${fastapi.base-url}") String fastApiBaseUrl
-    ) {
-        this.restClient = RestClient.builder()
-                .baseUrl(fastApiBaseUrl)
-                .build();
-    }
-
-    public OptimizationResponse optimize(OptimizationRequest request) {
-        // TODO: FastAPI 팀 최종 엔드포인트 확정 후 URI 수정
-        return restClient
-                .post()
-                .uri("/optimize")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(request)
-                .retrieve()
-                .body(OptimizationResponse.class);
-    }
-
-    public ReoptimizationResponse reoptimize(
+    ReoptimizationResponse reoptimize(
             ReoptimizationOptimizationRequest request
-    ) {
-        return restClient.post()
-                .uri("/reoptimize")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(request)
-                .retrieve()
-                .body(ReoptimizationResponse.class);
-    }
+    );
 }

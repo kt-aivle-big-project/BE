@@ -1,0 +1,29 @@
+{
+  "requestId": "mock-success-request",
+  "replanId": "fixture-replan-id",
+  "simulationRunId": 1,
+  "snapshotVersion": 1,
+  "status": "SUCCEEDED",
+  "taskPlans": [
+    {
+      "robotId": 10,
+      "taskId": 100,
+      "sequence": 0,
+      "executionStage": "FULL",
+      "pathToStart": [
+        {"nodeId": 10, "arrivalTimeMillis": 1000, "departureTimeMillis": 1000},
+        {"nodeId": 20, "arrivalTimeMillis": 3000, "departureTimeMillis": 4000}
+      ],
+      "pathToEnd": [
+        {"nodeId": 20, "arrivalTimeMillis": 9000, "departureTimeMillis": 9000},
+        {"nodeId": 30, "arrivalTimeMillis": 13000, "departureTimeMillis": 13000}
+      ],
+      "pickingWindow": {"nodeId": 20, "startTimeMillis": 4000, "endTimeMillis": 9000},
+      "droppingWindow": {"nodeId": 30, "startTimeMillis": 13000, "endTimeMillis": 18000},
+      "estimatedStartTimeMillis": 1000,
+      "estimatedCompletionTimeMillis": 18000
+    }
+  ],
+  "unassignedTaskIds": [],
+  "message": "fixture success plan"
+}

@@ -13,7 +13,13 @@ public class RobotAvailabilityStatusConverter
 
     @Override
     public String convertToDatabaseColumn(RobotAvailabilityStatus status) {
-        return status == null ? null : status.name();
+        if (status == null) {
+            return null;
+        }
+        return switch (status) {
+            case AVAILABLE -> "IDLE";
+            case UNAVAILABLE -> "BUSY";
+        };
     }
 
     @Override

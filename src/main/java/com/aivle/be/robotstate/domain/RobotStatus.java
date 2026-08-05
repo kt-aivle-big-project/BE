@@ -34,6 +34,9 @@ public enum RobotStatus {
     // 충전 중
     CHARGING,
 
+    // 재계획을 위한 안전 정지
+    PAUSED,
+
     // 오류/고장
     ERROR,
 

@@ -1,5 +1,6 @@
 package com.aivle.be.warehouse.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -43,6 +44,7 @@ public record WarehouseImportRequest(
      * 지도 JSON 의 본문.
      * 우리가 쓰지 않는 필드(summary, routing_model 등)는 무시한다.
      */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record MapPayload(
             @NotEmpty(message = "노드가 비어 있습니다.")
             @Valid List<MapNode> nodes,
@@ -59,6 +61,7 @@ public record WarehouseImportRequest(
      * { "id": "K0_1_ACCESS_A", "type": "rack_access", "rack_id": "K0_1", ... }
      * </pre>
      */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record MapNode(
             @NotBlank String id,
             String type,
@@ -135,6 +138,7 @@ public record WarehouseImportRequest(
      * { "id": "H0_0", "source": "R0_0", "target": "R0_1", "distance_m": 2.25 }
      * </pre>
      */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record MapEdge(
             String id,
             @NotBlank String source,

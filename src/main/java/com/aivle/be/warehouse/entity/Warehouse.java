@@ -142,6 +142,16 @@ public class Warehouse {
         return Boolean.TRUE.equals(shared);
     }
 
+    /**
+     * 공용 창고로 표시한다.
+     *
+     * <p>앱을 처음 켤 때 넣는 기본 창고에만 쓴다.
+     * 화면에서 만든 창고는 항상 개인 창고다.
+     */
+    public void markShared() {
+        this.shared = true;
+    }
+
     /** 이 사용자가 볼 수 있는 창고인가. */
     public boolean isVisibleTo(Long userId) {
         return isShared() || (userId != null && userId.equals(user.getId()));

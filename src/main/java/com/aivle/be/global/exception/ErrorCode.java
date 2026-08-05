@@ -41,6 +41,7 @@ public enum ErrorCode {
     ACCOUNT_LOCKED(HttpStatus.LOCKED, "AUTH_002", "로그인 실패 횟수를 초과하여 계정이 일시 잠겼습니다."),
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_003", "유효하지 않은 인증 토큰입니다."),
     INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_004", "유효하지 않은 Refresh Token입니다."),
+    ACCESS_DENIED(HttpStatus.FORBIDDEN, "AUTH_005", "접근 권한이 없습니다."),
 
     SIMULATION_NOT_FOUND(HttpStatus.NOT_FOUND, "SIMULATION_001", "존재하지 않는 시뮬레이션입니다."),
 
@@ -62,6 +63,147 @@ public enum ErrorCode {
 
     INVALID_INBOUND_RATIO(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_011", "입고 품목 구성 비율의 합계는 100%여야 합니다."),
     INVALID_SIMULATION_SPEED(HttpStatus.BAD_REQUEST, "SIMULATION_RUN_012", "허용되지 않는 실행 배속입니다."),
+    REPLANNING_STOP_TIMEOUT(
+            HttpStatus.REQUEST_TIMEOUT,
+            "SIMULATION_RUN_013",
+            "재계획을 위한 로봇 안전 정지가 제한 시간 내 완료되지 않았습니다."
+    ),
+    REOPTIMIZATION_AI_FAILED(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "SIMULATION_RUN_014",
+            "AI 재계획 요청을 처리하지 못했습니다."
+    ),
+    REOPTIMIZATION_ALREADY_IN_PROGRESS(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_015",
+            "해당 시뮬레이션 실행의 재계획이 이미 진행 중입니다."
+    ),
+    REOPTIMIZATION_PLAN_APPLICATION_NOT_IMPLEMENTED(
+            HttpStatus.NOT_IMPLEMENTED,
+            "SIMULATION_RUN_016",
+            "AI 재계획 응답의 Runtime 적용은 아직 구현되지 않았습니다."
+    ),
+    REOPTIMIZATION_RESPONSE_CORRELATION_MISMATCH(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_017",
+            "AI 재계획 응답의 요청 상관키가 일치하지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_INFEASIBLE(
+            HttpStatus.UNPROCESSABLE_CONTENT,
+            "SIMULATION_RUN_018",
+            "AI가 실행 가능한 재계획을 찾지 못했습니다."
+    ),
+    MOCK_AI_PLAN_NOT_CONFIGURED(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "SIMULATION_RUN_019",
+            "Mock AI 재계획 fixture가 설정되지 않았습니다."
+    ),
+    MOCK_AI_PLAN_INVALID(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "SIMULATION_RUN_020",
+            "Mock AI 재계획 fixture가 현재 요청과 일치하지 않거나 올바르지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_CONTRACT_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_021",
+            "AI 재계획 응답이 시간 또는 작업 진행 단계 계약을 위반했습니다."
+    ),
+    REOPTIMIZATION_PLAN_TASK_COVERAGE_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_022",
+            "AI 재계획 응답의 작업 범위가 남은 작업과 일치하지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_ROBOT_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_023",
+            "AI 재계획 응답이 참가하지 않았거나 사용할 수 없는 로봇을 참조합니다."
+    ),
+    REOPTIMIZATION_PLAN_SEQUENCE_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_024",
+            "AI 재계획 응답의 로봇별 작업 순서가 올바르지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_PATH_INVALID(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_025",
+            "AI 재계획 응답의 경로가 창고 그래프와 일치하지 않습니다."
+    ),
+    REOPTIMIZATION_PLAN_BLOCKED_EDGE(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_026",
+            "AI 재계획 응답이 차단된 edge를 통과합니다."
+    ),
+    REOPTIMIZATION_PLAN_CONFLICT(
+            HttpStatus.BAD_GATEWAY,
+            "SIMULATION_RUN_027",
+            "AI 재계획 응답에 로봇 간 노드 또는 edge 시간 충돌이 있습니다."
+    ),
+    REOPTIMIZATION_PLAN_STALE(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_028",
+            "AI 재계획 응답이 현재 재계획 snapshot보다 오래되었습니다."
+    ),
+    REOPTIMIZATION_PLAN_STAGE_DUPLICATE(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_029",
+            "동일한 재계획 staging 계획이 이미 존재합니다."
+    ),
+    REOPTIMIZATION_PLAN_STAGE_FAILED(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "SIMULATION_RUN_030",
+            "검증된 재계획 계획을 staging 저장하지 못했습니다."
+    ),
+    REOPTIMIZATION_PLAN_STAGE_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "SIMULATION_RUN_031",
+            "재계획 staging 계획을 찾을 수 없습니다."
+    ),
+    REOPTIMIZATION_PLAN_APPLY_FAILED(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "SIMULATION_RUN_032",
+            "재계획 계획을 DB에 적용하지 못했습니다."
+    ),
+    REOPTIMIZATION_PLAN_TASK_STATE_CHANGED(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_033",
+            "재계획 이후 작업 상태 또는 담당 로봇이 변경되었습니다."
+    ),
+    REOPTIMIZATION_PLAN_STAGE_INVALID_STATUS(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_034",
+            "현재 상태의 재계획 staging 계획은 적용할 수 없습니다."
+    ),
+    REOPTIMIZATION_PLAN_ACTIVATION_NOT_IMPLEMENTED(
+            HttpStatus.NOT_IMPLEMENTED,
+            "SIMULATION_RUN_035",
+            "DB 적용이 끝난 재계획 계획의 Runtime 활성화는 아직 구현되지 않았습니다."
+    ),
+
+    REOPTIMIZATION_RUNTIME_CONTEXT_NOT_FOUND(
+            HttpStatus.NOT_FOUND,
+            "SIMULATION_RUN_036",
+            "재계획 계획을 설치할 Runtime context를 찾을 수 없습니다."
+    ),
+    REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_037",
+            "재계획 계획을 Runtime에 원자적으로 설치하지 못했습니다."
+    ),
+    REOPTIMIZATION_RUNTIME_PLAN_ALREADY_INSTALLED(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_038",
+            "다른 재계획 계획이 이미 Runtime에 설치되어 있습니다."
+    ),
+    REOPTIMIZATION_RUNTIME_STATE_INVALID(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_039",
+            "Runtime context가 재계획 계획을 설치할 수 있는 상태가 아닙니다."
+    ),
+    REOPTIMIZATION_PLAN_RUNTIME_ACTIVATION_NOT_IMPLEMENTED(
+            HttpStatus.NOT_IMPLEMENTED,
+            "SIMULATION_RUN_040",
+            "Runtime 실행 활성화와 전체 로봇 동시 재개는 아직 구현되지 않았습니다."
+    ),
 
     STORAGE_LOCATION_NOT_FOUND(HttpStatus.NOT_FOUND, "STORAGE_LOCATION_001", "존재하지 않는 보관위치입니다."),
 

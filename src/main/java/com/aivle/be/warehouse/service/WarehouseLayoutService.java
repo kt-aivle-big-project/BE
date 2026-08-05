@@ -2,6 +2,8 @@ package com.aivle.be.warehouse.service;
 
 import com.aivle.be.chargingstation.dto.response.ChargingStationResponse;
 import com.aivle.be.chargingstation.repository.ChargingStationRepository;
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.robot.dto.RobotResponse;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.warehouse.dto.WarehouseLayoutResponse;
@@ -34,9 +36,7 @@ public class WarehouseLayoutService {
 
     public WarehouseLayoutResponse getLayout(Long warehouseId) {
         Warehouse warehouse = warehouseRepository.findById(warehouseId)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "창고를 찾을 수 없습니다."
-                ));
+                .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
 
         List<WarehouseZoneResponse> zones =
                 warehouseZoneRepository.findAllByWarehouse_Id(warehouseId)

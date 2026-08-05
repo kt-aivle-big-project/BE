@@ -1,0 +1,55 @@
+{
+    "requestId":  "mock-invalid-departure-request",
+    "replanId":  "fixture-replan-id",
+    "simulationRunId":  1,
+    "snapshotVersion":  1,
+    "status":  "SUCCEEDED",
+    "taskPlans":  [
+                      {
+                          "robotId":  10,
+                          "taskId":  100,
+                          "sequence":  0,
+                          "executionStage":  "FULL",
+                          "pathToStart":  [
+                                              {
+                                                  "nodeId":  10,
+                                                  "arrivalTimeMillis":  1000,
+                                                  "departureTimeMillis":  999
+                                              },
+                                              {
+                                                  "nodeId":  20,
+                                                  "arrivalTimeMillis":  3000,
+                                                  "departureTimeMillis":  3000
+                                              }
+                                          ],
+                          "pathToEnd":  [
+                                            {
+                                                "nodeId":  20,
+                                                "arrivalTimeMillis":  3001,
+                                                "departureTimeMillis":  3001
+                                            },
+                                            {
+                                                "nodeId":  30,
+                                                "arrivalTimeMillis":  8001,
+                                                "departureTimeMillis":  8001
+                                            }
+                                        ],
+                          "estimatedStartTimeMillis":  1000,
+                          "estimatedCompletionTimeMillis":  8002,
+                          "pickingWindow":  {
+                                                "nodeId":  20,
+                                                "startTimeMillis":  3000,
+                                                "endTimeMillis":  3001
+                                            },
+                          "droppingWindow":  {
+                                                 "nodeId":  30,
+                                                 "startTimeMillis":  8001,
+                                                 "endTimeMillis":  8002
+                                             }
+                      }
+                  ],
+    "unassignedTaskIds":  [
+
+                          ],
+    "message":  "departure is before arrival"
+}

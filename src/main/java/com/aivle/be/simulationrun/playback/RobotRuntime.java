@@ -1,6 +1,10 @@
 package com.aivle.be.simulationrun.playback;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.optimization.dto.response.TaskPlan;
 import com.aivle.be.robotstate.domain.RobotStatus;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -48,6 +52,12 @@ public class RobotRuntime {
     private Phase phase = Phase.IDLE;
     private RobotStatus status = RobotStatus.IDLE;
 
+    // 재계획을 위해 안전 정지한 상태인지 여부
+    private boolean pausedForReplanning = false;
+
+    // 재계획 종료 후 복구할 화면 표시 상태
+    private RobotStatus statusBeforeReplanningPause;
+
     // 이 시뮬레이션 시각(ms)까지는 현재 동작을 수행 중.
     // 시계가 이 값을 넘어야 다음 동작으로 넘어간다.
     private long busyUntilMillis = 0L;
@@ -67,6 +77,29 @@ public class RobotRuntime {
 
     // 남은 이동 경로
     private final Deque<Long> remainingPath = new ArrayDeque<>();
+
+    @Setter(AccessLevel.NONE)
+    private String installedReplanId;
+
+    @Setter(AccessLevel.NONE)
+    private Long installedSnapshotVersion;
+
+    @Setter(AccessLevel.NONE)
+    private List<RuntimeTaskPlan> installedTaskPlans = List.of();
+
+    @Setter(AccessLevel.NONE)
+    private int currentPlanTaskIndex = -1;
+
+    @Setter(AccessLevel.NONE)
+    private PlannedPathSegment currentPlanPathSegment =
+            PlannedPathSegment.NONE;
+
+    @Setter(AccessLevel.NONE)
+    private int currentPlanPathStepIndex = -1;
+
+    @Setter(AccessLevel.NONE)
+    private ReoptimizationExecutionState reoptimizationExecutionState =
+            ReoptimizationExecutionState.COMPLETED;
 
     public RobotRuntime(
             Long robotId,
@@ -103,6 +136,140 @@ public class RobotRuntime {
         return remainingPath.peek();
     }
 
+    PreparedReoptimizationPlan prepareReoptimizationPlan(
+            RuntimeRobotPlan robotPlan,
+            String replanId,
+            Long snapshotVersion,
+            boolean mayReplaceActivatedPlan
+    ) {
+        if (!robotId.equals(robotPlan.robotId())) {
+            throw new BusinessException(
+                    ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED
+            );
+        }
+
+        List<RuntimeTaskPlan> taskPlans = robotPlan.taskPlans();
+        for (int expected = 0; expected < taskPlans.size(); expected++) {
+            RuntimeTaskPlan taskPlan = taskPlans.get(expected);
+            boolean invalidFull = taskPlan.executionStage()
+                    == TaskPlan.ExecutionStage.FULL
+                    && taskPlan.pathToStart().isEmpty();
+            boolean invalidToEnd = taskPlan.executionStage()
+                    == TaskPlan.ExecutionStage.TO_END
+                    && !taskPlan.pathToStart().isEmpty();
+            if (taskPlan.sequence() != expected
+                    || taskPlan.pathToEnd().isEmpty()
+                    || invalidFull
+                    || invalidToEnd) {
+                throw new BusinessException(
+                        ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_INSTALL_FAILED
+                );
+            }
+        }
+
+        if (installedReplanId != null) {
+            boolean samePlan = installedReplanId.equals(replanId)
+                    && installedSnapshotVersion.equals(snapshotVersion)
+                    && installedTaskPlans.equals(taskPlans);
+            if (!samePlan && !mayReplaceActivatedPlan) {
+                throw new BusinessException(
+                        ErrorCode.REOPTIMIZATION_RUNTIME_PLAN_ALREADY_INSTALLED
+                );
+            }
+        }
+
+        return new PreparedReoptimizationPlan(
+                replanId,
+                snapshotVersion,
+                taskPlans,
+                taskPlans.isEmpty() ? -1 : 0,
+                PlannedPathSegment.NONE,
+                -1
+        );
+    }
+
+    void installPreparedReoptimizationPlan(
+            PreparedReoptimizationPlan prepared
+    ) {
+        installedReplanId = prepared.replanId();
+        installedSnapshotVersion = prepared.snapshotVersion();
+        installedTaskPlans = prepared.taskPlans();
+        currentPlanTaskIndex = prepared.currentTaskPlanIndex();
+        currentPlanPathSegment = prepared.pathSegment();
+        currentPlanPathStepIndex = prepared.pathStepIndex();
+    }
+
+    void activateInstalledReoptimizationPlan(String replanId) {
+        if (!replanId.equals(installedReplanId)) {
+            throw new BusinessException(ErrorCode.REOPTIMIZATION_PLAN_STALE);
+        }
+        resumeAfterReplanning();
+        remainingPath.clear();
+        previousNodeId = null;
+        currentPlanTaskIndex = installedTaskPlans.isEmpty() ? -1 : 0;
+        currentPlanPathStepIndex = 0;
+        currentPlanPathSegment = PlannedPathSegment.NONE;
+        reoptimizationExecutionState = installedTaskPlans.isEmpty()
+                ? ReoptimizationExecutionState.COMPLETED
+                : ReoptimizationExecutionState.WAITING;
+        RuntimeTaskPlan firstTask = currentRuntimeTaskPlan();
+        phase = Phase.IDLE;
+        status = RobotStatus.IDLE;
+        currentTaskId = firstTask != null
+                && firstTask.executionStage()
+                == TaskPlan.ExecutionStage.TO_END
+                ? firstTask.taskId()
+                : null;
+        if (reoptimizationExecutionState == ReoptimizationExecutionState.COMPLETED) {
+            currentTaskId = null;
+        }
+    }
+
+    boolean canActivateInstalledReoptimizationPlan(String replanId) {
+        return replanId != null && replanId.equals(installedReplanId);
+    }
+
+    public RuntimeTaskPlan currentRuntimeTaskPlan() {
+        return currentPlanTaskIndex < 0
+                || currentPlanTaskIndex >= installedTaskPlans.size()
+                ? null
+                : installedTaskPlans.get(currentPlanTaskIndex);
+    }
+
+    public void transitionReoptimizationState(
+            ReoptimizationExecutionState state
+    ) {
+        reoptimizationExecutionState = state;
+    }
+
+    public void setReoptimizationPathCursor(
+            PlannedPathSegment segment,
+            int stepIndex
+    ) {
+        currentPlanPathSegment = segment;
+        currentPlanPathStepIndex = stepIndex;
+    }
+
+    public void completeCurrentRuntimeTask() {
+        currentPlanTaskIndex++;
+        currentPlanPathStepIndex = 0;
+        currentPlanPathSegment = PlannedPathSegment.NONE;
+        currentTaskId = null;
+        if (currentPlanTaskIndex >= installedTaskPlans.size()) {
+            currentPlanTaskIndex = -1;
+            reoptimizationExecutionState = ReoptimizationExecutionState.COMPLETED;
+            phase = Phase.IDLE;
+            status = RobotStatus.IDLE;
+        } else {
+            reoptimizationExecutionState = ReoptimizationExecutionState.WAITING;
+        }
+    }
+
+    public boolean isReoptimizationPlanCompleted() {
+        return reoptimizationExecutionState
+                == ReoptimizationExecutionState.COMPLETED;
+    }
+
     public boolean isIdle() {
         return phase == Phase.IDLE;
     }
@@ -122,6 +289,56 @@ public class RobotRuntime {
         this.previousNodeId = null;
         this.movementStartAtMillis = 0L;
     }
+    /**
+     * 재계획을 위해 현재 안전 위치에서 정지한다.
+     * phase와 remainingPath는 유지해 기존 진행 단계를 보존한다.
+     */
+    public void pauseForReplanning() {
+        if (pausedForReplanning
+                || status == RobotStatus.ERROR
+                || status == RobotStatus.OFFLINE) {
+            return;
+        }
+
+        statusBeforeReplanningPause = status;
+        pausedForReplanning = true;
+        status = RobotStatus.PAUSED;
+        stopMoving();
+    }
+
+    /**
+     * 재계획이 끝난 뒤 정지 전 상태로 복귀한다.
+     */
+    public void resumeAfterReplanning() {
+        if (!pausedForReplanning) {
+            return;
+        }
+
+        pausedForReplanning = false;
+
+        // 재계획 대기 중 고장·오프라인이 됐다면 해당 상태를 유지한다.
+        if (status == RobotStatus.ERROR
+                || status == RobotStatus.OFFLINE) {
+            statusBeforeReplanningPause = null;
+            return;
+        }
+
+        status = statusBeforeReplanningPause == null
+                ? RobotStatus.IDLE
+                : statusBeforeReplanningPause;
+
+        statusBeforeReplanningPause = null;
+    }
+    /**
+     * 재계획을 시작할 수 있을 만큼 정지된 상태인지 확인한다.
+     * 고장·오프라인 로봇은 이미 정지된 것으로 본다.
+     */
+    public boolean isStoppedForReplanning() {
+        return pausedForReplanning
+                || status == RobotStatus.ERROR
+                || status == RobotStatus.OFFLINE;
+    }
+
 
     public void consumeMoveBattery() {
         consumeBattery(moveBatteryRate);
@@ -176,5 +393,34 @@ public class RobotRuntime {
 
     private double nonNegativeRate(Double rate) {
         return rate == null ? 0 : Math.max(0, rate);
+    }
+
+    public enum PlannedPathSegment {
+        NONE,
+        TO_START,
+        TO_END
+    }
+
+    public enum ReoptimizationExecutionState {
+        WAITING,
+        MOVING_TO_START,
+        PICKING,
+        MOVING_TO_END,
+        DROPPING,
+        COMPLETED
+    }
+
+    record PreparedReoptimizationPlan(
+            String replanId,
+            Long snapshotVersion,
+            List<RuntimeTaskPlan> taskPlans,
+            int currentTaskPlanIndex,
+            PlannedPathSegment pathSegment,
+            int pathStepIndex
+    ) {
+
+        PreparedReoptimizationPlan {
+            taskPlans = List.copyOf(taskPlans);
+        }
     }
 }

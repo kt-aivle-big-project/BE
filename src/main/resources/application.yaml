@@ -10,8 +10,8 @@ spring:
   # 없으면 창고·노드가 비어 있어서 화면도 시뮬레이션도 동작하지 않는다.
   # 조원마다 수동으로 SQL 을 넣어야 했던 문제를 없앤다.
   #
-  # V02는 공용 기본 지도의 계약을 upsert하되, storage_location과 재고 행은 보존한다.
-  # 나머지 카탈로그/재고 시드는 "이미 있으면 건너뛴다" 방식으로 기존 값을 지킨다.
+  # 모든 파일은 "이미 있으면 건너뛴다"(ON CONFLICT DO NOTHING)로 쓰여 있어
+  # 매번 실행돼도 기존 데이터를 덮어쓰지 않는다.
   sql:
     init:
       mode: ${SQL_INIT_MODE:never}
@@ -42,6 +42,7 @@ cors:
 jwt:
   secret: ${JWT_SECRET}
   access-token-expiration-ms: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:900000}
+  guest-access-token-expiration-ms: ${JWT_GUEST_ACCESS_TOKEN_EXPIRATION_MS:3600000}
   refresh-token-expiration-ms: ${JWT_REFRESH_TOKEN_EXPIRATION_MS:1209600000}
   refresh-cookie-secure: ${JWT_REFRESH_COOKIE_SECURE:true}
 

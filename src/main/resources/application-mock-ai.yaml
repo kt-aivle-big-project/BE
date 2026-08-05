@@ -1,0 +1,4 @@
+mock-ai:
+  # 예: file:./src/test/resources/fixtures/reoptimization/success-task-plan.json
+  # fixture가 없으면 성공 계획을 조작하지 않고 명시적 오류를 반환한다.
+  reoptimization-fixture: ${MOCK_AI_REOPTIMIZATION_FIXTURE:}
