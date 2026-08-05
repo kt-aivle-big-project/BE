@@ -486,11 +486,11 @@ ON CONFLICT DO NOTHING;
 
 -- 10) 품목 마스터 ---------------------------------------------
 INSERT INTO product (product_id, product_code, product_name) VALUES
-  (1, 'A', '식품'),
-  (2, 'B', '음료'),
-  (3, 'C', '생활용품'),
-  (4, 'D', '전자제품'),
-  (5, 'E', '의류')
+  (1, 'ITEM-001', '식품'),
+  (2, 'ITEM-002', '음료'),
+  (3, 'ITEM-003', '생활용품'),
+  (4, 'ITEM-004', '전자제품'),
+  (5, 'ITEM-005', '의류')
 ON CONFLICT DO NOTHING;
 
 -- 11) 보관위치 (rack_storage 노드) ----------------------------
@@ -546,7 +546,7 @@ INSERT INTO storage_location (storage_location_id, warehouse_id, node_id, max_qu
 ON CONFLICT DO NOTHING;
 
 -- 12) 초기 재고 (앞쪽 랙 10곳) --------------------------------
-INSERT INTO warehouse_items (warehouse_item_id, warehouse_id, storage_location_id, node_id, item_id, received_at, quantity, inbound_quantity, outbound_quantity) VALUES
+INSERT INTO warehouse_items (warehouse_item_id, warehouse_id, storage_location_id, node_id, product_id, received_at, quantity, inbound_quantity, outbound_quantity) VALUES
   (1, 1, 1, 88, 2, NOW(), 50, 0, 0),
   (2, 1, 2, 89, 3, NOW(), 50, 0, 0),
   (3, 1, 3, 90, 4, NOW(), 50, 0, 0),

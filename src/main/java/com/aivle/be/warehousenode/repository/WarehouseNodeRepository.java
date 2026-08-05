@@ -12,7 +12,21 @@ public interface WarehouseNodeRepository
 
     List<WarehouseNode> findAllByWarehouse_Id(Long warehouseId);
 
+    List<WarehouseNode> findAllByWarehouse_IdAndActiveTrue(Long warehouseId);
+
     Optional<WarehouseNode> findByWarehouse_IdAndNodeCode(Long warehouseId, String nodeCode);
 
+    Optional<WarehouseNode> findByWarehouse_IdAndNodeCodeAndActiveTrue(
+            Long warehouseId,
+            String nodeCode
+    );
+
+    Optional<WarehouseNode> findByIdAndActiveTrue(Long nodeId);
+
     List<WarehouseNode> findAllByWarehouse_IdAndNodeType(Long warehouseId, NodeType nodeType);
+
+    List<WarehouseNode> findAllByWarehouse_IdAndNodeTypeAndActiveTrue(
+            Long warehouseId,
+            NodeType nodeType
+    );
 }

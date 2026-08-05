@@ -2,6 +2,7 @@ package com.aivle.be.warehouse.service;
 
 import com.aivle.be.chargingstation.entity.ChargingStation;
 import com.aivle.be.chargingstation.repository.ChargingStationRepository;
+import com.aivle.be.graph.event.WarehouseGraphChangedEvent;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.product.entity.Product;
@@ -15,6 +16,9 @@ import com.aivle.be.scenario.entity.Scenario;
 import com.aivle.be.scenario.repository.ScenarioRepository;
 import com.aivle.be.storagelocation.entity.StorageLocation;
 import com.aivle.be.storagelocation.repository.StorageLocationRepository;
+import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import com.aivle.be.task.entity.TaskStatus;
+import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.user.entity.User;
 import com.aivle.be.user.repository.UserRepository;
 import com.aivle.be.warehouse.dto.WarehouseImportRequest;
@@ -33,8 +37,8 @@ import com.aivle.be.warehousezone.repository.WarehouseZoneRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -71,8 +75,7 @@ import java.util.Set;
  *   왕복 두 줄은 BOTH 한 줄로 합침
  * </pre>
  *
- * <p>기본 창고 3개도 {@link DefaultWarehouseSeeder} 를 통해 이 서비스로 만들어진다.
- * 지도를 다루는 경로는 여기 하나뿐이다.
+ * <p>이 변환은 {@code tools/generate_warehouse_seed.py} 와 같은 규칙이다.
  * 기본 창고 3개는 그 스크립트로 미리 만들고, 사용자가 추가하는 창고는 여기서 만든다.
  */
 @Service
@@ -89,29 +92,41 @@ public class WarehouseImportService {
      * 빠뜨리면 양 끝 중 한쪽이 없는 간선이 통째로 버려져
      * 입고구·출고구가 통로와 끊긴 외딴섬이 된다.
      *
-     * <p>랙 접근 자리처럼 하나로 합칠 수는 없다.
+     * <p>랙 접근 자리처럼 설비 하나로 합칠 수는 없다.
      * 랙은 접근 자리 2개가 랙 1개에 대응하지만,
-     * 출고 진입 자리 {@code O_0} 은 출고구 {@code O_A}·{@code O_B}·{@code O_C} 세 개에 동시에 붙어 있다.
-     * 즉 이 자리들은 합칠 대상이 아니라 그냥 통로 교차점이다.
+     * 출고 진입 자리 {@code O_0} 은 출고구 {@code O_A}·{@code O_B}·{@code O_C}
+     * 세 개에 동시에 붙어 있다. 즉 이 자리들은 설비가 아니라 통로 교차점이므로
+     * {@code ROUTE} 로 저장한다.
      */
-    private static final Map<String, NodeType> NODE_TYPES = Map.of(
-            "route", NodeType.ROUTE,
-            "route_charge_junction", NodeType.ROUTE_CHARGE_JUNCTION,
-            "inbound", NodeType.INBOUND,
-            "outbound", NodeType.OUTBOUND,
-            "charging_slot", NodeType.CHARGING_SLOT,
-            "inbound_access", NodeType.ROUTE,
-            "outbound_access", NodeType.ROUTE
+    private static final Map<String, NodeType> NODE_TYPES = Map.ofEntries(
+            Map.entry("route", NodeType.ROUTE),
+            Map.entry("inbound_access", NodeType.ROUTE),
+            Map.entry("outbound_access", NodeType.ROUTE),
+            Map.entry("route_charge_junction", NodeType.ROUTE_CHARGE_JUNCTION),
+            Map.entry("rack_storage", NodeType.RACK_STORAGE),
+            Map.entry("rack_access", NodeType.RACK_ACCESS),
+            Map.entry("inbound_handoff_access", NodeType.INBOUND_HANDOFF_ACCESS),
+            Map.entry("outbound_station_access", NodeType.OUTBOUND_STATION_ACCESS),
+            Map.entry("empty_tote_buffer_access", NodeType.EMPTY_TOTE_BUFFER_ACCESS),
+            Map.entry("inbound", NodeType.INBOUND),
+            Map.entry("outbound", NodeType.OUTBOUND),
+            Map.entry("charging_slot", NodeType.CHARGING_SLOT),
+            Map.entry("parking_slot", NodeType.PARKING_SLOT)
     );
 
     /** 노드 타입 -> 구역 이름 */
-    private static final Map<NodeType, String> ZONE_NAMES = Map.of(
-            NodeType.ROUTE, "MOVING_ZONE",
-            NodeType.ROUTE_CHARGE_JUNCTION, "MOVING_ZONE",
-            NodeType.RACK_STORAGE, "STORAGE_ZONE",
-            NodeType.INBOUND, "INBOUND_ZONE",
-            NodeType.OUTBOUND, "OUTBOUND_ZONE",
-            NodeType.CHARGING_SLOT, "CHARGING_ZONE"
+    private static final Map<NodeType, String> ZONE_NAMES = Map.ofEntries(
+            Map.entry(NodeType.ROUTE, "MOVING_ZONE"),
+            Map.entry(NodeType.ROUTE_CHARGE_JUNCTION, "MOVING_ZONE"),
+            Map.entry(NodeType.RACK_STORAGE, "STORAGE_ZONE"),
+            Map.entry(NodeType.RACK_ACCESS, "STORAGE_ZONE"),
+            Map.entry(NodeType.INBOUND_HANDOFF_ACCESS, "INBOUND_ZONE"),
+            Map.entry(NodeType.OUTBOUND_STATION_ACCESS, "OUTBOUND_ZONE"),
+            Map.entry(NodeType.EMPTY_TOTE_BUFFER_ACCESS, "OUTBOUND_ZONE"),
+            Map.entry(NodeType.INBOUND, "INBOUND_ZONE"),
+            Map.entry(NodeType.OUTBOUND, "OUTBOUND_ZONE"),
+            Map.entry(NodeType.CHARGING_SLOT, "CHARGING_ZONE"),
+            Map.entry(NodeType.PARKING_SLOT, "MOVING_ZONE")
     );
 
     private static final String RACK_ACCESS_TYPE = "rack_access";
@@ -120,9 +135,21 @@ public class WarehouseImportService {
     private static final int DEFAULT_ROBOT_COUNT = 6;
     private static final double DEFAULT_CHARGING_POWER = 50.0;
 
-    /** 초기 재고를 넣을 랙 수와 랙당 수량. 기본 창고 3개의 시드와 같은 값이다. */
-    private static final int INITIAL_STOCK_LOCATIONS = 10;
-    private static final int INITIAL_STOCK_QUANTITY = 50;
+    /** 선반 한 대의 층 수. WarehouseItem 이 1~3만 허용한다. */
+    private static final int RACK_LEVELS = 3;
+    private static final Set<TaskStatus> OPERATIONAL_TASK_STATUSES = Set.of(
+            TaskStatus.PENDING,
+            TaskStatus.ASSIGNED,
+            TaskStatus.IN_PROGRESS
+    );
+    private static final Set<SimulationRunStatus> OPERATIONAL_RUN_STATUSES = Set.of(
+            SimulationRunStatus.CREATED,
+            SimulationRunStatus.RUNNING,
+            SimulationRunStatus.PAUSED,
+            SimulationRunStatus.QUIESCING,
+            SimulationRunStatus.REPLANNING,
+            SimulationRunStatus.PENDING_ACTIVATION
+    );
 
     private final WarehouseRepository warehouseRepository;
     private final WarehouseNodeRepository warehouseNodeRepository;
@@ -136,34 +163,27 @@ public class WarehouseImportService {
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
     private final WarehouseItemRepository warehouseItemRepository;
-    private final JdbcTemplate jdbcTemplate;
+    private final TaskRepository taskRepository;
+    private final ApplicationEventPublisher eventPublisher;
+    private final WarehouseFacilitySyncService warehouseFacilitySyncService;
 
-    /** 화면에서 지도를 올려 창고를 만든다. 항상 개인 창고다. */
     @Transactional
     public WarehouseImportResponse importWarehouse(WarehouseImportRequest request, Long loginUserId) {
-        return importWarehouse(request, loginUserId, false, null);
-    }
-
-    /**
-     * 지도로 창고를 만든다.
-     *
-     * @param shared  공용 창고로 표시할지. 앱 시작 시 넣는 기본 창고에만 true.
-     * @param fixedId 창고 ID 를 못 박고 싶을 때. null 이면 자동 부여.
-     *                기본 창고는 화면과 저장된 선택값이 ID 를 기준으로 하므로 1·2·3 으로 고정한다.
-     */
-    @Transactional
-    public WarehouseImportResponse importWarehouse(
-            WarehouseImportRequest request,
-            Long loginUserId,
-            boolean shared,
-            Long fixedId
-    ) {
         User owner = findOwner(request.userId(), loginUserId);
-        Warehouse warehouse = createWarehouse(request, owner, fixedId);
 
-        if (shared) {
-            warehouse.markShared();
-        }
+        int[] dimensions = resolveDimensions(request);
+
+        Warehouse warehouse = warehouseRepository.save(
+                Warehouse.create(
+                        request.name(),
+                        dimensions[0],
+                        dimensions[1],
+                        owner,
+                        request.location(),
+                        request.description(),
+                        request.status()
+                )
+        );
 
         // 1) 노드
         List<WarehouseNode> nodes = createNodes(warehouse, request.map().nodes());
@@ -189,24 +209,300 @@ public class WarehouseImportService {
 
         createChargingStations(warehouse, chargingSlots);
         List<StorageLocation> locations = createStorageLocations(warehouse, racks);
-        int stockedCount = createInitialInventory(warehouse, locations);
+        int stockedLevels = createInitialInventory(warehouse, locations);
+        warehouseFacilitySyncService.synchronizeOutboundFacilities(
+                warehouse.getId(), request.map(), nodeByCode
+        );
         int robotCount = createRobots(warehouse, chargingSlots, request.robotCount());
         createScenarioPresets(warehouse, robotCount);
 
-        int skipped = request.map().nodes().size() - nodes.size();
+        Set<String> importedCodes = request.map().nodes().stream()
+                .map(WarehouseImportRequest.MapNode::id)
+                .collect(java.util.stream.Collectors.toSet());
+        int importedNodeCount = (int) nodes.stream()
+                .filter(node -> importedCodes.contains(node.getNodeCode()))
+                .count();
+        int skipped = request.map().nodes().size() - importedNodeCount;
 
-        log.info("[창고 가져오기] {} (id={}) 노드 {}, 간선 {}, 랙 {}, 충전소 {}, 로봇 {}, 초기 재고 {}곳 (제외 {})",
+        eventPublisher.publishEvent(new WarehouseGraphChangedEvent(warehouse.getId()));
+
+        log.info("[창고 가져오기] {} (id={}) 노드 {}, 간선 {}, 랙 {}, 충전소 {}, 로봇 {}, 초기 재고 {}칸 (제외 {})",
                 warehouse.getName(), warehouse.getId(),
                 nodes.size(), edgeCount, racks.size(), chargingSlots.size(),
-                robotCount, stockedCount, skipped);
+                robotCount, stockedLevels, skipped);
 
         return new WarehouseImportResponse(
                 warehouse.getId(),
                 warehouse.getName(),
                 nodes.size(),
+                importedNodeCount,
                 edgeCount,
                 racks.size(),
                 chargingSlots.size(),
+                robotCount,
+                skipped
+        );
+    }
+
+    /**
+     * Reconcile an edited map with an existing warehouse.
+     *
+     * <p>Stable node/edge codes are used as identities, so moving an icon
+     * updates coordinates without breaking inventory, charging-station or
+     * robot foreign keys. A protected rack/charging node cannot be removed
+     * while business data still references it.</p>
+     */
+    @Transactional
+    public WarehouseImportResponse updateWarehouseLayout(
+            Long warehouseId,
+            WarehouseImportRequest request
+    ) {
+        Warehouse warehouse = warehouseRepository.findById(warehouseId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_INPUT));
+        warehouse.update(
+                request.name(),
+                request.width(),
+                request.height(),
+                request.location(),
+                request.description(),
+                request.status()
+        );
+
+        List<WarehouseNode> existingNodes = warehouseNodeRepository
+                .findAllByWarehouse_Id(warehouseId);
+        Map<String, WarehouseNode> nodeByCode = new LinkedHashMap<>();
+        existingNodes.forEach(node -> nodeByCode.put(node.getNodeCode(), node));
+
+        Set<String> requestedNodeCodes = request.map().nodes().stream()
+                .map(WarehouseImportRequest.MapNode::id)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        List<WarehouseNode> removedNodes = existingNodes.stream()
+                .filter(WarehouseNode::isActive)
+                .filter(node -> !requestedNodeCodes.contains(node.getNodeCode()))
+                .toList();
+        Set<Long> removedNodeIds = removedNodes.stream()
+                .map(WarehouseNode::getId)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (!removedNodeIds.isEmpty()
+                && taskRepository.countOperationalReferences(
+                        warehouseId,
+                        removedNodeIds,
+                        OPERATIONAL_TASK_STATUSES,
+                        OPERATIONAL_RUN_STATUSES
+                ) > 0) {
+            throw new BusinessException(ErrorCode.WAREHOUSE_NODE_IN_ACTIVE_TASK);
+        }
+        Set<Long> protectedNodeIds = new LinkedHashSet<>();
+        storageLocationRepository.findAllByWarehouse_Id(warehouseId)
+                .forEach(value -> protectedNodeIds.add(value.getNode().getId()));
+        chargingStationRepository.findAllByWarehouse_Id(warehouseId)
+                .forEach(value -> protectedNodeIds.add(value.getNode().getId()));
+        robotRepository.findAllByWarehouse_Id(warehouseId).stream()
+                .map(Robot::getNodeId)
+                .filter(java.util.Objects::nonNull)
+                .forEach(protectedNodeIds::add);
+        boolean removesProtectedNode = existingNodes.stream()
+                .anyMatch(node -> node.isActive()
+                        && protectedNodeIds.contains(node.getId())
+                        && !requestedNodeCodes.contains(node.getNodeCode()));
+        if (removesProtectedNode) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        int skipped = 0;
+        List<String> skippedNodes = new ArrayList<>();
+        for (WarehouseImportRequest.MapNode raw : request.map().nodes()) {
+            NodeType nodeType = NODE_TYPES.get(lower(raw.type()));
+            if (nodeType == null) {
+                // 모르는 종류의 노드는 저장하지 않는다.
+                // 그 노드에 붙은 간선까지 같이 사라지므로 이름을 남긴다.
+                skipped += 1;
+                skippedNodes.add("%s(%s)".formatted(raw.id(), raw.type()));
+                continue;
+            }
+            WarehouseNode.RouteProperties properties = new WarehouseNode.RouteProperties(
+                    raw.service_only(),
+                    raw.transit_allowed(),
+                    raw.holding_allowed(),
+                    raw.node_capacity(),
+                    raw.resourceType(),
+                    raw.resourceCode(),
+                    raw.side()
+            );
+            WarehouseNode node = nodeByCode.get(raw.id());
+            if (node == null) {
+                node = WarehouseNode.create(
+                        warehouse,
+                        ZONE_NAMES.get(nodeType),
+                        raw.x(),
+                        raw.y(),
+                        raw.id(),
+                        nodeType,
+                        properties,
+                        raw.routeAttributes()
+                );
+                warehouseNodeRepository.save(node);
+                nodeByCode.put(raw.id(), node);
+            } else {
+                node.update(
+                        ZONE_NAMES.get(nodeType),
+                        raw.x(),
+                        raw.y(),
+                        raw.id(),
+                        nodeType,
+                        properties,
+                        raw.routeAttributes()
+                );
+                node.activate();
+            }
+        }
+        warehouseNodeRepository.flush();
+
+        if (!skippedNodes.isEmpty()) {
+            log.warn("[창고 수정] id={} 종류를 알 수 없어 저장하지 않은 노드 {}개: {}",
+                    warehouseId, skippedNodes.size(),
+                    skippedNodes.size() > 20
+                            ? skippedNodes.subList(0, 20) + " ..."
+                            : skippedNodes);
+        }
+
+        List<WarehouseEdge> existingEdges = warehouseEdgeRepository
+                .findAllByFromNode_Warehouse_Id(warehouseId);
+        Map<String, WarehouseEdge> edgeByCode = new LinkedHashMap<>();
+        existingEdges.forEach(edge -> edgeByCode.put(edge.getEdgeCode(), edge));
+        Set<String> requestedEdgeCodes = new LinkedHashSet<>();
+        List<String> droppedEdges = new ArrayList<>();
+
+        for (WarehouseImportRequest.MapEdge raw : request.map().edges()) {
+            WarehouseNode source = nodeByCode.get(raw.source());
+            WarehouseNode target = nodeByCode.get(raw.target());
+            if (source == null || target == null || source == target) {
+                // 끝점 노드를 못 찾은 간선은 저장되지 않는다.
+                // 조용히 버리면 "저장은 되는데 간선만 안 생긴다" 로 보이므로
+                // 어느 노드 이름이 어긋났는지 남긴다.
+                droppedEdges.add("%s(%s->%s)".formatted(
+                        raw.id(), raw.source(), raw.target()));
+                continue;
+            }
+            String edgeCode = raw.id();
+            if (edgeCode == null || edgeCode.isBlank()) {
+                edgeCode = raw.source() + "::" + raw.target();
+            }
+            if (!requestedEdgeCodes.add(edgeCode)) {
+                // 같은 코드를 두 번 보내면 뒤에 온 간선은 저장되지 않는다.
+                droppedEdges.add("%s(중복, %s->%s)".formatted(
+                        edgeCode, raw.source(), raw.target()));
+                continue;
+            }
+            double distance = raw.distance_m() == null ? 1.0 : raw.distance_m();
+            WarehouseEdge.RouteProperties properties = new WarehouseEdge.RouteProperties(
+                    raw.type(),
+                    raw.speed_limit_mps(),
+                    raw.nominal_travel_time_ms(),
+                    raw.cost(),
+                    raw.physicalResourceCode(),
+                    raw.service_only(),
+                    raw.mobile_robot_traversable()
+            );
+            WarehouseEdge edge = edgeByCode.get(edgeCode);
+            if (edge == null) {
+                warehouseEdgeRepository.save(WarehouseEdge.create(
+                        source,
+                        target,
+                        distance,
+                        directionOf(raw.direction()),
+                        edgeCode,
+                        properties,
+                        raw.routeAttributes()
+                ));
+            } else {
+                edge.update(
+                        source,
+                        target,
+                        distance,
+                        directionOf(raw.direction()),
+                        edgeCode,
+                        properties,
+                        raw.routeAttributes()
+                );
+            }
+        }
+
+        List<WarehouseEdge> removedEdges = existingEdges.stream()
+                .filter(edge -> !requestedEdgeCodes.contains(edge.getEdgeCode()))
+                .toList();
+        warehouseEdgeRepository.deleteAll(removedEdges);
+        warehouseEdgeRepository.flush();
+
+        log.info("[창고 수정] id={} 요청 노드 {} (제외 {}), 요청 간선 {} -> 저장 {}, 삭제 {}",
+                warehouseId, request.map().nodes().size(), skipped,
+                request.map().edges().size(), requestedEdgeCodes.size(),
+                removedEdges.size());
+        if (!droppedEdges.isEmpty()) {
+            log.warn("[창고 수정] id={} 끝점을 찾지 못해 버린 간선 {}개: {}",
+                    warehouseId, droppedEdges.size(),
+                    droppedEdges.size() > 20
+                            ? droppedEdges.subList(0, 20) + " ..."
+                            : droppedEdges);
+        }
+
+        removedNodes.forEach(WarehouseNode::retire);
+        warehouseNodeRepository.flush();
+
+        Set<Long> storageNodeIds = storageLocationRepository
+                .findAllByWarehouse_Id(warehouseId).stream()
+                .map(value -> value.getNode().getId())
+                .collect(java.util.stream.Collectors.toSet());
+        List<WarehouseNode> newRacks = nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.RACK_STORAGE)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .filter(node -> !storageNodeIds.contains(node.getId()))
+                .toList();
+        createStorageLocations(warehouse, newRacks);
+
+        Set<Long> chargingNodeIds = chargingStationRepository
+                .findAllByWarehouse_Id(warehouseId).stream()
+                .map(value -> value.getNode().getId())
+                .collect(java.util.stream.Collectors.toSet());
+        List<WarehouseNode> newChargingSlots = nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.CHARGING_SLOT)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .filter(node -> !chargingNodeIds.contains(node.getId()))
+                .toList();
+        createChargingStations(warehouse, newChargingSlots);
+
+        List<WarehouseNode> activeChargingSlots = nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.CHARGING_SLOT)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .toList();
+        synchronizeRobotHomeNodes(warehouseId, activeChargingSlots);
+
+        // The physical facility contract must advance with the same map
+        // revision.  Otherwise FE/Neo4j show the edited two-robot topology
+        // while AI still reads the old seeded station rows.
+        warehouseFacilitySyncService.synchronizeOutboundFacilities(
+                warehouseId, request.map(), nodeByCode
+        );
+
+        eventPublisher.publishEvent(new WarehouseGraphChangedEvent(warehouseId));
+        int rackCount = (int) nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.RACK_STORAGE)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .count();
+        int chargingCount = (int) nodeByCode.values().stream()
+                .filter(node -> node.getNodeType() == NodeType.CHARGING_SLOT)
+                .filter(node -> requestedNodeCodes.contains(node.getNodeCode()))
+                .count();
+        int robotCount = robotRepository.findAllByWarehouse_Id(warehouseId).size();
+
+        return new WarehouseImportResponse(
+                warehouseId,
+                warehouse.getName(),
+                requestedNodeCodes.size() - skipped,
+                requestedNodeCodes.size() - skipped,
+                requestedEdgeCodes.size(),
+                rackCount,
+                chargingCount,
                 robotCount,
                 skipped
         );
@@ -242,7 +538,17 @@ public class WarehouseImportService {
                     raw.x(),
                     raw.y(),
                     raw.id(),
-                    nodeType
+                    nodeType,
+                    new WarehouseNode.RouteProperties(
+                            raw.service_only(),
+                            raw.transit_allowed(),
+                            raw.holding_allowed(),
+                            raw.node_capacity(),
+                            raw.resourceType(),
+                            raw.resourceCode(),
+                            raw.side()
+                    ),
+                    raw.routeAttributes()
             ));
         }
 
@@ -279,7 +585,17 @@ public class WarehouseImportService {
                     round(x),
                     round(y),
                     entry.getKey(),
-                    NodeType.RACK_STORAGE
+                    NodeType.RACK_STORAGE,
+                    new WarehouseNode.RouteProperties(
+                            false,
+                            false,
+                            false,
+                            1,
+                            "RACK",
+                            entry.getKey(),
+                            null
+                    ),
+                    Map.of()
             ));
         }
 
@@ -318,54 +634,41 @@ public class WarehouseImportService {
             Map<String, WarehouseNode> nodeByCode
     ) {
         // 접근 자리 -> 랙
-        Map<String, String> accessToRack = new LinkedHashMap<>();
-
-        for (WarehouseImportRequest.MapNode raw : map.nodes()) {
-            if (RACK_ACCESS_TYPE.equals(lower(raw.type()))) {
-                String rackCode = rackCodeOf(raw);
-                if (rackCode != null) {
-                    accessToRack.put(raw.id(), rackCode);
-                }
-            }
-        }
-
         // 방향별로 모은다
-        Map<String, WarehouseImportRequest.MapEdge> directed = new LinkedHashMap<>();
+        List<WarehouseEdge> edges = new ArrayList<>();
+        Set<String> usedCodes = new LinkedHashSet<>();
 
         for (WarehouseImportRequest.MapEdge raw : map.edges()) {
-            String source = resolve(raw.source(), nodeByCode, accessToRack);
-            String target = resolve(raw.target(), nodeByCode, accessToRack);
+            WarehouseNode source = nodeByCode.get(raw.source());
+            WarehouseNode target = nodeByCode.get(raw.target());
+            String edgeCode = raw.id();
 
-            if (source == null || target == null || source.equals(target)) {
+            if (source == null || target == null || source == target) {
                 continue;
             }
-
-            directed.putIfAbsent(source + ">" + target, raw);
-        }
-
-        List<WarehouseEdge> edges = new ArrayList<>();
-        Set<String> used = new LinkedHashSet<>();
-
-        for (Map.Entry<String, WarehouseImportRequest.MapEdge> entry : directed.entrySet()) {
-            String[] pair = entry.getKey().split(">", 2);
-            String source = pair[0];
-            String target = pair[1];
-
-            if (used.contains(source + ">" + target) || used.contains(target + ">" + source)) {
+            if (edgeCode == null || edgeCode.isBlank()) {
+                edgeCode = raw.source() + "::" + raw.target();
+            }
+            if (!usedCodes.add(edgeCode)) {
                 continue;
             }
-
-            used.add(source + ">" + target);
-
-            boolean twoWay = directed.containsKey(target + ">" + source);
-            WarehouseImportRequest.MapEdge raw = entry.getValue();
 
             edges.add(WarehouseEdge.create(
-                    nodeByCode.get(source),
-                    nodeByCode.get(target),
+                    source,
+                    target,
                     raw.distance_m() == null ? 1.0 : raw.distance_m(),
-                    twoWay ? WarehouseEdge.DirectionType.BOTH : WarehouseEdge.DirectionType.A_TO_B,
-                    edgeCode(raw.id(), twoWay)
+                    directionOf(raw.direction()),
+                    edgeCode,
+                    new WarehouseEdge.RouteProperties(
+                            raw.type(),
+                            raw.speed_limit_mps(),
+                            raw.nominal_travel_time_ms(),
+                            raw.cost(),
+                            raw.physicalResourceCode(),
+                            raw.service_only(),
+                            raw.mobile_robot_traversable()
+                    ),
+                    raw.routeAttributes()
             ));
         }
 
@@ -377,33 +680,7 @@ public class WarehouseImportService {
      * 간선이 가리키는 코드를 저장 대상 노드 코드로 바꾼다.
      * 저장하지 않는 자리(입출고 접근 등)로 가는 간선은 버린다.
      */
-    private String resolve(
-            String code,
-            Map<String, WarehouseNode> nodeByCode,
-            Map<String, String> accessToRack
-    ) {
-        if (nodeByCode.containsKey(code)) {
-            return code;
-        }
-
-        String rackCode = accessToRack.get(code);
-        return rackCode != null && nodeByCode.containsKey(rackCode) ? rackCode : null;
-    }
-
     /** 왕복으로 합쳐진 간선은 방향 접미사를 뗀다. RA_K0_1_A_IN -> RA_K0_1_A */
-    private String edgeCode(String code, boolean twoWay) {
-        if (code == null || !twoWay) {
-            return code;
-        }
-        if (code.endsWith("_IN")) {
-            return code.substring(0, code.length() - 3);
-        }
-        if (code.endsWith("_OUT")) {
-            return code.substring(0, code.length() - 4);
-        }
-        return code;
-    }
-
     /* =========================================================
        구역 · 설비
     ========================================================= */
@@ -413,13 +690,14 @@ public class WarehouseImportService {
 
         List<ZoneSpec> specs = List.of(
                 new ZoneSpec("MOVING_ZONE", WarehouseZone.ZoneType.MOVING, "이동 통로",
-                        List.of(NodeType.ROUTE, NodeType.ROUTE_CHARGE_JUNCTION)),
+                        List.of(NodeType.ROUTE, NodeType.ROUTE_CHARGE_JUNCTION, NodeType.PARKING_SLOT)),
                 new ZoneSpec("STORAGE_ZONE", WarehouseZone.ZoneType.STORAGE, "랙 보관 구역",
-                        List.of(NodeType.RACK_STORAGE)),
+                        List.of(NodeType.RACK_STORAGE, NodeType.RACK_ACCESS)),
                 new ZoneSpec("INBOUND_ZONE", WarehouseZone.ZoneType.INBOUND, "입고 구역",
-                        List.of(NodeType.INBOUND)),
+                        List.of(NodeType.INBOUND, NodeType.INBOUND_HANDOFF_ACCESS)),
                 new ZoneSpec("OUTBOUND_ZONE", WarehouseZone.ZoneType.OUTBOUND, "출고 구역",
-                        List.of(NodeType.OUTBOUND)),
+                        List.of(NodeType.OUTBOUND, NodeType.OUTBOUND_STATION_ACCESS,
+                                NodeType.EMPTY_TOTE_BUFFER_ACCESS)),
                 new ZoneSpec("CHARGING_ZONE", WarehouseZone.ZoneType.CHARGING, "충전 구역",
                         List.of(NodeType.CHARGING_SLOT))
         );
@@ -486,45 +764,53 @@ public class WarehouseImportService {
     }
 
     /**
-     * 앞쪽 랙 몇 곳에 초기 재고를 넣는다.
+     * 새로 만든 창고의 랙 앞쪽 절반을 3층까지 채운다.
      *
-     * <p>출고 작업은 재고가 있는 랙에서만 만들어진다
-     * ({@code ScenarioTaskPlanner.planOutbound}).
-     * 재고가 하나도 없으면 출고 30건을 요청해도 0건이 나오고
-     * 입고 작업만 남는다. 그래서 창고를 만들 때 씨앗 재고를 같이 넣는다.
+     * <p>기본 창고는 {@code V05_inventory.sql} 이 재고를 깔아 주지만,
+     * 지도를 올려 만든 창고에는 그 시드가 없다. 재고가 0이면
      *
-     * <p>랙 10곳에 품목을 돌아가며 50개씩 넣는다.
-     * 랙 10곳에 품목을 돌아가며 50개씩.
+     * <pre>
+     *   화면 - 선반 3칸이 전부 빈칸으로만 보인다
+     *   실행 - 출고 작업이 하나도 만들어지지 않는다
+     * </pre>
+     *
+     * <p>재고는 BOX 단위라 수량은 품목의 {@code unitsPerBox} 를 그대로 쓴다.
+     * 뒤쪽 절반은 비워 둬야 입고 작업이 들어갈 자리가 생긴다.
+     *
+     * @return 채운 칸 수 (랙 수 × 층 수)
      */
     private int createInitialInventory(Warehouse warehouse, List<StorageLocation> locations) {
-        List<Long> productIds = productRepository.findAllByOrderByProductCodeAsc()
+        List<Product> products = productRepository.findAllByOrderByProductCodeAsc()
                 .stream()
-                .map(Product::getId)
+                .filter(product -> product.getUnitsPerBox() != null && product.getUnitsPerBox() > 0)
                 .toList();
 
-        if (productIds.isEmpty() || locations.isEmpty()) {
+        if (products.isEmpty() || locations.isEmpty()) {
             log.warn("[창고 가져오기] 초기 재고 생략 - 품목 {}종, 보관위치 {}곳",
-                    productIds.size(), locations.size());
+                    products.size(), locations.size());
             return 0;
         }
 
         LocalDateTime now = LocalDateTime.now();
-        int count = Math.min(INITIAL_STOCK_LOCATIONS, locations.size());
-
+        int stockedRacks = Math.max(1, locations.size() / 2);
         List<WarehouseItem> items = new ArrayList<>();
 
-        for (int index = 0; index < count; index++) {
+        for (int index = 0; index < stockedRacks; index++) {
             StorageLocation location = locations.get(index);
 
-            items.add(WarehouseItem.create(
-                    warehouse,
-                    location,
-                    location.getNode(),
-                    productIds.get(index % productIds.size()),
-                    null,
-                    now,
-                    INITIAL_STOCK_QUANTITY
-            ));
+            for (int level = 1; level <= RACK_LEVELS; level++) {
+                Product product = products.get((index * RACK_LEVELS + level - 1) % products.size());
+
+                items.add(WarehouseItem.create(
+                        warehouse,
+                        location,
+                        level,
+                        location.getNode(),
+                        product,
+                        now,
+                        product.getUnitsPerBox()
+                ));
+            }
         }
 
         warehouseItemRepository.saveAll(items);
@@ -546,13 +832,14 @@ public class WarehouseImportService {
                 slots.size()
         );
 
+        List<WarehouseNode> orderedSlots = orderedChargingSlots(slots);
         List<Robot> robots = new ArrayList<>();
 
         for (int index = 0; index < count; index++) {
             robots.add(Robot.create(
                     spec,
                     warehouse,
-                    slots.get(index).getId(),
+                    orderedSlots.get(index).getId(),
                     100,
                     RobotAvailabilityStatus.AVAILABLE
             ));
@@ -560,6 +847,44 @@ public class WarehouseImportService {
 
         robotRepository.saveAll(robots);
         return robots.size();
+    }
+
+    /**
+     * Keep one deterministic charging home per robot after a map edit.
+     * Runtime position lives in Redis, so updating this master node does not
+     * teleport a running robot; it only changes the terminal node used by the
+     * next plan/replan.
+     */
+    private void synchronizeRobotHomeNodes(Long warehouseId, List<WarehouseNode> chargingSlots) {
+        List<Robot> robots = robotRepository.findAllByWarehouse_Id(warehouseId).stream()
+                .sorted(java.util.Comparator.comparing(Robot::getId))
+                .toList();
+        List<WarehouseNode> orderedSlots = orderedChargingSlots(chargingSlots);
+
+        if (orderedSlots.size() < robots.size()) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        for (int index = 0; index < robots.size(); index++) {
+            robots.get(index).setNodeId(orderedSlots.get(index).getId());
+        }
+    }
+
+    private List<WarehouseNode> orderedChargingSlots(List<WarehouseNode> chargingSlots) {
+        if (chargingSlots.size() < 2) {
+            return List.copyOf(chargingSlots);
+        }
+        double minX = chargingSlots.stream().mapToDouble(WarehouseNode::getX).min().orElse(0);
+        double maxX = chargingSlots.stream().mapToDouble(WarehouseNode::getX).max().orElse(0);
+        double minY = chargingSlots.stream().mapToDouble(WarehouseNode::getY).min().orElse(0);
+        double maxY = chargingSlots.stream().mapToDouble(WarehouseNode::getY).max().orElse(0);
+        java.util.Comparator<WarehouseNode> comparator = (maxX - minX) >= (maxY - minY)
+                ? java.util.Comparator.comparingDouble(WarehouseNode::getX)
+                        .thenComparingDouble(WarehouseNode::getY)
+                : java.util.Comparator.comparingDouble(WarehouseNode::getY)
+                        .thenComparingDouble(WarehouseNode::getX);
+        return chargingSlots.stream()
+                .sorted(comparator.thenComparing(WarehouseNode::getNodeCode))
+                .toList();
     }
 
     /** 화면에서 고를 수 있는 실행 설정을 만들어 둔다. */
@@ -580,53 +905,44 @@ public class WarehouseImportService {
     ========================================================= */
 
     /**
-     * 창고 행을 만든다.
+     * 창고의 가로·세로를 지도 좌표에서 정한다.
      *
-     * <p>ID 를 지정한 경우에는 JPA 가 아니라 SQL 로 직접 넣는다.
-     * 기본키가 자동 증가라 엔티티로는 ID 를 정할 수 없기 때문이다.
-     * 넣은 뒤에는 자동 증가 값을 최대 ID 뒤로 밀어 다음 창고와 겹치지 않게 한다.
+     * <p>지도 JSON 의 좌표는 파워포인트 인치라 사용자가 입력한 폭·높이와
+     * 아무 관계가 없다. 입력값을 그대로 쓰면 화면의 도면 영역이
+     * 노드가 실제로 차지하는 범위와 어긋나 도면이 잘리거나 구석에 작게 박힌다.
+     *
+     * <p>그래서 노드 좌표의 최댓값을 올림해 창고 크기로 삼는다.
+     * 좌표를 읽을 수 없을 때만 요청값으로 되돌아간다.
+     *
+     * @return {가로, 세로}
      */
-    private Warehouse createWarehouse(
-            WarehouseImportRequest request,
-            User owner,
-            Long fixedId
-    ) {
-        if (fixedId == null) {
-            return warehouseRepository.save(
-                    Warehouse.create(
-                            request.name(),
-                            request.width(),
-                            request.height(),
-                            owner,
-                            request.location(),
-                            request.description(),
-                            request.status()
-                    )
-            );
+    private int[] resolveDimensions(WarehouseImportRequest request) {
+        List<WarehouseImportRequest.MapNode> rawNodes = request.map() == null
+                ? List.of()
+                : request.map().nodes();
+
+        double maxX = rawNodes.stream()
+                .map(WarehouseImportRequest.MapNode::x)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(Double.NaN);
+        double maxY = rawNodes.stream()
+                .map(WarehouseImportRequest.MapNode::y)
+                .filter(java.util.Objects::nonNull)
+                .mapToDouble(Double::doubleValue)
+                .max()
+                .orElse(Double.NaN);
+
+        if (Double.isNaN(maxX) || Double.isNaN(maxY)) {
+            return new int[]{request.width(), request.height()};
         }
 
-        Warehouse.WarehouseStatus status = request.status() == null
-                ? Warehouse.WarehouseStatus.ACTIVE
-                : request.status();
-
-        jdbcTemplate.update("""
-                        INSERT INTO warehouse_layout
-                            (id, name, width, height, user_id, location, description,
-                             status, is_shared, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, false, NOW(), NOW())
-                        """,
-                fixedId, request.name(), request.width(), request.height(),
-                owner.getId(), request.location(), request.description(), status.name());
-
-        jdbcTemplate.execute("""
-                SELECT setval(
-                    pg_get_serial_sequence('warehouse_layout', 'id'),
-                    GREATEST((SELECT COALESCE(MAX(id), 1) FROM warehouse_layout), 1),
-                    true)
-                """);
-
-        return warehouseRepository.findById(fixedId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
+        // 가장자리 노드가 경계선에 딱 붙지 않도록 한 칸 여유를 준다.
+        return new int[]{
+                Math.max(1, (int) Math.ceil(maxX) + 1),
+                Math.max(1, (int) Math.ceil(maxY) + 1)
+        };
     }
 
     private User findOwner(Long requestedUserId, Long loginUserId) {
@@ -649,6 +965,19 @@ public class WarehouseImportService {
 
     private String lower(String value) {
         return value == null ? null : value.trim().toLowerCase();
+    }
+
+    private WarehouseEdge.DirectionType directionOf(String value) {
+        if (value == null || value.isBlank()) {
+            // 사용자가 그린 일반 연결선의 기본 계약은 왕복 통행이다.
+            // 단방향이 필요한 서비스 인계선은 요청에 A_TO_B/B_TO_A를 명시한다.
+            return WarehouseEdge.DirectionType.BOTH;
+        }
+        return switch (value.trim().toUpperCase()) {
+            case "BOTH", "BIDIRECTIONAL" -> WarehouseEdge.DirectionType.BOTH;
+            case "B_TO_A", "REVERSE" -> WarehouseEdge.DirectionType.B_TO_A;
+            default -> WarehouseEdge.DirectionType.A_TO_B;
+        };
     }
 
     private double round(double value) {

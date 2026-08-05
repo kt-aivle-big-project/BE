@@ -24,13 +24,22 @@ ON CONFLICT DO NOTHING;
 -- ---------------------------------------------------------------------------
 -- 품목
 -- ---------------------------------------------------------------------------
+-- Existing upgraded databases can have additional NOT NULL catalog columns.
+-- Skip this tiny bootstrap catalog when products already exist; V06 performs
+-- the authoritative full-column upsert later in the same startup sequence.
+DO '
+BEGIN
+IF NOT EXISTS (SELECT 1 FROM product) THEN
 INSERT INTO product (product_id, product_code, product_name) VALUES
-  (1, 'A', '식품'),
-  (2, 'B', '음료'),
-  (3, 'C', '생활용품'),
-  (4, 'D', '전자제품'),
-  (5, 'E', '의류')
+  (1, ''ITEM-001'', ''식품''),
+  (2, ''ITEM-002'', ''음료''),
+  (3, ''ITEM-003'', ''생활용품''),
+  (4, ''ITEM-004'', ''전자제품''),
+  (5, ''ITEM-005'', ''의류'')
 ON CONFLICT DO NOTHING;
+END IF;
+END
+';
 
 -- ---------------------------------------------------------------------------
 -- 로봇 사양

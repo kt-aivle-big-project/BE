@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.TreeMap;
 import java.util.zip.CRC32;
 
 /**
@@ -37,13 +38,13 @@ public class WarehouseGraphService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
 
         List<WarehouseNode> nodes = warehouseNodeRepository
-                .findAllByWarehouse_Id(warehouseId)
+                .findAllByWarehouse_IdAndActiveTrue(warehouseId)
                 .stream()
                 .sorted(Comparator.comparing(WarehouseNode::getId))
                 .toList();
 
         List<WarehouseEdge> edges = warehouseEdgeRepository
-                .findAllByFromNode_Warehouse_Id(warehouseId)
+                .findAllActiveByWarehouseId(warehouseId)
                 .stream()
                 .sorted(Comparator.comparing(WarehouseEdge::getId))
                 .toList();
@@ -78,14 +79,30 @@ public class WarehouseGraphService {
             signature.append(node.getNodeCode()).append(':')
                     .append(node.getNodeType()).append(':')
                     .append(node.getX()).append(',')
-                    .append(node.getY()).append('|');
+                    .append(node.getY()).append(':')
+                    .append(node.getServiceOnly()).append(':')
+                    .append(node.getTransitAllowed()).append(':')
+                    .append(node.getHoldingAllowed()).append(':')
+                    .append(node.getNodeCapacity()).append(':')
+                    .append(node.getResourceType()).append(':')
+                    .append(node.getResourceCode()).append(':')
+                    .append(node.getSide()).append(':')
+                    .append(sortedAttributes(node.getRouteAttributes())).append('|');
         }
 
         for (WarehouseEdge edge : edges) {
             signature.append(edge.getEdgeCode()).append(':')
                     .append(edge.getFromNode().getNodeCode()).append('>')
                     .append(edge.getToNode().getNodeCode()).append(':')
-                    .append(edge.getDirectionType()).append('|');
+                    .append(edge.getDirectionType()).append(':')
+                    .append(edge.getEdgeType()).append(':')
+                    .append(edge.getSpeedLimitMps()).append(':')
+                    .append(edge.getNominalTravelTimeMs()).append(':')
+                    .append(edge.getCost()).append(':')
+                    .append(edge.getPhysicalResourceCode()).append(':')
+                    .append(edge.getServiceOnly()).append(':')
+                    .append(edge.getMobileRobotTraversable()).append(':')
+                    .append(sortedAttributes(edge.getRouteAttributes())).append('|');
         }
 
         CRC32 checksum = new CRC32();
@@ -95,5 +112,9 @@ public class WarehouseGraphService {
                 "MAP-%d-%d-%d-%08x",
                 warehouseId, nodes.size(), edges.size(), checksum.getValue()
         );
+    }
+
+    private Object sortedAttributes(java.util.Map<String, Object> attributes) {
+        return attributes == null ? "{}" : new TreeMap<>(attributes);
     }
 }

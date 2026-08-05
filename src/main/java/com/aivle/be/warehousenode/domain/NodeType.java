@@ -20,6 +20,14 @@ public enum NodeType {
     // 랙(선반) 보관 위치
     RACK_STORAGE,
 
+    RACK_ACCESS,
+
+    INBOUND_HANDOFF_ACCESS,
+
+    OUTBOUND_STATION_ACCESS,
+
+    EMPTY_TOTE_BUFFER_ACCESS,
+
     // 입고구
     INBOUND,
 
@@ -27,7 +35,9 @@ public enum NodeType {
     OUTBOUND,
 
     // 충전 슬롯
-    CHARGING_SLOT;
+    CHARGING_SLOT,
+
+    PARKING_SLOT;
 
     @JsonCreator
     public static NodeType from(String value) {
@@ -44,5 +54,12 @@ public enum NodeType {
 
     public boolean isStorage() {
         return this == RACK_STORAGE;
+    }
+
+    public boolean isServiceAccess() {
+        return this == RACK_ACCESS
+                || this == INBOUND_HANDOFF_ACCESS
+                || this == OUTBOUND_STATION_ACCESS
+                || this == EMPTY_TOTE_BUFFER_ACCESS;
     }
 }

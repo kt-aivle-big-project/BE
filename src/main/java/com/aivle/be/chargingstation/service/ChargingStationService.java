@@ -32,7 +32,7 @@ public class ChargingStationService {
                         new IllegalArgumentException("존재하지 않는 창고입니다.")
                 );
 
-        WarehouseNode node = warehouseNodeRepository.findById(request.nodeId())
+        WarehouseNode node = warehouseNodeRepository.findByIdAndActiveTrue(request.nodeId())
                 .orElseThrow(() ->
                         new IllegalArgumentException("존재하지 않는 노드입니다.")
                 );
@@ -66,6 +66,7 @@ public class ChargingStationService {
     public List<ChargingStationResponse> getChargingStations() {
         return chargingStationRepository.findAll()
                 .stream()
+                .filter(station -> station.getNode().isActive())
                 .map(ChargingStationResponse::from)
                 .toList();
     }

@@ -26,7 +26,16 @@ public class ProductService {
             throw new BusinessException(ErrorCode.DUPLICATE_PRODUCT_CODE);
         }
 
-        Product product = Product.create(productCode, request.productName().trim());
+        Product product = Product.create(
+                productCode,
+                request.productName().trim(),
+                textOrDefault(request.category(), "기타"),
+                "EA",
+                request.unitsPerBox(),
+                nullableText(request.barcode()),
+                textOrDefault(request.temperatureZone(), "AMBIENT"),
+                Boolean.TRUE.equals(request.fragile())
+        );
         return ProductResponse.from(productRepository.save(product));
     }
 
@@ -50,7 +59,16 @@ public class ProductService {
             throw new BusinessException(ErrorCode.DUPLICATE_PRODUCT_CODE);
         }
 
-        product.update(productCode, request.productName().trim());
+        product.update(
+                productCode,
+                request.productName().trim(),
+                textOrExisting(request.category(), product.getCategory()),
+                "EA",
+                request.unitsPerBox(),
+                request.barcode() == null ? product.getBarcode() : nullableText(request.barcode()),
+                textOrExisting(request.temperatureZone(), product.getTemperatureZone()),
+                request.fragile() == null ? product.getFragile() : request.fragile()
+        );
         return ProductResponse.from(product);
     }
 
@@ -63,4 +81,21 @@ public class ProductService {
         return productRepository.findById(productId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
     }
+
+    private String textOrDefault(String value, String fallback) {
+        String normalized = nullableText(value);
+        return normalized == null ? fallback : normalized;
+    }
+
+    private String textOrExisting(String value, String existing) {
+        return value == null ? existing : textOrDefault(value, existing);
+    }
+
+    private String nullableText(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
 }

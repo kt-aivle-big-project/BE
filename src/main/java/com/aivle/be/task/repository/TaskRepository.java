@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface TaskRepository extends JpaRepository<Task, Long> {
 
@@ -23,6 +24,11 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
 
     List<Task> findAllBySimulationRun_IdOrderByRequestedAtAsc(
             Long simulationRunId
+    );
+
+    Optional<Task> findBySimulationRun_IdAndExternalOperationId(
+            Long simulationRunId,
+            String externalOperationId
     );
 
     List<Task> findAllBySimulationRun_IdAndStatusInOrderByRequestedAtAsc(
@@ -72,6 +78,27 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     List<Task> findAllByRequestedAtGreaterThanEqualAndRequestedAtLessThanOrderByRequestedAtDesc(
             LocalDateTime from,
             LocalDateTime to
+    );
+
+    @Query("""
+            select count(task)
+            from Task task
+            where task.warehouse.id = :warehouseId
+              and task.status in :taskStatuses
+              and (
+                    task.simulationRun is null
+                    or task.simulationRun.status in :runStatuses
+              )
+              and (
+                    task.startNode.id in :nodeIds
+                    or task.endNode.id in :nodeIds
+              )
+            """)
+    long countOperationalReferences(
+            @Param("warehouseId") Long warehouseId,
+            @Param("nodeIds") Collection<Long> nodeIds,
+            @Param("taskStatuses") Collection<TaskStatus> taskStatuses,
+            @Param("runStatuses") Collection<com.aivle.be.simulationrun.domain.SimulationRunStatus> runStatuses
     );
 
     List<Task> findAllByWarehouse_IdAndRequestedAtGreaterThanEqualAndRequestedAtLessThanOrderByRequestedAtDesc(

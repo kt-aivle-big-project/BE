@@ -32,6 +32,8 @@ import static lombok.AccessLevel.PROTECTED;
 @NoArgsConstructor(access = PROTECTED)
 public class SimulationRun {
 
+    private static final int DEFAULT_COMMAND_GENERATION_INTERVAL_SECONDS = 300;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "simulation_run_id")
@@ -121,6 +123,26 @@ public class SimulationRun {
 
     public static SimulationRun create(Warehouse warehouse, LocalDateTime now) {
         return create(warehouse, now, ScenarioType.MANUAL, null, null, null, null);
+    }
+
+    /**
+     * 시뮬레이션 시간 5분마다 새 입출고 명령을 생성하는 rolling-horizon 실행을 만든다.
+     * 기존 일괄 시나리오 작업은 생성하지 않는다.
+     */
+    public static SimulationRun createRolling(Warehouse warehouse, LocalDateTime now) {
+        return create(
+                warehouse,
+                now,
+                ScenarioType.MANUAL,
+                null,
+                null,
+                null,
+                DEFAULT_COMMAND_GENERATION_INTERVAL_SECONDS
+        );
+    }
+
+    public void enableRollingCommandGeneration() {
+        generationIntervalSeconds = DEFAULT_COMMAND_GENERATION_INTERVAL_SECONDS;
     }
 
     public static SimulationRun create(
@@ -237,19 +259,33 @@ public class SimulationRun {
         status = SimulationRunStatus.RUNNING;
     }
 
+    public void startQuiescing() {
+        requireStatus(SimulationRunStatus.RUNNING);
+        status = SimulationRunStatus.QUIESCING;
+    }
+
     /**
      * 재계획 시작. 실행 중일 때만 진입한다.
      */
     public void startReplanning() {
-        requireStatus(SimulationRunStatus.RUNNING);
+        requireStatus(SimulationRunStatus.QUIESCING);
         status = SimulationRunStatus.REPLANNING;
+    }
+
+    public void waitForPlanActivation() {
+        requireStatus(SimulationRunStatus.REPLANNING);
+        status = SimulationRunStatus.PENDING_ACTIVATION;
     }
 
     /**
      * 재계획 종료 후 실행 상태로 복귀.
      */
     public void finishReplanning() {
-        requireStatus(SimulationRunStatus.REPLANNING);
+        if (status != SimulationRunStatus.REPLANNING
+                && status != SimulationRunStatus.PENDING_ACTIVATION
+                && status != SimulationRunStatus.QUIESCING) {
+            throw invalidTransition();
+        }
         status = SimulationRunStatus.RUNNING;
     }
 
@@ -268,7 +304,9 @@ public class SimulationRun {
         if (status != SimulationRunStatus.CREATED
                 && status != SimulationRunStatus.RUNNING
                 && status != SimulationRunStatus.PAUSED
-                && status != SimulationRunStatus.REPLANNING) {
+                && status != SimulationRunStatus.QUIESCING
+                && status != SimulationRunStatus.REPLANNING
+                && status != SimulationRunStatus.PENDING_ACTIVATION) {
             throw invalidTransition();
         }
         status = SimulationRunStatus.STOPPED;
@@ -284,7 +322,9 @@ public class SimulationRun {
     public void fail(LocalDateTime now) {
         if (status != SimulationRunStatus.RUNNING
                 && status != SimulationRunStatus.PAUSED
-                && status != SimulationRunStatus.REPLANNING) {
+                && status != SimulationRunStatus.QUIESCING
+                && status != SimulationRunStatus.REPLANNING
+                && status != SimulationRunStatus.PENDING_ACTIVATION) {
             throw invalidTransition();
         }
         status = SimulationRunStatus.FAILED;

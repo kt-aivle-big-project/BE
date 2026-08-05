@@ -118,6 +118,23 @@ public class TaskService {
         return response;
     }
 
+    /** Applies the physical rack mutation at PICKUP/DROP completion once. */
+    @Transactional
+    public boolean applyInventoryAtServiceCompletion(Long taskId, String serviceKind) {
+        if (taskId == null) {
+            return false;
+        }
+        Task task = findTaskOrThrow(taskId);
+        boolean applied = taskInventoryService.applyForServiceCompletion(task, serviceKind);
+        if (applied) {
+            // Rack inventory changes before the whole robot route becomes DONE.
+            // Broadcast that physical handoff immediately so the UI does not
+            // put the same inbound BOX back in the waiting area.
+            broadcast(task);
+        }
+        return applied;
+    }
+
     @Transactional
     public TaskResponse failTask(Long taskId) {
         Task task = findTaskOrThrow(taskId);

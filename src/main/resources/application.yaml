@@ -14,13 +14,16 @@ spring:
   # 매번 실행돼도 기존 데이터를 덮어쓰지 않는다.
   sql:
     init:
-      mode: ${SQL_INIT_MODE:always}
+      mode: ${SQL_INIT_MODE:never}
       continue-on-error: false
-      # 창고 지도는 여기서 넣지 않는다.
-      # DefaultWarehouseSeeder 가 db/maps 의 JSON 을 읽어
-      # 화면 업로드와 똑같은 경로로 만든다.
       data-locations:
         - classpath:db/seed/V01_base.sql
+        - classpath:db/seed/V02_warehouse_1.sql
+        - classpath:db/seed/V05_inventory.sql
+        - classpath:db/seed/V06_product_catalog.sql
+        - classpath:db/seed/V07_box_storage_model.sql
+        - classpath:db/seed/V08_three_level_rack_storage.sql
+        - classpath:db/seed/V09_remove_expiry.sql
 
   jpa:
     # Hibernate 가 테이블을 만든 뒤에 위 SQL 이 실행되도록 미룬다.
@@ -50,4 +53,7 @@ fastapi:
 simulation:
   playback:
     # 재생 틱 주기(ms). 값이 작을수록 로봇이 빠르게 움직인다.
-    tick-ms: 500
+    tick-ms: 100
+  command-generation:
+    # 1x, 2x, 3x, 4x, 5x workload relative weights. Values need not total 100.
+    workload-multiplier-weights: ${SIMULATION_COMMAND_GENERATION_WORKLOAD_MULTIPLIER_WEIGHTS:10,15,20,25,30}

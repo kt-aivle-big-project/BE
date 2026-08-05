@@ -4,6 +4,7 @@ import com.aivle.be.auth.security.AuthenticatedRequester;
 import com.aivle.be.auth.security.GuestAccessPolicy;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.laro.service.LaroInventoryReservationService;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.domain.RobotAvailabilityStatus;
 import com.aivle.be.robot.repository.RobotRepository;
@@ -12,18 +13,14 @@ import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.robotstate.controller.response.RobotStateResponse;
 import com.aivle.be.robotstate.controller.request.RobotStateUpdateRequest;
 import com.aivle.be.robotstate.service.RobotStateValidationService;
-import com.aivle.be.scenario.entity.Scenario;
-import com.aivle.be.scenario.repository.ScenarioRepository;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
-import com.aivle.be.simulationrun.domain.ScenarioType;
-import com.aivle.be.simulationrun.controller.request.InboundConfigRequest;
-import com.aivle.be.simulationrun.controller.request.ScenarioConfigRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunRobotStatesResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunHistoryResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
+import com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleService;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.entity.SimulationRunRobot;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
@@ -32,10 +29,9 @@ import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.entity.Task;
-import com.aivle.be.task.generation.ScenarioTaskPlanner;
+import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.user.repository.UserRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.aivle.be.warehouse.entity.Warehouse;
@@ -49,7 +45,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -60,11 +55,10 @@ public class SimulationRunService {
     private static final Set<SimulationRunStatus> ACTIVE_STATUSES = Set.of(
             SimulationRunStatus.RUNNING,
             SimulationRunStatus.PAUSED,
-            SimulationRunStatus.REPLANNING
+            SimulationRunStatus.QUIESCING,
+            SimulationRunStatus.REPLANNING,
+            SimulationRunStatus.PENDING_ACTIVATION
     );
-
-    // 입고 품목 구성 비율의 합계
-    private static final int TOTAL_RATIO = 100;
 
     // 런 자체의 생명주기(생성/시작/일시정지/재개/종료) 변경 브로드캐스트
     private static final String RUN_TOPIC = "/topic/simulation-runs";
@@ -78,19 +72,17 @@ public class SimulationRunService {
     private final RobotRepository robotRepository;
     private final SimulationRunStateStore simulationRunStateStore;
     private final RobotStateValidationService robotStateValidationService;
-    private final ScenarioRepository scenarioRepository;
     private final WarehouseNodeRepository warehouseNodeRepository;
     private final TaskRepository taskRepository;
     private final SimulationPlaybackService simulationPlaybackService;
-    private final ScenarioTaskPlanner scenarioTaskPlanner;
+    private final SimulationCommandCycleService simulationCommandCycleService;
+    private final LaroInventoryReservationService inventoryReservationService;
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final GuestAccessPolicy guestAccessPolicy;
 
     private static final Logger log =
             LoggerFactory.getLogger(SimulationRunService.class);
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional
     public SimulationRunResponse create(SimulationRunCreateRequest request) {
@@ -124,29 +116,9 @@ public class SimulationRunService {
         }
         Warehouse warehouse = warehouseRepository.findById(request.warehouseId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
-        ScenarioConfigRequest scenario = request.scenario();
-        ScenarioType scenarioType = scenario == null || scenario.type() == null
-                ? ScenarioType.MANUAL
-                : scenario.type();
-        validateScenario(scenarioType, scenario);
-        SimulationRun run = SimulationRun.create(
-                warehouse,
-                LocalDateTime.now(),
-                scenarioType,
-                scenario == null ? null : scenario.seed(),
-                scenario == null ? null : scenario.taskCount(),
-                scenario == null ? null : scenario.inboundRatio(),
-                scenario == null || scenario.generationIntervalSeconds() == null
-                        ? 0
-                        : scenario.generationIntervalSeconds()
-        );
+        SimulationRun run = SimulationRun.createRolling(warehouse, LocalDateTime.now());
 
-        // 시나리오 프리셋 + 실행 배속 적용
-        Scenario preset = findScenarioOrNull(request.scenarioId(), warehouse.getId());
-        run.applyScenario(preset, request.simulationSpeed());
-
-        // 입고 품목 구성 비율 검증 (합계 100%)
-        validateInboundRatio(request.inbound());
+        run.applyScenario(null, request.simulationSpeed());
 
         // 실행자 기록 (내 실행 이력 조회용)
         if (requester != null && requester.isUser()) {
@@ -155,21 +127,7 @@ public class SimulationRunService {
             run.assignGuestSession(requester.guestSessionId());
         }
 
-        // 작업을 만든 설정을 그대로 보관해 같은 설정으로 다시 실행할 수 있게 한다
-        run.recordGenerationConfig(serializeGenerationConfig(request));
-
         SimulationRun saved = simulationRunRepository.save(run);
-
-        // 입고/출고 설정을 실제 작업 목록으로 펼친다.
-        // 전체 작업을 이 시점에 한 번에 만들어 두고,
-        // 재생 엔진은 각 작업의 발생 시각(releaseAtSeconds)에 맞춰 투입한다.
-        scenarioTaskPlanner.plan(
-                saved.getId(),
-                warehouse.getId(),
-                request.inbound(),
-                request.outbound(),
-                scenario == null ? null : scenario.seed()
-        );
 
         return broadcastRun(saved);
     }
@@ -209,13 +167,20 @@ public class SimulationRunService {
         run.reset();
         simulationRunStateStore.deleteAll(simulationRunId);
         simulationPlaybackService.clear(simulationRunId);
+        simulationCommandCycleService.stop(simulationRunId);
+        inventoryReservationService.releaseActiveForRun(simulationRunId);
 
-        // 같은 시나리오를 다시 처음부터 실행할 수 있도록 작업도 되돌린다
+        // rolling-horizon 실행은 재시작할 때 새 0분 배치를 만든다.
+        // 이전 배치의 미완료 작업은 재생하지 않고 취소한다.
         List<Task> tasks = taskRepository
                 .findAllBySimulationRun_IdOrderByRequestedAtAsc(simulationRunId);
 
         for (Task task : tasks) {
-            task.resetForReplay();
+            if (task.getStatus() == TaskStatus.PENDING
+                    || task.getStatus() == TaskStatus.ASSIGNED
+                    || task.getStatus() == TaskStatus.IN_PROGRESS) {
+                task.cancel();
+            }
             messagingTemplate.convertAndSend(TASK_TOPIC, new TaskResponse(task));
         }
 
@@ -267,6 +232,7 @@ public class SimulationRunService {
         log.info("[실행] runId={} 창고 {} 로봇 {}대 투입", simulationRunId, warehouseId, robots.size());
 
         LocalDateTime now = LocalDateTime.now();
+        run.enableRollingCommandGeneration();
         run.start(now);
 
         // 초기화 후 재시작하는 경우 참가 기록이 이미 있으므로 중복 등록을 피한다
@@ -287,9 +253,9 @@ public class SimulationRunService {
                     messagingTemplate.convertAndSend(robotTopic(simulationRunId), RobotStateResponse.from(state));
                 });
 
-        // 대기 중인 작업을 로봇에게 배정하고 이동 계획을 만든다.
-        // 이후 스케줄러가 계획을 한 단계씩 재생한다.
-        simulationPlaybackService.buildPlan(simulationRunId, robots);
+        // 기존 일괄 작업/BFS 재생 대신 커밋 후 0분 명령 생성을 시작한다.
+        // 이후 시뮬레이션 시각 5분, 10분 ...마다 같은 파이프라인이 반복된다.
+        simulationCommandCycleService.startAfterCommit(simulationRunId);
 
         return broadcastRun(run);
     }
@@ -344,6 +310,8 @@ public class SimulationRunService {
         run.stop(LocalDateTime.now());
         simulationRunStateStore.deleteAll(simulationRunId);
         simulationPlaybackService.clear(simulationRunId);
+        simulationCommandCycleService.stop(simulationRunId);
+        inventoryReservationService.releaseActiveForRun(simulationRunId);
         return broadcastRun(run);
     }
 
@@ -380,6 +348,8 @@ public class SimulationRunService {
             run.stop(now);
             simulationRunStateStore.deleteAll(run.getId());
             simulationPlaybackService.clear(run.getId());
+            simulationCommandCycleService.stop(run.getId());
+            inventoryReservationService.releaseActiveForRun(run.getId());
             broadcastRun(run);
         }
 
@@ -391,6 +361,8 @@ public class SimulationRunService {
         run.complete(LocalDateTime.now());
         simulationRunStateStore.deleteAll(simulationRunId);
         simulationPlaybackService.clear(simulationRunId);
+        simulationCommandCycleService.stop(simulationRunId);
+        inventoryReservationService.releaseActiveForRun(simulationRunId);
         return broadcastRun(run);
     }
 
@@ -400,6 +372,8 @@ public class SimulationRunService {
         run.fail(LocalDateTime.now());
         simulationRunStateStore.deleteAll(simulationRunId);
         simulationPlaybackService.clear(simulationRunId);
+        simulationCommandCycleService.stop(simulationRunId);
+        inventoryReservationService.releaseActiveForRun(simulationRunId);
         return broadcastRun(run);
     }
 
@@ -525,54 +499,6 @@ public class SimulationRunService {
                 null,
                 now
         );
-    }
-
-    private Scenario findScenarioOrNull(Long scenarioId, Long warehouseId) {
-        if (scenarioId == null) {
-            return null;
-        }
-        Scenario scenario = scenarioRepository.findById(scenarioId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.SCENARIO_NOT_FOUND));
-        if (!scenario.getWarehouse().getId().equals(warehouseId)) {
-            throw new BusinessException(ErrorCode.SCENARIO_WAREHOUSE_MISMATCH);
-        }
-        return scenario;
-    }
-
-    private void validateInboundRatio(InboundConfigRequest inbound) {
-        if (inbound == null || inbound.products() == null || inbound.products().isEmpty()) {
-            return;
-        }
-        if (inbound.ratioTotal() != TOTAL_RATIO) {
-            throw new BusinessException(ErrorCode.INVALID_INBOUND_RATIO);
-        }
-    }
-
-    private void validateScenario(ScenarioType type, ScenarioConfigRequest scenario) {
-        if (type != ScenarioType.RANDOM) {
-            return;
-        }
-        if (scenario == null
-                || scenario.seed() == null
-                || scenario.taskCount() == null
-                || scenario.inboundRatio() == null) {
-            throw new BusinessException(ErrorCode.INVALID_SCENARIO_CONFIG);
-        }
-    }
-    /**
-     * 작업 생성에 쓰인 입출고 설정을 JSON 문자열로 만든다.
-     * 직렬화에 실패해도 실행 생성 자체를 막지는 않는다.
-     */
-    private String serializeGenerationConfig(SimulationRunCreateRequest request) {
-        try {
-            return objectMapper.writeValueAsString(Map.of(
-                    "inbound", request.inbound() == null ? Map.of() : request.inbound(),
-                    "outbound", request.outbound() == null ? Map.of() : request.outbound()
-            ));
-        } catch (Exception exception) {
-            log.warn("생성 설정 직렬화 실패: {}", exception.getMessage());
-            return null;
-        }
     }
 
     private SimulationRunResponse broadcastRun(SimulationRun run) {

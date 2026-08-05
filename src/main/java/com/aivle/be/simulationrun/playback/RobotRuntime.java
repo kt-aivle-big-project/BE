@@ -62,6 +62,10 @@ public class RobotRuntime {
     // 시계가 이 값을 넘어야 다음 동작으로 넘어간다.
     private long busyUntilMillis = 0L;
 
+    // 현재 이동 구간이 시작된 시뮬레이션 시각. 화면은 이 값과
+    // busyUntilMillis를 이용해 절대 진행률을 계산한다.
+    private long movementStartAtMillis = 0L;
+
     private double batteryLevel;
 
     // RobotSpec 기준 배터리 소모율
@@ -283,6 +287,7 @@ public class RobotRuntime {
      */
     public void stopMoving() {
         this.previousNodeId = null;
+        this.movementStartAtMillis = 0L;
     }
     /**
      * 재계획을 위해 현재 안전 위치에서 정지한다.

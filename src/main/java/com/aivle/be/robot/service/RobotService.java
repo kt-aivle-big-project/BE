@@ -30,7 +30,10 @@ public class RobotService {
 
     private static final Set<SimulationRunStatus> ACTIVE_RUN_STATUSES = Set.of(
             SimulationRunStatus.RUNNING,
-            SimulationRunStatus.PAUSED
+            SimulationRunStatus.PAUSED,
+            SimulationRunStatus.QUIESCING,
+            SimulationRunStatus.REPLANNING,
+            SimulationRunStatus.PENDING_ACTIVATION
     );
     private static final Set<TaskStatus> ACTIVE_TASK_STATUSES = Set.of(
             TaskStatus.ASSIGNED,
