@@ -35,6 +35,7 @@ public class AuthService {
     private final UserConsentRepository userConsentRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final EmailVerificationService emailVerificationService;
 
     @Transactional
     public SignupResponse signup(SignupRequest request) {
@@ -43,6 +44,11 @@ public class AuthService {
         if (userRepository.existsByEmail(email)) {
             throw new BusinessException(ErrorCode.DUPLICATE_EMAIL);
         }
+
+        emailVerificationService.consumeVerification(
+                email,
+                request.emailVerificationToken()
+        );
 
         User user = new User(
                 email,
