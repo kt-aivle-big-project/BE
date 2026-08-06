@@ -24,6 +24,10 @@ public record SignupRequest(
         @ValidPassword
         String password,
 
+        @Schema(description = "이메일 인증 완료 토큰")
+        @NotBlank(message = "이메일 인증을 완료해주세요.")
+        String emailVerificationToken,
+
         @Schema(description = "개인정보 수집 및 이용 필수 동의", example = "true")
         @NotNull(message = "개인정보 수집 및 이용 동의 여부는 필수입니다.")
         @AssertTrue(message = "개인정보 수집 및 이용에 동의해야 합니다.")

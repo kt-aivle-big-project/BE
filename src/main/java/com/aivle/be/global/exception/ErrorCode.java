@@ -230,6 +230,13 @@ public enum ErrorCode {
             "AI 계획의 로봇, 노드 또는 작업을 현재 시뮬레이션 데이터와 연결할 수 없습니다."
     ),
 
+    EMAIL_VERIFICATION_NOT_FOUND(HttpStatus.BAD_REQUEST, "AUTH_006", "이메일 인증번호가 없거나 만료되었습니다."),
+    EMAIL_VERIFICATION_MISMATCH(HttpStatus.BAD_REQUEST, "AUTH_007", "이메일 인증번호가 일치하지 않습니다."),
+    EMAIL_VERIFICATION_REQUIRED(HttpStatus.BAD_REQUEST, "AUTH_008", "이메일 인증을 완료해주세요."),
+    EMAIL_VERIFICATION_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_009", "잠시 후 인증번호를 다시 요청해주세요."),
+    EMAIL_SEND_FAILED(HttpStatus.BAD_GATEWAY, "AUTH_010", "인증 이메일을 발송하지 못했습니다."),
+    EMAIL_VERIFICATION_ATTEMPTS_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_011", "인증번호 확인 횟수를 초과했습니다. 인증번호를 다시 요청해주세요."),
+
     INTERNAL_SERVER_ERROR(
             HttpStatus.INTERNAL_SERVER_ERROR,
             "COMMON_002",
