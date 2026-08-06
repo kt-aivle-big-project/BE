@@ -16,9 +16,10 @@ public class RobotAvailabilityStatusConverter
         if (status == null) {
             return null;
         }
+
         return switch (status) {
-            case AVAILABLE -> "IDLE";
-            case UNAVAILABLE -> "BUSY";
+            case AVAILABLE -> "AVAILABLE";
+            case UNAVAILABLE -> "UNAVAILABLE";
         };
     }
 
@@ -27,10 +28,13 @@ public class RobotAvailabilityStatusConverter
         if (value == null) {
             return null;
         }
+
         return switch (value) {
             case "AVAILABLE", "IDLE" -> AVAILABLE;
             case "UNAVAILABLE", "BUSY", "CHARGING" -> UNAVAILABLE;
-            default -> throw new IllegalArgumentException("Unknown robot availability: " + value);
+            default -> throw new IllegalArgumentException(
+                    "Unknown robot availability: " + value
+            );
         };
     }
 }
