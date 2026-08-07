@@ -29,7 +29,6 @@ import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.entity.Task;
-import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.user.repository.UserRepository;
 import org.slf4j.Logger;
@@ -170,17 +169,20 @@ public class SimulationRunService {
         simulationCommandCycleService.stop(simulationRunId);
         inventoryReservationService.releaseActiveForRun(simulationRunId);
 
-        // rolling-horizon 실행은 재시작할 때 새 0분 배치를 만든다.
-        // 이전 배치의 미완료 작업은 재생하지 않고 취소한다.
+        // 초기화는 "이 실행을 처음부터 다시 재생"이다.
+        //
+        // 예전에는 미완료 작업을 취소했는데, 그러면 다시 시작할 때
+        // 명령 생성기가 새 배치를 뽑아서 실행 ID만 같고 작업 목록은
+        // 완전히 달라졌다. 그래서 취소 대신 모든 작업을 처음 상태로 되돌린다.
+        //
+        // 재고 반영 시각(inventory_applied_at)은 일부러 그대로 둔다.
+        // 이미 랙에서 빠져나간 BOX 를 되돌리는 것은 별개의 문제라,
+        // 여기서 건드리면 재고 수량이 어긋난다.
         List<Task> tasks = taskRepository
                 .findAllBySimulationRun_IdOrderByRequestedAtAsc(simulationRunId);
 
         for (Task task : tasks) {
-            if (task.getStatus() == TaskStatus.PENDING
-                    || task.getStatus() == TaskStatus.ASSIGNED
-                    || task.getStatus() == TaskStatus.IN_PROGRESS) {
-                task.cancel();
-            }
+            task.resetForReplay();
             messagingTemplate.convertAndSend(TASK_TOPIC, new TaskResponse(task));
         }
 
