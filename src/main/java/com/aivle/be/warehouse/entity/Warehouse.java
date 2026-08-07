@@ -186,6 +186,10 @@ public class Warehouse {
         return isShared() || (userId != null && userId.equals(user.getId()));
     }
 
+    public boolean isOwnedBy(Long userId) {
+        return userId != null && userId.equals(user.getId());
+    }
+
     /**
      * 창고 운영 상태.
      *

@@ -18,6 +18,9 @@ public interface SimulationRunRepository extends JpaRepository<SimulationRun, Lo
     @Query("select run from SimulationRun run where run.id = :id")
     Optional<SimulationRun> findByIdForUpdate(@Param("id") Long id);
 
+    @Query("select run from SimulationRun run join fetch run.warehouse where run.id = :id")
+    Optional<SimulationRun> findByIdWithWarehouse(@Param("id") Long id);
+
     boolean existsByWarehouse_IdAndGuestSessionIdIsNullAndStatusInAndIdNot(
             Long warehouseId,
             Collection<SimulationRunStatus> statuses,

@@ -31,6 +31,11 @@ public enum ErrorCode {
     ),
     WAREHOUSE_NOT_FOUND(HttpStatus.NOT_FOUND, "WAREHOUSE_001", "존재하지 않는 창고입니다."),
     WAREHOUSE_NOT_TEMPLATE(HttpStatus.BAD_REQUEST, "WAREHOUSE_004", "공용 템플릿 창고가 아닙니다."),
+    TEMPLATE_WAREHOUSE_NOT_EXECUTABLE(
+            HttpStatus.FORBIDDEN,
+            "WAREHOUSE_005",
+            "공유 템플릿 창고에서는 시뮬레이션을 실행할 수 없습니다."
+    ),
     ROBOT_STATE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_001", "로봇의 현재 상태를 찾을 수 없습니다."),
     NODE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROBOT_STATE_002", "존재하지 않는 창고 노드입니다."),
     INVALID_ROBOT_LOCATION(HttpStatus.BAD_REQUEST, "ROBOT_STATE_003", "로봇과 현재 노드의 창고가 일치하지 않습니다."),

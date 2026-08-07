@@ -1,10 +1,13 @@
 package com.aivle.be.laro.service;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.laro.client.LaroPlanClient;
 import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
+import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -15,6 +18,7 @@ public class LaroPlanService {
     private final LaroReplanStateService replanStateService;
     private final SimulationPlaybackService playbackService;
     private final LaroInventoryReservationService inventoryReservationService;
+    private final SimulationRunRepository simulationRunRepository;
     private final long safeNodeWaitTimeoutMs;
 
     public LaroPlanService(
@@ -23,6 +27,7 @@ public class LaroPlanService {
             LaroReplanStateService replanStateService,
             SimulationPlaybackService playbackService,
             LaroInventoryReservationService inventoryReservationService,
+            SimulationRunRepository simulationRunRepository,
             @Value("${laro.replan.safe-node-timeout-ms:30000}") long safeNodeWaitTimeoutMs
     ) {
         this.client = client;
@@ -30,6 +35,7 @@ public class LaroPlanService {
         this.replanStateService = replanStateService;
         this.playbackService = playbackService;
         this.inventoryReservationService = inventoryReservationService;
+        this.simulationRunRepository = simulationRunRepository;
         this.safeNodeWaitTimeoutMs = safeNodeWaitTimeoutMs;
     }
 
@@ -38,6 +44,7 @@ public class LaroPlanService {
     }
 
     public LaroPlanResponse plan(Long simulationRunId, LaroPlanRequest request) {
+        validateExecutableWarehouse(simulationRunId);
         LaroPlanResponse response = client.plan(simulationRunId, request);
         try {
             LaroPlanExecutionService.PreparedExecution prepared =
@@ -53,6 +60,7 @@ public class LaroPlanService {
     }
 
     public LaroPlanResponse replan(Long simulationRunId, LaroPlanRequest request) {
+        validateExecutableWarehouse(simulationRunId);
         LaroPlanResponse response = null;
         try {
             playbackService.activeAiPlan(simulationRunId);
@@ -127,6 +135,22 @@ public class LaroPlanService {
             replanStateService.restoreRunning(simulationRunId);
         } catch (RuntimeException ignored) {
             // Preserve the original replan failure.
+        }
+    }
+
+    private void validateExecutableWarehouse(Long simulationRunId) {
+        boolean shared = simulationRunRepository.findByIdWithWarehouse(
+                        simulationRunId
+                )
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.SIMULATION_RUN_NOT_FOUND
+                ))
+                .getWarehouse()
+                .isShared();
+        if (shared) {
+            throw new BusinessException(
+                    ErrorCode.TEMPLATE_WAREHOUSE_NOT_EXECUTABLE
+            );
         }
     }
 }
