@@ -52,6 +52,30 @@ public class LaroPlanService {
         }
     }
 
+    /**
+     * 이미 저장된 계획을 AI 호출 없이 그대로 다시 실행한다.
+     *
+     * <p>초기화 후 재시작할 때 쓴다. {@link #plan}과 같은 반영 절차를 타되
+     * {@code client.plan} 만 건너뛰므로, 처음 실행과 완전히 같은 계획이 돈다.
+     */
+    public LaroPlanResponse replay(
+            Long simulationRunId,
+            LaroPlanRequest request,
+            LaroPlanResponse response
+    ) {
+        try {
+            LaroPlanExecutionService.PreparedExecution prepared =
+                    executionService.prepareIfReady(simulationRunId, request, response);
+            if (prepared != null) {
+                executionService.activatePrepared(prepared);
+            }
+            return response;
+        } catch (RuntimeException exception) {
+            failCandidatePlan(simulationRunId, response);
+            throw exception;
+        }
+    }
+
     public LaroPlanResponse replan(Long simulationRunId, LaroPlanRequest request) {
         LaroPlanResponse response = null;
         try {

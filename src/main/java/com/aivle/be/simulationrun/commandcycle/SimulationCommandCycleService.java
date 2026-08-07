@@ -5,11 +5,13 @@ import com.aivle.be.fulfillmentcommand.controller.request.FulfillmentCommandGene
 import com.aivle.be.fulfillmentcommand.service.FulfillmentCommandGenerationService;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
 import com.aivle.be.laro.service.LaroPlanService;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
+import com.aivle.be.simulationrun.entity.SimulationRunPlanSnapshot;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import org.slf4j.Logger;
@@ -41,6 +43,7 @@ public class SimulationCommandCycleService {
     private final FulfillmentCommandGenerationService commandGenerationService;
     private final LaroPlanService laroPlanService;
     private final SimulationPlaybackService playbackService;
+    private final SimulationRunPlanSnapshotStore planSnapshotStore;
     private final TaskExecutor taskExecutor;
     private final Map<Long, CycleRuntime> runtimes = new ConcurrentHashMap<>();
 
@@ -49,12 +52,14 @@ public class SimulationCommandCycleService {
             FulfillmentCommandGenerationService commandGenerationService,
             LaroPlanService laroPlanService,
             SimulationPlaybackService playbackService,
+            SimulationRunPlanSnapshotStore planSnapshotStore,
             @Qualifier("simulationCommandCycleExecutor") TaskExecutor taskExecutor
     ) {
         this.simulationRunRepository = simulationRunRepository;
         this.commandGenerationService = commandGenerationService;
         this.laroPlanService = laroPlanService;
         this.playbackService = playbackService;
+        this.planSnapshotStore = planSnapshotStore;
         this.taskExecutor = taskExecutor;
     }
 
@@ -65,6 +70,17 @@ public class SimulationCommandCycleService {
 
     public void start(Long simulationRunId) {
         SimulationRun run = findRun(simulationRunId);
+
+        // 초기화 뒤 다시 시작한 경우다. 저장된 계획이 있으면 주기마다
+        // 그걸 그대로 재생하고 AI 는 부르지 않는다.
+        // (새 실행은 스냅샷이 없으므로 평소대로 새 계획을 만든다)
+        if (planSnapshotStore.hasSnapshot(simulationRunId)) {
+            log.info(
+                    "[command-cycle] runId={} 저장된 계획으로 재생합니다. (AI 호출 없음)",
+                    simulationRunId
+            );
+        }
+
         long intervalMs = intervalMs(run);
         CycleRuntime previous = runtimes.get(simulationRunId);
         FulfillmentCommandGenerateRequest generationRequest = previous == null
@@ -199,6 +215,31 @@ public class SimulationCommandCycleService {
             }
 
             runtime.requireActive();
+
+            // 이 실행·이 주기의 계획이 이미 저장돼 있으면 AI 를 거치지 않는다.
+            // 초기화 후 다시 시작한 경우가 여기에 해당하며,
+            // 처음 실행과 똑같은 작업·똑같은 경로가 다시 돈다.
+            SimulationRunPlanSnapshot snapshot = planSnapshotStore
+                    .find(simulationRunId, cycleMinute);
+
+            if (snapshot != null) {
+                runtime.begin(CycleState.PLANNING, "REPLAY");
+
+                LaroPlanResponse replayed = laroPlanService.replay(
+                        simulationRunId,
+                        planSnapshotStore.readRequest(snapshot),
+                        planSnapshotStore.readResponse(snapshot)
+                );
+
+                runtime.complete(replayed);
+                log.info(
+                        "[command-cycle] runId={}, minute={} 저장된 계획을 그대로 재생했습니다. (AI 호출 없음)",
+                        simulationRunId,
+                        cycleMinute
+                );
+                return;
+            }
+
             runtime.begin(CycleState.GENERATING, null);
             FulfillmentCommandGenerateResponse generated =
                     commandGenerationService.generate(
@@ -206,6 +247,7 @@ public class SimulationCommandCycleService {
                             runtime.activeGenerationRequest()
                     );
             runtime.generated(generated);
+            LaroPlanRequest planRequest = generated.planRequest();
 
             runtime.requireActive();
             boolean replan = playbackService.hasActiveAiPlan(simulationRunId);
@@ -213,9 +255,13 @@ public class SimulationCommandCycleService {
             runtime.begin(replan ? CycleState.REPLANNING : CycleState.PLANNING, planningMode);
 
             LaroPlanResponse response = replan
-                    ? laroPlanService.replan(simulationRunId, generated.planRequest())
-                    : laroPlanService.plan(simulationRunId, generated.planRequest());
+                    ? laroPlanService.replan(simulationRunId, planRequest)
+                    : laroPlanService.plan(simulationRunId, planRequest);
             runtime.complete(response);
+
+            // 다음 초기화 때 그대로 다시 쓸 수 있게 남겨 둔다.
+            planSnapshotStore.save(simulationRunId, cycleMinute, planRequest, response);
+
             log.info(
                     "[command-cycle] runId={}, minute={}, mode={}, requestId={} complete",
                     simulationRunId,
