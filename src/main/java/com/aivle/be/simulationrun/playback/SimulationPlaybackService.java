@@ -116,6 +116,30 @@ public class SimulationPlaybackService {
      * 시뮬레이션 시작 시 호출.
      * 작업을 발생 시각 순으로 예약하고 로봇 실행 상태를 초기화한다.
      */
+    /**
+     * 재생을 시작할 때 쓸 배터리를 정한다.
+     *
+     * <p>우선순위는 <b>Redis 실시간 상태 → 시나리오 초기 배터리 → 로봇 등록값</b> 이다.
+     *
+     * <p>{@code robot.getBattery()} 는 로봇을 등록할 때 넣은 값이라 실행 중에 바뀌지 않는다.
+     * 그것만 쓰면 시나리오에서 초기 배터리를 80% 로 잡아도 계획이 적용되는 순간
+     * 100% 로 되돌아가고, 재계획 때마다 배터리가 다시 차오른다.
+     */
+    private Integer currentBattery(Long simulationRunId, SimulationRun run, Robot robot) {
+        Integer live = simulationRunStateStore
+                .findByRobotId(simulationRunId, robot.getId())
+                .map(RobotState::batteryLevel)
+                .orElse(null);
+
+        if (live != null) {
+            return live;
+        }
+        if (run != null && run.getInitialBattery() != null) {
+            return run.getInitialBattery();
+        }
+        return robot.getBattery();
+    }
+
     @Transactional
     public void buildPlan(Long simulationRunId, List<Robot> robots) {
         if (aiContexts.containsKey(simulationRunId)) {
@@ -151,7 +175,7 @@ public class SimulationPlaybackService {
                 .map(robot -> new RobotRuntime(
                         robot.getId(),
                         robot.getNodeId(),
-                        robot.getBattery(),
+                        currentBattery(simulationRunId, run, robot),
                         robot.getRobotSpec().getBaseBatteryRate(),
                         robot.getRobotSpec().getWorkBatteryRate()
                 ))
@@ -320,7 +344,7 @@ public class SimulationPlaybackService {
                     robot.getId(),
                     steps,
                     resolveInitialNode(robotPlan, nodesByCode, robot),
-                    robot.getBattery()
+                    currentBattery(simulationRunId, run, robot)
             );
             timelines.add(timeline);
             for (AiPlaybackContext.TimedStep step : steps) {
