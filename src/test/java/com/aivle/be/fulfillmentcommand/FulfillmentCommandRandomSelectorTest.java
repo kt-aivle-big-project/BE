@@ -146,4 +146,101 @@ class FulfillmentCommandRandomSelectorTest {
         assertThat(perRobotFiveTimesSelection.outboundCount()).isEqualTo(10);
         assertThat(perRobotFiveTimesSelection.operations()).hasSize(10);
     }
+    @Test
+    void zeroQuantityRowsAreCountedAsEmptySlotsForInbound() {
+        SimulationRunRepository runRepository = mock(SimulationRunRepository.class);
+        SimulationRunRobotRepository participantRepository =
+                mock(SimulationRunRobotRepository.class);
+        ProductRepository productRepository = mock(ProductRepository.class);
+        WarehouseItemRepository itemRepository = mock(WarehouseItemRepository.class);
+        StorageLocationRepository locationRepository =
+                mock(StorageLocationRepository.class);
+        WarehouseNodeRepository nodeRepository =
+                mock(WarehouseNodeRepository.class);
+        TaskRepository taskRepository = mock(TaskRepository.class);
+
+        Warehouse warehouse = mock(Warehouse.class);
+        when(warehouse.getId()).thenReturn(1L);
+
+        SimulationRun run = mock(SimulationRun.class);
+        when(run.getWarehouse()).thenReturn(warehouse);
+        when(runRepository.findById(9L)).thenReturn(Optional.of(run));
+
+        Product product = mock(Product.class);
+        when(product.getProductCode()).thenReturn("ITEM-001");
+        when(productRepository.findAllByOrderByProductCodeAsc())
+                .thenReturn(List.of(product));
+
+        List<WarehouseItem> emptyItemRows = new ArrayList<>();
+
+        for (long itemId = 1L; itemId <= 6L; itemId++) {
+            WarehouseItem emptyItem = mock(WarehouseItem.class);
+            when(emptyItem.getId()).thenReturn(itemId);
+            when(emptyItem.getQuantity()).thenReturn(0);
+            emptyItemRows.add(emptyItem);
+        }
+
+        when(itemRepository.findAllByWarehouse_Id(1L))
+                .thenReturn(emptyItemRows);
+
+        // 보관 위치 2개 × 3층 = 전체 슬롯 6개
+        when(locationRepository.findAllByWarehouse_Id(1L))
+                .thenReturn(List.of(
+                        mock(StorageLocation.class),
+                        mock(StorageLocation.class)
+                ));
+
+        when(nodeRepository.findAllByWarehouse_IdAndNodeTypeAndActiveTrue(
+                eq(1L),
+                any()
+        )).thenReturn(List.of(mock(WarehouseNode.class)));
+
+        when(taskRepository
+                .findAllBySimulationRun_IdAndStatusInOrderByRequestedAtAsc(
+                        eq(9L),
+                        any()
+                ))
+                .thenReturn(List.of());
+
+        when(participantRepository
+                .findAllBySimulationRun_IdOrderByRobot_Id(9L))
+                .thenReturn(List.of(
+                        mock(com.aivle.be.simulationrun.entity.SimulationRunRobot.class)
+                ));
+
+        FulfillmentCommandRandomSelector selector =
+                new FulfillmentCommandRandomSelector(
+                        runRepository,
+                        participantRepository,
+                        productRepository,
+                        itemRepository,
+                        locationRepository,
+                        nodeRepository,
+                        taskRepository
+                );
+
+        FulfillmentCommandGenerateRequest request =
+                new FulfillmentCommandGenerateRequest(
+                        FulfillmentCommandMode.INBOUND,
+                        1,
+                        null,
+                        null,
+                        null,
+                        "medium",
+                        0L,
+                        CommandExpressionMode.STRUCTURED_ONLY,
+                        CommandPolicyProfile.AUTO,
+                        false,
+                        false
+                );
+
+        FulfillmentCommandSelection selection =
+                selector.select(9L, request);
+
+        assertThat(selection.inboundCount()).isEqualTo(1);
+        assertThat(selection.outboundCount()).isZero();
+        assertThat(selection.operations()).hasSize(1);
+        assertThat(selection.operations().get(0).operationType())
+                .isEqualTo("INBOUND");
+    }
 }
