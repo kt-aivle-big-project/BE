@@ -34,7 +34,9 @@ public class WarehouseResponse {
                 .location(warehouse.getLocation())
                 .description(warehouse.getDescription())
                 .status(warehouse.getStatus())
-                .userId(warehouse.getUser().getId())
+                .userId(warehouse.getUser() == null
+                        ? null
+                        : warehouse.getUser().getId())
                 .sourceTemplateId(warehouse.getSourceTemplate() == null
                         ? null
                         : warehouse.getSourceTemplate().getId())

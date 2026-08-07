@@ -36,6 +36,12 @@ public class GuestAccessPolicy {
         }
     }
 
+    public void requireGuest(AuthenticatedRequester requester) {
+        if (!requester.isGuest()) {
+            throw accessDenied();
+        }
+    }
+
     private BusinessException accessDenied() {
         return new BusinessException(ErrorCode.ACCESS_DENIED);
     }

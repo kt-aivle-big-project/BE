@@ -509,6 +509,11 @@ public class SimulationRunService {
                 && !warehouse.isOwnedBy(requester.userId())) {
             throw new BusinessException(ErrorCode.ACCESS_DENIED);
         }
+        if (requester != null
+                && requester.isGuest()
+                && !warehouse.isOwnedByGuest(requester.guestSessionId())) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
     }
 
     private SimulationRun findOwnedBy(

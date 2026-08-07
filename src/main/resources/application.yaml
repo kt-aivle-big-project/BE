@@ -40,6 +40,7 @@ spring:
         - classpath:db/seed/V07_box_storage_model.sql
         - classpath:db/seed/V08_three_level_rack_storage.sql
         - classpath:db/seed/V09_remove_expiry.sql
+        - classpath:db/seed/V10_guest_warehouse_ownership.sql
 
   jpa:
     # Hibernate 가 테이블을 만든 뒤에 위 SQL 이 실행되도록 미룬다.

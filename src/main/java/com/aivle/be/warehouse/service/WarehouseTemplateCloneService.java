@@ -64,13 +64,46 @@ public class WarehouseTemplateCloneService {
 
         return warehouseRepository
                 .findByUser_IdAndSourceTemplate_Id(userId, templateWarehouseId)
-                .orElseGet(() -> createPersonalCopy(template, user));
+                .orElseGet(() -> createPersonalCopy(
+                        template,
+                        Warehouse.createPersonalCopy(template, user)
+                ));
     }
 
-    private Warehouse createPersonalCopy(Warehouse template, User user) {
-        Warehouse copy = warehouseRepository.save(
-                Warehouse.createPersonalCopy(template, user)
-        );
+    @Transactional
+    public Warehouse ensureGuestPersonalCopy(
+            Long templateWarehouseId,
+            String guestSessionId
+    ) {
+        if (guestSessionId == null || guestSessionId.isBlank()) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
+
+        Warehouse template = warehouseRepository.findByIdForUpdate(templateWarehouseId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
+        if (!template.isShared()) {
+            throw new BusinessException(ErrorCode.WAREHOUSE_NOT_TEMPLATE);
+        }
+
+        return warehouseRepository
+                .findByGuestSessionIdAndSourceTemplate_Id(
+                        guestSessionId,
+                        templateWarehouseId
+                )
+                .orElseGet(() -> createPersonalCopy(
+                        template,
+                        Warehouse.createGuestPersonalCopy(
+                                template,
+                                guestSessionId
+                        )
+                ));
+    }
+
+    private Warehouse createPersonalCopy(
+            Warehouse template,
+            Warehouse unsavedCopy
+    ) {
+        Warehouse copy = warehouseRepository.save(unsavedCopy);
 
         copyZones(template, copy);
         Map<Long, WarehouseNode> nodeMap = copyNodes(template, copy);

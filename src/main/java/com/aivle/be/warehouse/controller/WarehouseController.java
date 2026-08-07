@@ -77,6 +77,21 @@ public class WarehouseController {
         ));
     }
 
+    @PostMapping("/{templateWarehouseId}/guest-personal-copy")
+    public ResponseEntity<WarehouseResponse> ensureGuestPersonalCopy(
+            @PathVariable Long templateWarehouseId,
+            Authentication authentication
+    ) {
+        var requester = requesterResolver.resolve(authentication);
+        guestAccessPolicy.requireGuest(requester);
+        return ResponseEntity.ok(WarehouseResponse.from(
+                warehouseTemplateCloneService.ensureGuestPersonalCopy(
+                        templateWarehouseId,
+                        requester.guestSessionId()
+                )
+        ));
+    }
+
     /**
      * 지도 JSON 으로 창고를 만든다.
      *

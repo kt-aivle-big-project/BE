@@ -10,10 +10,16 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "warehouse_layout",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uk_warehouse_layout_user_source_template",
-                columnNames = {"user_id", "source_template_id"}
-        )
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_warehouse_layout_user_source_template",
+                        columnNames = {"user_id", "source_template_id"}
+                ),
+                @UniqueConstraint(
+                        name = "uk_warehouse_layout_guest_source_template",
+                        columnNames = {"guest_session_id", "source_template_id"}
+                )
+        }
 )
 @Getter
 @NoArgsConstructor
@@ -59,8 +65,11 @@ public class Warehouse {
     private Boolean shared = false;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
+    @JoinColumn(name = "user_id")
     private User user;
+
+    @Column(name = "guest_session_id", length = 36)
+    private String guestSessionId;
 
     /** Shared warehouse used as the immutable source of a personal sample copy. */
     @ManyToOne(fetch = FetchType.LAZY)
@@ -119,6 +128,26 @@ public class Warehouse {
         );
         warehouse.sourceTemplate = sourceTemplate;
         warehouse.shared = false;
+        return warehouse;
+    }
+
+    public static Warehouse createGuestPersonalCopy(
+            Warehouse sourceTemplate,
+            String guestSessionId
+    ) {
+        Warehouse warehouse = new Warehouse();
+        warehouse.name = sourceTemplate.name;
+        warehouse.width = sourceTemplate.width;
+        warehouse.height = sourceTemplate.height;
+        warehouse.location = sourceTemplate.location;
+        warehouse.description = sourceTemplate.description;
+        warehouse.status = sourceTemplate.status;
+        warehouse.shared = false;
+        warehouse.user = null;
+        warehouse.guestSessionId = guestSessionId;
+        warehouse.sourceTemplate = sourceTemplate;
+        warehouse.createdAt = LocalDateTime.now();
+        warehouse.updatedAt = warehouse.createdAt;
         return warehouse;
     }
 
@@ -183,11 +212,18 @@ public class Warehouse {
 
     /** 이 사용자가 볼 수 있는 창고인가. */
     public boolean isVisibleTo(Long userId) {
-        return isShared() || (userId != null && userId.equals(user.getId()));
+        return isShared() || isOwnedBy(userId);
     }
 
     public boolean isOwnedBy(Long userId) {
-        return userId != null && userId.equals(user.getId());
+        return userId != null
+                && user != null
+                && userId.equals(user.getId());
+    }
+
+    public boolean isOwnedByGuest(String guestSessionId) {
+        return guestSessionId != null
+                && guestSessionId.equals(this.guestSessionId);
     }
 
     /**
