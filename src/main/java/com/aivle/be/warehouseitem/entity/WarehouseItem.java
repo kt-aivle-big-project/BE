@@ -91,6 +91,25 @@ public class WarehouseItem {
         return item;
     }
 
+    public static WarehouseItem copyTo(
+            Warehouse warehouse,
+            StorageLocation storageLocation,
+            WarehouseNode node,
+            WarehouseItem source
+    ) {
+        WarehouseItem item = new WarehouseItem();
+        item.warehouse = warehouse;
+        item.storageLocation = storageLocation;
+        item.rackLevel = source.rackLevel;
+        item.node = node;
+        item.product = source.product;
+        item.receivedAt = source.receivedAt;
+        item.quantity = source.quantity;
+        item.inboundQuantity = source.inboundQuantity;
+        item.outboundQuantity = source.outboundQuantity;
+        return item;
+    }
+
     public void update(
             StorageLocation storageLocation,
             Integer rackLevel,

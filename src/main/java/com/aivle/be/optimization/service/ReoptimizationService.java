@@ -320,6 +320,11 @@ public class ReoptimizationService {
         transactionTemplate.executeWithoutResult(transactionStatus -> {
             SimulationRun simulationRun = findSimulationRun(simulationRunId);
 
+            if (simulationRun.getWarehouse().isShared()) {
+                throw new BusinessException(
+                        ErrorCode.TEMPLATE_WAREHOUSE_NOT_EXECUTABLE
+                );
+            }
             if (simulationRun.getStatus()
                     != SimulationRunStatus.RUNNING) {
                 throw new BusinessException(

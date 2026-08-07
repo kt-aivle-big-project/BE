@@ -118,6 +118,7 @@ public class SimulationRunService {
         }
         Warehouse warehouse = warehouseRepository.findById(request.warehouseId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
+        validateWarehouseForExecution(warehouse, requester);
         SimulationRun run = SimulationRun.createRolling(warehouse, LocalDateTime.now());
 
         // 화면에서 고른 시나리오의 설정(충전 기준·자동 재계획·장애물·배속)을 실행에 옮긴다.
@@ -224,6 +225,7 @@ public class SimulationRunService {
             AuthenticatedRequester requester
     ) {
         SimulationRun run = findOwnedBy(simulationRunId, requester);
+        validateWarehouseForExecution(run.getWarehouse(), requester);
         Long warehouseId = run.getWarehouse().getId();
 
         boolean alreadyActive = requester.isGuest()
@@ -489,7 +491,24 @@ public class SimulationRunService {
             Long simulationRunId,
             AuthenticatedRequester requester
     ) {
-        findOwnedBy(simulationRunId, requester);
+        SimulationRun run = findOwnedBy(simulationRunId, requester);
+        validateWarehouseForExecution(run.getWarehouse(), requester);
+    }
+
+    private void validateWarehouseForExecution(
+            Warehouse warehouse,
+            AuthenticatedRequester requester
+    ) {
+        if (warehouse.isShared()) {
+            throw new BusinessException(
+                    ErrorCode.TEMPLATE_WAREHOUSE_NOT_EXECUTABLE
+            );
+        }
+        if (requester != null
+                && requester.isUser()
+                && !warehouse.isOwnedBy(requester.userId())) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
     }
 
     private SimulationRun findOwnedBy(

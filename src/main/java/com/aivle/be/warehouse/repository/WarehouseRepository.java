@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface WarehouseRepository extends JpaRepository<Warehouse, Long> {
 
@@ -25,4 +26,16 @@ public interface WarehouseRepository extends JpaRepository<Warehouse, Long> {
     /** 로그인 정보가 없을 때는 공용 창고만 보여준다. */
     @Query("SELECT w FROM Warehouse w WHERE w.shared = true ORDER BY w.id")
     List<Warehouse> findShared();
+
+    Optional<Warehouse> findByIdAndSharedTrue(Long warehouseId);
+
+    Optional<Warehouse> findByUser_IdAndSourceTemplate_Id(
+            Long userId,
+            Long sourceTemplateId
+    );
+
+    boolean existsByUser_IdAndSourceTemplate_Id(
+            Long userId,
+            Long sourceTemplateId
+    );
 }

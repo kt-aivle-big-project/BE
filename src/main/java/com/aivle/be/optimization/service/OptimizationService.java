@@ -1,5 +1,7 @@
 package com.aivle.be.optimization.service;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.optimization.client.OptimizationClient;
 import com.aivle.be.optimization.dto.request.OptimizationRequest;
 import com.aivle.be.optimization.dto.response.OptimizationResponse;
@@ -7,6 +9,8 @@ import com.aivle.be.optimization.dto.response.OptimizationResultResponse;
 import com.aivle.be.optimization.entity.OptimizationResult;
 import com.aivle.be.optimization.entity.RobotRouteResult;
 import com.aivle.be.optimization.repository.OptimizationResultRepository;
+import com.aivle.be.warehouse.entity.Warehouse;
+import com.aivle.be.warehouse.repository.WarehouseRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -20,11 +24,21 @@ public class OptimizationService {
 
     private final OptimizationClient optimizationClient;
     private final OptimizationResultRepository optimizationResultRepository;
+    private final WarehouseRepository warehouseRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
 
     @Transactional
     public OptimizationResponse optimize(OptimizationRequest request) {
+        Warehouse warehouse = warehouseRepository.findById(request.warehouseId())
+                .orElseThrow(() -> new BusinessException(
+                        ErrorCode.WAREHOUSE_NOT_FOUND
+                ));
+        if (warehouse.isShared()) {
+            throw new BusinessException(
+                    ErrorCode.TEMPLATE_WAREHOUSE_NOT_EXECUTABLE
+            );
+        }
         OptimizationResponse response =
                 optimizationClient.optimize(request);
 

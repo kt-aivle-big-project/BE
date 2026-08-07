@@ -8,7 +8,13 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "warehouse_layout")
+@Table(
+        name = "warehouse_layout",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_warehouse_layout_user_source_template",
+                columnNames = {"user_id", "source_template_id"}
+        )
+)
 @Getter
 @NoArgsConstructor
 public class Warehouse {
@@ -56,6 +62,11 @@ public class Warehouse {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    /** Shared warehouse used as the immutable source of a personal sample copy. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_template_id")
+    private Warehouse sourceTemplate;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -90,6 +101,24 @@ public class Warehouse {
         warehouse.status = status == null ? WarehouseStatus.ACTIVE : status;
         warehouse.createdAt = LocalDateTime.now();
         warehouse.updatedAt = warehouse.createdAt;
+        return warehouse;
+    }
+
+    public static Warehouse createPersonalCopy(
+            Warehouse sourceTemplate,
+            User user
+    ) {
+        Warehouse warehouse = create(
+                sourceTemplate.name,
+                sourceTemplate.width,
+                sourceTemplate.height,
+                user,
+                sourceTemplate.location,
+                sourceTemplate.description,
+                sourceTemplate.status
+        );
+        warehouse.sourceTemplate = sourceTemplate;
+        warehouse.shared = false;
         return warehouse;
     }
 
@@ -155,6 +184,10 @@ public class Warehouse {
     /** 이 사용자가 볼 수 있는 창고인가. */
     public boolean isVisibleTo(Long userId) {
         return isShared() || (userId != null && userId.equals(user.getId()));
+    }
+
+    public boolean isOwnedBy(Long userId) {
+        return userId != null && userId.equals(user.getId());
     }
 
     /**
