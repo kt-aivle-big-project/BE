@@ -52,6 +52,8 @@ class WarehousePersonalCopyControllerWebMvcTest {
 
     private static final Long TEMPLATE_ID = 10L;
     private static final Long USER_ID = 7L;
+    private static final String GUEST_SESSION_ID =
+            "a4d70ea4-9a96-4c75-8414-24a43114a962";
 
     @Autowired private MockMvc mockMvc;
     @MockitoBean private WarehouseService warehouseService;
@@ -62,6 +64,7 @@ class WarehousePersonalCopyControllerWebMvcTest {
     @MockitoBean private JwtTokenProvider jwtTokenProvider;
 
     private Warehouse personalCopy;
+    private Warehouse guestPersonalCopy;
 
     @BeforeEach
     void setUp() {
@@ -75,6 +78,11 @@ class WarehousePersonalCopyControllerWebMvcTest {
         ReflectionTestUtils.setField(user, "id", USER_ID);
         personalCopy = Warehouse.createPersonalCopy(template, user);
         ReflectionTestUtils.setField(personalCopy, "id", 20L);
+        guestPersonalCopy = Warehouse.createGuestPersonalCopy(
+                template,
+                GUEST_SESSION_ID
+        );
+        ReflectionTestUtils.setField(guestPersonalCopy, "id", 21L);
     }
 
     @Test
@@ -104,6 +112,41 @@ class WarehousePersonalCopyControllerWebMvcTest {
     }
 
     @Test
+    void guestCreatesOrGetsSameGuestPersonalCopyWithoutRequestBody() throws Exception {
+        when(warehouseTemplateCloneService.ensureGuestPersonalCopy(
+                TEMPLATE_ID,
+                GUEST_SESSION_ID
+        )).thenReturn(guestPersonalCopy);
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(post(
+                            "/api/warehouses/{templateWarehouseId}/guest-personal-copy",
+                            TEMPLATE_ID
+                    ).with(guest()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(21))
+                    .andExpect(jsonPath("$.userId").doesNotExist())
+                    .andExpect(jsonPath("$.sourceTemplateId").value(TEMPLATE_ID))
+                    .andExpect(jsonPath("$.shared").value(false));
+        }
+    }
+
+    @Test
+    void userAndAnonymousCannotCreateGuestPersonalCopy() throws Exception {
+        mockMvc.perform(post(
+                        "/api/warehouses/{templateWarehouseId}/guest-personal-copy",
+                        TEMPLATE_ID
+                ).with(user()))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(post(
+                        "/api/warehouses/{templateWarehouseId}/guest-personal-copy",
+                        TEMPLATE_ID
+                ))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void nonTemplateAndMissingWarehouseErrorsAreReturned() throws Exception {
         when(warehouseTemplateCloneService.ensurePersonalCopy(TEMPLATE_ID, USER_ID))
                 .thenThrow(new BusinessException(ErrorCode.WAREHOUSE_NOT_TEMPLATE));
@@ -128,7 +171,7 @@ class WarehousePersonalCopyControllerWebMvcTest {
 
     private RequestPostProcessor guest() {
         return authentication(new UsernamePasswordAuthenticationToken(
-                "a4d70ea4-9a96-4c75-8414-24a43114a962",
+                GUEST_SESSION_ID,
                 null,
                 List.of(new SimpleGrantedAuthority(AuthRole.GUEST.authority()))
         ));

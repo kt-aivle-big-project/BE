@@ -15,19 +15,13 @@ class GuestAccessPolicyTest {
             AuthenticatedRequester.guest("a4d70ea4-9a96-4c75-8414-24a43114a962");
 
     @Test
-    void guestCanUseOnlyDemoWarehouseAndScenario() {
+    void guestWarehouseAndScenarioAccessIsDeferredToServiceOwnershipChecks() {
         assertThatCode(() -> policy.validateSimulationRunCreate(guest, 1L, 101L))
                 .doesNotThrowAnyException();
         assertThatCode(() -> policy.validateWarehouseRead(guest, 1L))
                 .doesNotThrowAnyException();
         assertThatCode(() -> policy.validateScenarioRead(guest, 101L))
                 .doesNotThrowAnyException();
-
-        assertAccessDenied(() -> policy.validateSimulationRunCreate(guest, 2L, 101L));
-        assertAccessDenied(() -> policy.validateSimulationRunCreate(guest, 1L, 2L));
-        assertAccessDenied(() -> policy.validateSimulationRunCreate(guest, 1L, null));
-        assertAccessDenied(() -> policy.validateWarehouseRead(guest, 2L));
-        assertAccessDenied(() -> policy.validateScenarioRead(guest, 2L));
     }
 
     @Test
@@ -45,6 +39,15 @@ class GuestAccessPolicyTest {
     @Test
     void guestCannotUseUserOnlyOperations() {
         assertAccessDenied(() -> policy.requireUser(guest));
+    }
+
+    @Test
+    void onlyGuestCanUseGuestPersonalCopyOperation() {
+        assertThatCode(() -> policy.requireGuest(guest))
+                .doesNotThrowAnyException();
+        assertAccessDenied(() -> policy.requireGuest(
+                AuthenticatedRequester.user(10L)
+        ));
     }
 
     private void assertAccessDenied(Runnable operation) {

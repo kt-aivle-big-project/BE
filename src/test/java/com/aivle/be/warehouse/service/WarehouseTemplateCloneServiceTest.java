@@ -70,6 +70,11 @@ import static org.mockito.Mockito.doThrow;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class WarehouseTemplateCloneServiceTest {
 
+    private static final String GUEST_A =
+            "a4d70ea4-9a96-4c75-8414-24a43114a962";
+    private static final String GUEST_B =
+            "b5e81fb5-ab07-4d86-9525-35b54225ba73";
+
     @Autowired private WarehouseTemplateCloneService service;
     @Autowired private UserRepository userRepository;
     @Autowired private WarehouseRepository warehouseRepository;
@@ -176,6 +181,8 @@ class WarehouseTemplateCloneServiceTest {
 
             Scenario scenario = scenarioRepository
                     .findAllByWarehouse_IdOrderByIdAsc(copy.getId()).get(0);
+            assertThat(scenario.getDescription()).isEqualTo("scenario description");
+            assertThat(scenario.getInitialBattery()).isEqualTo(85);
             assertThat(scenario.getMoveSecondsPerNode()).isEqualTo(3.0);
             assertThat(scenario.getPickingSeconds()).isEqualTo(4.0);
             assertThat(scenario.getLoadingSeconds()).isEqualTo(6.0);
@@ -203,6 +210,104 @@ class WarehouseTemplateCloneServiceTest {
         assertThat(applicationEvents.stream(WarehouseGraphChangedEvent.class))
                 .extracting(WarehouseGraphChangedEvent::warehouseId)
                 .containsExactly(first.getId(), otherUser.getId());
+    }
+
+    @Test
+    void guestCopyIsDeepIdempotentPerSessionAndIsolatedBetweenGuests() {
+        Fixture fixture = inTransaction(this::createFixture);
+
+        Warehouse first = service.ensureGuestPersonalCopy(
+                fixture.templateId(),
+                GUEST_A
+        );
+        Warehouse repeated = service.ensureGuestPersonalCopy(
+                fixture.templateId(),
+                GUEST_A
+        );
+        Warehouse otherGuest = service.ensureGuestPersonalCopy(
+                fixture.templateId(),
+                GUEST_B
+        );
+
+        assertThat(repeated.getId()).isEqualTo(first.getId());
+        assertThat(otherGuest.getId()).isNotEqualTo(first.getId());
+        assertThat(applicationEvents.stream(WarehouseGraphChangedEvent.class))
+                .extracting(WarehouseGraphChangedEvent::warehouseId)
+                .containsExactly(first.getId(), otherGuest.getId());
+
+        inTransaction(() -> {
+            Warehouse copy = warehouseRepository.findById(first.getId()).orElseThrow();
+            assertThat(copy.getUser()).isNull();
+            assertThat(copy.getGuestSessionId()).isEqualTo(GUEST_A);
+            assertThat(copy.isShared()).isFalse();
+            assertThat(copy.getSourceTemplate().getId()).isEqualTo(fixture.templateId());
+
+            List<WarehouseNode> sourceNodes = warehouseNodeRepository
+                    .findAllByWarehouse_Id(fixture.templateId());
+            List<WarehouseNode> copiedNodes = warehouseNodeRepository
+                    .findAllByWarehouse_Id(copy.getId());
+            assertThat(copiedNodes).hasSameSizeAs(sourceNodes);
+            assertThat(copiedNodes).extracting(WarehouseNode::getId)
+                    .doesNotContainAnyElementsOf(
+                            sourceNodes.stream().map(WarehouseNode::getId).toList()
+                    );
+            assertThat(warehouseZoneRepository.findAllByWarehouse_Id(copy.getId()))
+                    .hasSize(1);
+            assertThat(warehouseEdgeRepository
+                    .findAllByFromNode_Warehouse_Id(copy.getId()))
+                    .hasSize(2)
+                    .allSatisfy(edge -> {
+                        assertThat(edge.getFromNode().getWarehouse().getId())
+                                .isEqualTo(copy.getId());
+                        assertThat(edge.getToNode().getWarehouse().getId())
+                                .isEqualTo(copy.getId());
+                    });
+            assertThat(chargingStationRepository.findAllByWarehouse_Id(copy.getId()))
+                    .hasSize(1);
+            assertThat(storageLocationRepository.findAllByWarehouse_Id(copy.getId()))
+                    .hasSize(1);
+            assertThat(warehouseItemRepository.findAllByWarehouse_Id(copy.getId()))
+                    .hasSize(1);
+            assertThat(robotRepository.findAllByWarehouse_Id(copy.getId()))
+                    .hasSize(1);
+            assertThat(scenarioRepository
+                    .findAllByWarehouse_IdOrderByIdAsc(copy.getId()))
+                    .singleElement()
+                    .satisfies(scenario -> {
+                        assertThat(scenario.getDescription())
+                                .isEqualTo("scenario description");
+                        assertThat(scenario.getInitialBattery()).isEqualTo(85);
+                    });
+            assertThat(productRepository.count()).isEqualTo(1);
+            assertThat(robotSpecRepository.count()).isEqualTo(1);
+            return null;
+        });
+    }
+
+    @Test
+    void guestCopyRejectsMissingNonSharedTemplateAndMissingSession() {
+        Fixture fixture = inTransaction(this::createFixture);
+        Long customWarehouseId = inTransaction(() -> warehouseRepository.save(
+                Warehouse.create(
+                        "custom",
+                        5,
+                        5,
+                        userRepository.findById(fixture.userAId()).orElseThrow()
+                )
+        ).getId());
+
+        assertError(
+                () -> service.ensureGuestPersonalCopy(999_999L, GUEST_A),
+                ErrorCode.WAREHOUSE_NOT_FOUND
+        );
+        assertError(
+                () -> service.ensureGuestPersonalCopy(customWarehouseId, GUEST_A),
+                ErrorCode.WAREHOUSE_NOT_TEMPLATE
+        );
+        assertError(
+                () -> service.ensureGuestPersonalCopy(fixture.templateId(), " "),
+                ErrorCode.ACCESS_DENIED
+        );
     }
 
     @Test
@@ -351,7 +456,9 @@ class WarehouseTemplateCloneServiceTest {
                 template,
                 "S1",
                 "standard",
+                "scenario description",
                 1,
+                85,
                 1.5,
                 20,
                 true,
@@ -386,6 +493,13 @@ class WarehouseTemplateCloneServiceTest {
                 WarehouseNode.RouteProperties.empty(),
                 Map.of("custom", code)
         );
+    }
+
+    private void assertError(Runnable operation, ErrorCode expected) {
+        assertThatThrownBy(operation::run)
+                .isInstanceOfSatisfying(BusinessException.class, exception ->
+                        assertThat(exception.getErrorCode()).isEqualTo(expected)
+                );
     }
 
     private <T> T inTransaction(Supplier<T> operation) {

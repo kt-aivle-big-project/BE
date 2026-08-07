@@ -114,6 +114,10 @@ public class SecurityConfig {
                         ).hasRole("USER")
                         .requestMatchers(
                                 HttpMethod.POST,
+                                "/api/warehouses/*/guest-personal-copy"
+                        ).hasRole("GUEST")
+                        .requestMatchers(
+                                HttpMethod.POST,
                                 "/api/simulation-runs",
                                 "/api/simulation-runs/*/start",
                                 "/api/simulation-runs/*/pause",

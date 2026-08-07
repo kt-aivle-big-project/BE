@@ -1,7 +1,9 @@
 package com.aivle.be.warehouse.repository;
 
 import com.aivle.be.warehouse.entity.Warehouse;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -29,6 +31,12 @@ public interface WarehouseRepository extends JpaRepository<Warehouse, Long> {
 
     Optional<Warehouse> findByIdAndSharedTrue(Long warehouseId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select warehouse from Warehouse warehouse where warehouse.id = :warehouseId")
+    Optional<Warehouse> findByIdForUpdate(
+            @Param("warehouseId") Long warehouseId
+    );
+
     Optional<Warehouse> findByUser_IdAndSourceTemplate_Id(
             Long userId,
             Long sourceTemplateId
@@ -36,6 +44,16 @@ public interface WarehouseRepository extends JpaRepository<Warehouse, Long> {
 
     boolean existsByUser_IdAndSourceTemplate_Id(
             Long userId,
+            Long sourceTemplateId
+    );
+
+    Optional<Warehouse> findByGuestSessionIdAndSourceTemplate_Id(
+            String guestSessionId,
+            Long sourceTemplateId
+    );
+
+    boolean existsByGuestSessionIdAndSourceTemplate_Id(
+            String guestSessionId,
             Long sourceTemplateId
     );
 }
