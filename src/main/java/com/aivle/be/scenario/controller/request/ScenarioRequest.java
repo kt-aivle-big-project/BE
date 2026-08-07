@@ -4,15 +4,32 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
+/**
+ * 시나리오 생성 요청.
+ *
+ * <p>화면(시나리오 생성 패널)은 창고·이름·설명·배터리 두 값만 받는다.
+ * 나머지는 실행할 때 조정하는 값이라 필수로 두지 않고,
+ * 안 보내면 서버가 기본값으로 채운다.
+ */
 public record ScenarioRequest(
         @NotNull Long warehouseId,
-        @NotBlank String scenarioCode,
         @NotBlank String scenarioName,
-        @NotNull @Min(1) @Max(100) Integer robotCount,
-        @NotNull Double simulationSpeed,
-        @NotNull @Min(0) @Max(100) Integer chargingThreshold,
-        @NotNull Boolean autoReplan,
-        @NotNull Boolean obstacleEnabled
+
+        // 안 보내면 창고 안에서 S1, S2 ... 로 자동 부여한다.
+        @Size(max = 50) String scenarioCode,
+
+        @Size(max = 500) String description,
+
+        // 기본값 : 배터리 100%, 충전 기준 20%
+        @Min(0) @Max(100) Integer initialBattery,
+        @Min(0) @Max(100) Integer chargingThreshold,
+
+        // 기본값 : 로봇 5대, 1배속, 자동 재계획 켜짐, 장애물 꺼짐
+        @Min(1) @Max(100) Integer robotCount,
+        Double simulationSpeed,
+        Boolean autoReplan,
+        Boolean obstacleEnabled
 ) {
 }

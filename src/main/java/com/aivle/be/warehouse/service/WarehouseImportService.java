@@ -892,9 +892,12 @@ public class WarehouseImportService {
         int robots = Math.max(1, robotCount);
 
         List<Scenario> presets = List.of(
-                Scenario.create(warehouse, "S1", "기본", robots, 1.0, 20, true, false),
-                Scenario.create(warehouse, "S2", "고속", robots, 2.0, 20, true, false),
-                Scenario.create(warehouse, "S3", "장애물 포함", robots, 1.0, 20, true, true)
+                Scenario.create(warehouse, "S1", "기본",
+                        "표준 속도로 실행하는 기본 설정", robots, 100, 1.0, 20, true, false),
+                Scenario.create(warehouse, "S2", "고속",
+                        "2배속으로 빠르게 확인하는 설정", robots, 100, 2.0, 20, true, false),
+                Scenario.create(warehouse, "S3", "장애물 포함",
+                        "장애물이 발생하는 상황을 포함한 설정", robots, 100, 1.0, 20, true, true)
         );
 
         scenarioRepository.saveAll(presets);

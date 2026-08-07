@@ -23,25 +23,61 @@ public class ScenarioService {
     private final ScenarioRepository scenarioRepository;
     private final WarehouseRepository warehouseRepository;
 
+    /** 화면이 안 보내는 값에 쓰는 기본값 */
+    private static final int DEFAULT_ROBOT_COUNT = 5;
+    private static final double DEFAULT_SIMULATION_SPEED = 1.0;
+    private static final int DEFAULT_INITIAL_BATTERY = 100;
+    private static final int DEFAULT_CHARGING_THRESHOLD = 20;
+
     @Transactional
     public ScenarioResponse create(ScenarioRequest request) {
         Warehouse warehouse = findWarehouse(request.warehouseId());
-        if (scenarioRepository.existsByWarehouse_IdAndScenarioCode(
-                warehouse.getId(), request.scenarioCode())) {
-            throw new BusinessException(ErrorCode.DUPLICATE_SCENARIO_CODE);
-        }
+
+        String scenarioCode = resolveScenarioCode(
+                warehouse.getId(), request.scenarioCode());
 
         Scenario scenario = Scenario.create(
                 warehouse,
-                request.scenarioCode().trim(),
+                scenarioCode,
                 request.scenarioName().trim(),
-                request.robotCount(),
-                request.simulationSpeed(),
-                request.chargingThreshold(),
-                request.autoReplan(),
-                request.obstacleEnabled()
+                request.description() == null ? null : request.description().trim(),
+                request.robotCount() == null
+                        ? DEFAULT_ROBOT_COUNT : request.robotCount(),
+                request.initialBattery() == null
+                        ? DEFAULT_INITIAL_BATTERY : request.initialBattery(),
+                request.simulationSpeed() == null
+                        ? DEFAULT_SIMULATION_SPEED : request.simulationSpeed(),
+                request.chargingThreshold() == null
+                        ? DEFAULT_CHARGING_THRESHOLD : request.chargingThreshold(),
+                request.autoReplan() == null || request.autoReplan(),
+                request.obstacleEnabled() != null && request.obstacleEnabled()
         );
         return ScenarioResponse.from(scenarioRepository.save(scenario));
+    }
+
+    /**
+     * 시나리오 코드를 정한다.
+     *
+     * <p>화면에서는 코드를 입력받지 않으므로, 안 들어오면 창고 안에서
+     * S1, S2 ... 로 비어 있는 첫 번호를 찾아 붙인다.
+     * 직접 보낸 경우에만 중복을 오류로 돌려준다.
+     */
+    private String resolveScenarioCode(Long warehouseId, String requestedCode) {
+        if (requestedCode != null && !requestedCode.isBlank()) {
+            String code = requestedCode.trim();
+            if (scenarioRepository.existsByWarehouse_IdAndScenarioCode(warehouseId, code)) {
+                throw new BusinessException(ErrorCode.DUPLICATE_SCENARIO_CODE);
+            }
+            return code;
+        }
+
+        for (int number = 1; number <= 1000; number++) {
+            String candidate = "S" + number;
+            if (!scenarioRepository.existsByWarehouse_IdAndScenarioCode(warehouseId, candidate)) {
+                return candidate;
+            }
+        }
+        throw new BusinessException(ErrorCode.DUPLICATE_SCENARIO_CODE);
     }
 
     public ScenarioResponse get(Long scenarioId) {
@@ -67,11 +103,14 @@ public class ScenarioService {
         Scenario scenario = findById(scenarioId);
         scenario.updateSettings(
                 request.scenarioName(),
+                request.description(),
                 request.robotCount(),
+                request.initialBattery(),
                 request.simulationSpeed(),
                 request.chargingThreshold(),
                 request.autoReplan(),
-                request.obstacleEnabled()
+                request.obstacleEnabled(),
+                request.status()
         );
         return ScenarioResponse.from(scenario);
     }

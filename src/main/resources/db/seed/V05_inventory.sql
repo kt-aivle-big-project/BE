@@ -46,26 +46,32 @@ ON CONFLICT DO NOTHING;
 -- 화면에서 고르는 실행 설정이다. 로봇 대수, 배속 같은 값.
 -- ---------------------------------------------------------------------------
 INSERT INTO scenario (
-    scenario_id, warehouse_id, scenario_code, scenario_name,
-    robot_count, simulation_speed, charging_threshold, auto_replan, obstacle_enabled
+    scenario_id, warehouse_id, scenario_code, scenario_name, description,
+    robot_count, initial_battery, simulation_speed, charging_threshold,
+    auto_replan, obstacle_enabled, status, created_at, updated_at
 )
 SELECT
     w.id * 100 + preset.preset_no,
     w.id,
     'S' || preset.preset_no,
     preset.label,
+    preset.note,
     preset.robots,
+    100,
     preset.speed,
     20,
     true,
-    preset.obstacle
+    preset.obstacle,
+    'DRAFT',
+    now(),
+    now()
 FROM warehouse_layout w
 CROSS JOIN (
     VALUES
-        (1, '기본',      5, 1.0, false),
-        (2, '고속',      5, 2.0, false),
-        (3, '장애물 포함', 5, 1.0, true)
-) AS preset(preset_no, label, robots, speed, obstacle)
+        (1, '기본',       '표준 속도로 실행하는 기본 설정',        5, 1.0, false),
+        (2, '고속',       '2배속으로 빠르게 확인하는 설정',        5, 2.0, false),
+        (3, '장애물 포함', '장애물이 발생하는 상황을 포함한 설정',  5, 1.0, true)
+) AS preset(preset_no, label, note, robots, speed, obstacle)
 ON CONFLICT DO NOTHING;
 
 -- ---------------------------------------------------------------------------

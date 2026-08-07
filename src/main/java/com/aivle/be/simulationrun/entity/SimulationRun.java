@@ -103,6 +103,10 @@ public class SimulationRun {
     @Column(name = "charging_threshold")
     private Integer chargingThreshold;
 
+    // 시작할 때 모든 로봇에 넣어 줄 배터리(%). 시나리오에서 가져온다.
+    @Column(name = "initial_battery")
+    private Integer initialBattery;
+
     @Column(name = "auto_replan")
     private Boolean autoReplan;
 
@@ -213,6 +217,7 @@ public class SimulationRun {
             this.autoReplan = scenario.getAutoReplan();
             this.obstacleEnabled = scenario.getObstacleEnabled();
             this.simulationSpeed = scenario.getSimulationSpeed();
+            this.initialBattery = scenario.getInitialBattery();
         }
         if (simulationSpeed != null) {
             this.simulationSpeed = simulationSpeed;

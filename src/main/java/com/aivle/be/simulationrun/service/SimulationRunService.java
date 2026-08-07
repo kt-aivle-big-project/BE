@@ -13,6 +13,8 @@ import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.robotstate.controller.response.RobotStateResponse;
 import com.aivle.be.robotstate.controller.request.RobotStateUpdateRequest;
 import com.aivle.be.robotstate.service.RobotStateValidationService;
+import com.aivle.be.scenario.entity.Scenario;
+import com.aivle.be.scenario.repository.ScenarioRepository;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
@@ -77,6 +79,7 @@ public class SimulationRunService {
     private final SimulationCommandCycleService simulationCommandCycleService;
     private final LaroInventoryReservationService inventoryReservationService;
     private final UserRepository userRepository;
+    private final ScenarioRepository scenarioRepository;
     private final SimpMessagingTemplate messagingTemplate;
     private final GuestAccessPolicy guestAccessPolicy;
 
@@ -117,7 +120,12 @@ public class SimulationRunService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
         SimulationRun run = SimulationRun.createRolling(warehouse, LocalDateTime.now());
 
-        run.applyScenario(null, request.simulationSpeed());
+        // 화면에서 고른 시나리오의 설정(충전 기준·자동 재계획·장애물·배속)을 실행에 옮긴다.
+        // 시나리오를 안 골랐으면 예전처럼 요청 배속만 쓴다.
+        Scenario scenario = findScenarioForWarehouse(
+                request.scenarioId(), warehouse.getId());
+
+        run.applyScenario(scenario, request.simulationSpeed());
 
         // 실행자 기록 (내 실행 이력 조회용)
         if (requester != null && requester.isUser()) {
@@ -129,6 +137,27 @@ public class SimulationRunService {
         SimulationRun saved = simulationRunRepository.save(run);
 
         return broadcastRun(saved);
+    }
+
+    /**
+     * 실행에 쓸 시나리오를 찾는다.
+     *
+     * <p>고르지 않았으면 null 이다. 다른 창고의 시나리오는 설비·노드가 달라
+     * 그대로 쓸 수 없으므로 거부한다.
+     */
+    private Scenario findScenarioForWarehouse(Long scenarioId, Long warehouseId) {
+        if (scenarioId == null) {
+            return null;
+        }
+
+        Scenario scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SCENARIO_NOT_FOUND));
+
+        if (!scenario.getWarehouse().getId().equals(warehouseId)) {
+            throw new BusinessException(ErrorCode.SCENARIO_WAREHOUSE_MISMATCH);
+        }
+
+        return scenario;
     }
 
     /**
@@ -249,7 +278,7 @@ public class SimulationRunService {
         }
 
         robots.stream()
-                .map(robot -> initialState(robot, warehouseId, now))
+                .map(robot -> initialState(robot, warehouseId, now, run.getInitialBattery()))
                 .forEach(state -> {
                     simulationRunStateStore.save(simulationRunId, state);
                     messagingTemplate.convertAndSend(robotTopic(simulationRunId), RobotStateResponse.from(state));
@@ -484,7 +513,18 @@ public class SimulationRunService {
         );
     }
 
-    private RobotState initialState(Robot robot, Long warehouseId, LocalDateTime now) {
+    /**
+     * 시작 시점의 로봇 상태를 만든다.
+     *
+     * <p>배터리는 시나리오의 초기 배터리를 쓴다. 시나리오를 안 골랐으면
+     * 로봇에 등록된 값을 그대로 쓴다.
+     */
+    private RobotState initialState(
+            Robot robot,
+            Long warehouseId,
+            LocalDateTime now,
+            Integer initialBattery
+    ) {
         String nodeCode = robot.getNodeId() == null
                 ? null
                 : warehouseNodeRepository.findById(robot.getNodeId())
@@ -496,7 +536,7 @@ public class SimulationRunService {
                 warehouseId,
                 robot.getNodeId(),
                 nodeCode,
-                robot.getBattery(),
+                initialBattery == null ? robot.getBattery() : initialBattery,
                 RobotStatus.IDLE,
                 null,
                 now
