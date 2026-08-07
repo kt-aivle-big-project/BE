@@ -14,6 +14,7 @@ import com.aivle.be.warehouse.service.WarehouseImportService;
 import com.aivle.be.warehouse.dto.WarehouseResponse;
 import com.aivle.be.warehouse.service.WarehouseGraphService;
 import com.aivle.be.warehouse.service.WarehouseService;
+import com.aivle.be.warehouse.service.WarehouseTemplateCloneService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -33,6 +34,7 @@ public class WarehouseController {
     private final AuthenticatedRequesterResolver requesterResolver;
     private final GuestAccessPolicy guestAccessPolicy;
     private final WarehouseImportService warehouseImportService;
+    private final WarehouseTemplateCloneService warehouseTemplateCloneService;
 
     /**
      * 창고 그래프(맵) 전체를 내려준다.
@@ -58,6 +60,21 @@ public class WarehouseController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(response);
+    }
+
+    @PostMapping("/{templateWarehouseId}/personal-copy")
+    public ResponseEntity<WarehouseResponse> ensurePersonalCopy(
+            @PathVariable Long templateWarehouseId,
+            Authentication authentication
+    ) {
+        var requester = requesterResolver.resolve(authentication);
+        guestAccessPolicy.requireUser(requester);
+        return ResponseEntity.ok(WarehouseResponse.from(
+                warehouseTemplateCloneService.ensurePersonalCopy(
+                        templateWarehouseId,
+                        requester.userId()
+                )
+        ));
     }
 
     /**

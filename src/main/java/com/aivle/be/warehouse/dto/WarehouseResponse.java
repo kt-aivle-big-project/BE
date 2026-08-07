@@ -18,6 +18,7 @@ public class WarehouseResponse {
     private String description;
     private Warehouse.WarehouseStatus status;
     private Long userId;
+    private Long sourceTemplateId;
 
     /** 공용 창고면 화면에서 수정·삭제 버튼을 감춘다. */
     private boolean shared;
@@ -34,6 +35,9 @@ public class WarehouseResponse {
                 .description(warehouse.getDescription())
                 .status(warehouse.getStatus())
                 .userId(warehouse.getUser().getId())
+                .sourceTemplateId(warehouse.getSourceTemplate() == null
+                        ? null
+                        : warehouse.getSourceTemplate().getId())
                 .shared(warehouse.isShared())
                 .createdAt(warehouse.getCreatedAt())
                 .updatedAt(warehouse.getUpdatedAt())

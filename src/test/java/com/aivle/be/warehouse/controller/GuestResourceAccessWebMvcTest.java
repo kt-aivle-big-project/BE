@@ -18,6 +18,7 @@ import com.aivle.be.warehouse.service.WarehouseGraphService;
 import com.aivle.be.warehouse.service.WarehouseImportService;
 import com.aivle.be.warehouse.service.WarehouseLayoutService;
 import com.aivle.be.warehouse.service.WarehouseService;
+import com.aivle.be.warehouse.service.WarehouseTemplateCloneService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -73,6 +74,8 @@ class GuestResourceAccessWebMvcTest {
     private WarehouseGraphService warehouseGraphService;
     @MockitoBean
     private WarehouseImportService warehouseImportService;
+    @MockitoBean
+    private WarehouseTemplateCloneService warehouseTemplateCloneService;
     @MockitoBean
     private ScenarioService scenarioService;
     @MockitoBean
