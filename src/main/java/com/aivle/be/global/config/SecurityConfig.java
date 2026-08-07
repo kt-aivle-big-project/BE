@@ -78,6 +78,26 @@ public class SecurityConfig {
                         .requestMatchers(PUBLIC_PATHS).permitAll()
                         .requestMatchers(
                                 HttpMethod.GET,
+                                "/api/board-posts",
+                                "/api/board-posts/**"
+                        ).hasAnyRole("USER", "GUEST")
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/board-posts",
+                                "/api/board-posts/**"
+                        ).hasRole("USER")
+                        .requestMatchers(
+                                HttpMethod.PATCH,
+                                "/api/board-posts",
+                                "/api/board-posts/**"
+                        ).hasRole("USER")
+                        .requestMatchers(
+                                HttpMethod.DELETE,
+                                "/api/board-posts",
+                                "/api/board-posts/**"
+                        ).hasRole("USER")
+                        .requestMatchers(
+                                HttpMethod.GET,
                                 "/api/warehouses",
                                 "/api/warehouses/**",
                                 "/api/scenarios",

@@ -98,10 +98,16 @@ public class FulfillmentCommandRandomSelector {
                         || outboundFilter.contains(normalize(item.getProduct().getProductCode())))
                 .collect(Collectors.toCollection(ArrayList::new));
 
+        int totalSlots =
+                storageLocationRepository.findAllByWarehouse_Id(warehouseId).size() * 3;
+
+        long occupiedSlots = allItems.stream()
+                .filter(item -> item.getQuantity() != null && item.getQuantity() > 0)
+                .count();
+
         int emptySlots = Math.max(
                 0,
-                storageLocationRepository.findAllByWarehouse_Id(warehouseId).size() * 3
-                        - allItems.size()
+                totalSlots - Math.toIntExact(occupiedSlots)
         );
         boolean hasInboundAccess = !warehouseNodeRepository
                 .findAllByWarehouse_IdAndNodeTypeAndActiveTrue(
