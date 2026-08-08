@@ -83,3 +83,9 @@ simulation:
   command-generation:
     # 1x, 2x, 3x, 4x, 5x workload relative weights. Values need not total 100.
     workload-multiplier-weights: ${SIMULATION_COMMAND_GENERATION_WORKLOAD_MULTIPLIER_WEIGHTS:10,15,20,25,30}
+
+management:
+  health:
+    mail:
+      enabled: ${MANAGEMENT_HEALTH_MAIL_ENABLED:false}
+      
