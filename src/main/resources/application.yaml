@@ -2,6 +2,11 @@ spring:
   application:
     name: BE
 
+  servlet:
+    multipart:
+      max-file-size: 2MB
+      max-request-size: 3MB
+
   mail:
     host: ${MAIL_HOST:smtp.gmail.com}
     port: ${MAIL_PORT:587}
@@ -41,6 +46,8 @@ spring:
         - classpath:db/seed/V08_three_level_rack_storage.sql
         - classpath:db/seed/V09_remove_expiry.sql
         - classpath:db/seed/V10_guest_warehouse_ownership.sql
+        - classpath:db/seed/V12_user_account_management.sql
+        - classpath:db/seed/V13_board_post_attachment.sql
 
   jpa:
     # Hibernate 가 테이블을 만든 뒤에 위 SQL 이 실행되도록 미룬다.
@@ -49,6 +56,11 @@ spring:
 
 mail:
   from: ${MAIL_FROM:${MAIL_USERNAME:}}
+
+storage:
+  s3:
+    region: ${AWS_REGION:ap-northeast-2}
+    bucket: ${S3_BUCKET_NAME:laro-board-attachments}
 
 auth:
   email-verification:

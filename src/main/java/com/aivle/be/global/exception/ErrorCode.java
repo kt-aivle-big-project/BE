@@ -245,6 +245,19 @@ public enum ErrorCode {
     EMAIL_SEND_FAILED(HttpStatus.BAD_GATEWAY, "AUTH_010", "인증 이메일을 발송하지 못했습니다."),
     EMAIL_VERIFICATION_ATTEMPTS_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_011", "인증번호 확인 횟수를 초과했습니다. 인증번호를 다시 요청해주세요."),
 
+    BOARD_POST_ATTACHMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "BOARD_POST_002", "첨부파일을 찾을 수 없습니다."),
+    BOARD_POST_ATTACHMENT_TOO_LARGE(HttpStatus.BAD_REQUEST, "BOARD_POST_003", "첨부파일은 최대 2MB까지 업로드할 수 있습니다."),
+    BOARD_POST_ATTACHMENT_EMPTY(HttpStatus.BAD_REQUEST, "BOARD_POST_004", "비어 있는 파일은 업로드할 수 없습니다."),
+
+    USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_002", "사용자를 찾을 수 없습니다."),
+    CURRENT_PASSWORD_MISMATCH(HttpStatus.BAD_REQUEST, "USER_003", "현재 비밀번호가 일치하지 않습니다."),
+    SAME_PASSWORD(HttpStatus.BAD_REQUEST, "USER_004", "현재 비밀번호와 다른 비밀번호를 입력해주세요."),
+    SHARED_WAREHOUSE_OWNER_WITHDRAWAL_NOT_ALLOWED(
+            HttpStatus.CONFLICT,
+            "USER_005",
+            "공용 창고를 소유한 관리 계정은 탈퇴할 수 없습니다."
+    ),
+
     INTERNAL_SERVER_ERROR(
             HttpStatus.INTERNAL_SERVER_ERROR,
             "COMMON_002",

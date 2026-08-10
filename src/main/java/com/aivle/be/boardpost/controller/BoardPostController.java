@@ -11,7 +11,10 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +24,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.nio.charset.StandardCharsets;
 
 import java.util.List;
 
@@ -77,6 +84,51 @@ public class BoardPostController {
             Authentication authentication
     ) {
         boardPostService.delete(postId, requester(authentication));
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "게시글 첨부파일 업로드 또는 교체")
+    @PostMapping(value = "/{postId}/attachment", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<BoardPostResponse> uploadAttachment(
+            @PathVariable Long postId,
+            @RequestPart("file") MultipartFile file,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(
+                boardPostService.uploadAttachment(postId, file, requester(authentication))
+        );
+    }
+
+    @Operation(summary = "게시글 첨부파일 다운로드")
+    @GetMapping("/{postId}/attachment")
+    public ResponseEntity<ByteArrayResource> downloadAttachment(@PathVariable Long postId) {
+        BoardPostService.AttachmentDownload attachment = boardPostService.downloadAttachment(postId);
+        MediaType mediaType;
+        try {
+            mediaType = MediaType.parseMediaType(attachment.contentType());
+        } catch (IllegalArgumentException exception) {
+            mediaType = MediaType.APPLICATION_OCTET_STREAM;
+        }
+        return ResponseEntity.ok()
+                .contentType(mediaType)
+                .contentLength(attachment.data().length)
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        org.springframework.http.ContentDisposition.attachment()
+                                .filename(attachment.fileName(), StandardCharsets.UTF_8)
+                                .build()
+                                .toString()
+                )
+                .body(new ByteArrayResource(attachment.data()));
+    }
+
+    @Operation(summary = "게시글 첨부파일 삭제")
+    @DeleteMapping("/{postId}/attachment")
+    public ResponseEntity<Void> deleteAttachment(
+            @PathVariable Long postId,
+            Authentication authentication
+    ) {
+        boardPostService.deleteAttachment(postId, requester(authentication));
         return ResponseEntity.noContent().build();
     }
 

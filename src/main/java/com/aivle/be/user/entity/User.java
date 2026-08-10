@@ -60,4 +60,14 @@ public class User {
         failedLoginAttempts = 0;
         lockedUntil = null;
     }
+
+    public void updateName(String name) {
+        this.name = name;
+    }
+
+    public void changePassword(String passwordHash) {
+        this.passwordHash = passwordHash;
+        resetLoginFailures();
+    }
+
 }
