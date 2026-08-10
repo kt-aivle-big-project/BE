@@ -9,6 +9,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToOne;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -28,8 +30,8 @@ public class BoardPost {
     @Column(name = "board_post_id")
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "user_id", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
     private User author;
 
     @Column(nullable = false, length = 200)
@@ -43,6 +45,9 @@ public class BoardPost {
 
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    @OneToOne(mappedBy = "boardPost", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
+    private BoardPostAttachment attachment;
 
     public static BoardPost create(User author, String title, String content) {
         LocalDateTime now = LocalDateTime.now();
@@ -62,6 +67,18 @@ public class BoardPost {
     }
 
     public boolean isWrittenBy(Long userId) {
-        return userId != null && userId.equals(author.getId());
+        return userId != null && author != null && userId.equals(author.getId());
+    }
+
+    public void replaceAttachment(String fileName, String contentType, long fileSize, String objectKey) {
+        if (attachment == null) {
+            attachment = BoardPostAttachment.create(this, fileName, contentType, fileSize, objectKey);
+            return;
+        }
+        attachment.update(fileName, contentType, fileSize, objectKey);
+    }
+
+    public void removeAttachment() {
+        attachment = null;
     }
 }

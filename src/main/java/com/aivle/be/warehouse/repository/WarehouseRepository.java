@@ -56,4 +56,6 @@ public interface WarehouseRepository extends JpaRepository<Warehouse, Long> {
             String guestSessionId,
             Long sourceTemplateId
     );
+
+    boolean existsByUser_IdAndSharedTrue(Long userId);
 }
