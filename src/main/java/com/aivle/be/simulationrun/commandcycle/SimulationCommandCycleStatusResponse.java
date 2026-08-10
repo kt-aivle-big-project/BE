@@ -5,7 +5,7 @@ import com.aivle.be.fulfillmentcommand.domain.CommandExpressionMode;
 import com.aivle.be.fulfillmentcommand.domain.CommandPolicyProfile;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 public record SimulationCommandCycleStatusResponse(
         Long simulationRunId,
@@ -20,7 +20,7 @@ public record SimulationCommandCycleStatusResponse(
         FulfillmentCommandGenerateResponse generated,
         LaroPlanResponse planResponse,
         String error,
-        LocalDateTime updatedAt
+        Instant updatedAt
 ) {
     public enum CycleState {
         IDLE,

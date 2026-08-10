@@ -22,7 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -168,7 +168,7 @@ public class SimulationCommandCycleService {
                     null,
                     null,
                     null,
-                    LocalDateTime.now()
+                    Instant.now()
             );
         }
         return runtime.snapshot();
@@ -325,7 +325,7 @@ public class SimulationCommandCycleService {
         private FulfillmentCommandGenerateResponse generated;
         private LaroPlanResponse planResponse;
         private String error;
-        private LocalDateTime updatedAt = LocalDateTime.now();
+        private Instant updatedAt = Instant.now();
 
         private CycleRuntime(
                 Long simulationRunId,
@@ -356,7 +356,7 @@ public class SimulationCommandCycleService {
             generationRequest = request == null
                     ? FulfillmentCommandGenerateRequest.automatic()
                     : request;
-            updatedAt = LocalDateTime.now();
+            updatedAt = Instant.now();
         }
 
         synchronized long consumeElapsedNanos(long nowNanos) {
@@ -395,7 +395,7 @@ public class SimulationCommandCycleService {
             planResponse = null;
             error = null;
             activeGenerationRequest = generationRequest;
-            updatedAt = LocalDateTime.now();
+            updatedAt = Instant.now();
             return minute;
         }
 
@@ -405,13 +405,13 @@ public class SimulationCommandCycleService {
             if (nextPlanningMode != null) {
                 planningMode = nextPlanningMode;
             }
-            updatedAt = LocalDateTime.now();
+            updatedAt = Instant.now();
         }
 
         synchronized void generated(FulfillmentCommandGenerateResponse value) {
             requireActive();
             generated = value;
-            updatedAt = LocalDateTime.now();
+            updatedAt = Instant.now();
         }
 
         synchronized void complete(LaroPlanResponse value) {
@@ -422,7 +422,7 @@ public class SimulationCommandCycleService {
             state = CycleState.COMPLETE;
             error = null;
             inFlight = false;
-            updatedAt = LocalDateTime.now();
+            updatedAt = Instant.now();
         }
 
         synchronized void fail(String message) {
@@ -432,7 +432,7 @@ public class SimulationCommandCycleService {
             state = CycleState.ERROR;
             error = message == null || message.isBlank() ? "command cycle failed" : message;
             inFlight = false;
-            updatedAt = LocalDateTime.now();
+            updatedAt = Instant.now();
         }
 
         synchronized void requireActive() {
@@ -445,7 +445,7 @@ public class SimulationCommandCycleService {
             active = false;
             inFlight = false;
             state = CycleState.STOPPED;
-            updatedAt = LocalDateTime.now();
+            updatedAt = Instant.now();
             lastTickNanos = System.nanoTime();
         }
 
