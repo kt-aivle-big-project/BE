@@ -9,7 +9,6 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
-import java.util.Map;
 import java.util.UUID;
 
 @Component
@@ -29,7 +28,6 @@ public class S3BoardPostFileStorage implements BoardPostFileStorage {
                         .bucket(bucket)
                         .key(objectKey)
                         .contentType(contentType)
-                        .metadata(Map.of("original-file-name", fileName))
                         .build(),
                 RequestBody.fromBytes(data)
         );
