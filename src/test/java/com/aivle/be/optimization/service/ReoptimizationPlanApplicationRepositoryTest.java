@@ -45,6 +45,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -383,11 +384,13 @@ class ReoptimizationPlanApplicationRepositoryTest {
         );
         WarehouseNode start = nodeRepository.save(WarehouseNode.create(
                 warehouse, "A", 0.0, 0.0,
-                "start-" + suffix, NodeType.ROUTE
+                "start-" + suffix, NodeType.ROUTE,
+                WarehouseNode.RouteProperties.empty(), Map.of()
         ));
         WarehouseNode end = nodeRepository.save(WarehouseNode.create(
                 warehouse, "A", 1.0, 0.0,
-                "end-" + suffix, NodeType.ROUTE
+                "end-" + suffix, NodeType.ROUTE,
+                WarehouseNode.RouteProperties.empty(), Map.of()
         ));
         RobotSpec spec = robotSpecRepository.save(RobotSpec.create(
                 "spec-" + suffix, "TASK", 0.1, 0.2, 0.0

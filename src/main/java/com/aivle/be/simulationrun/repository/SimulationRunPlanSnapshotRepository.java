@@ -13,5 +13,5 @@ public interface SimulationRunPlanSnapshotRepository
             long cycleMinute
     );
 
-    boolean existsBySimulationRunId(Long simulationRunId);
+    void deleteAllBySimulationRunId(Long simulationRunId);
 }

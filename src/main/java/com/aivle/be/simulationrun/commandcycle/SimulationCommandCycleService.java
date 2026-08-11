@@ -11,7 +11,6 @@ import com.aivle.be.laro.dto.LaroPreflightResponse;
 import com.aivle.be.laro.service.LaroPlanService;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
-import com.aivle.be.simulationrun.entity.SimulationRunPlanSnapshot;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import org.slf4j.Logger;
@@ -46,6 +45,7 @@ public class SimulationCommandCycleService {
     private final SimulationRunPlanSnapshotStore planSnapshotStore;
     private final TaskExecutor taskExecutor;
     private final Map<Long, CycleRuntime> runtimes = new ConcurrentHashMap<>();
+    private final Map<Long, Object> executionLocks = new ConcurrentHashMap<>();
 
     public SimulationCommandCycleService(
             SimulationRunRepository simulationRunRepository,
@@ -71,16 +71,6 @@ public class SimulationCommandCycleService {
     public void start(Long simulationRunId) {
         SimulationRun run = findRun(simulationRunId);
 
-        // 초기화 뒤 다시 시작한 경우다. 저장된 계획이 있으면 주기마다
-        // 그걸 그대로 재생하고 AI 는 부르지 않는다.
-        // (새 실행은 스냅샷이 없으므로 평소대로 새 계획을 만든다)
-        if (planSnapshotStore.hasSnapshot(simulationRunId)) {
-            log.info(
-                    "[command-cycle] runId={} 저장된 계획으로 재생합니다. (AI 호출 없음)",
-                    simulationRunId
-            );
-        }
-
         long intervalMs = intervalMs(run);
         CycleRuntime previous = runtimes.get(simulationRunId);
         FulfillmentCommandGenerateRequest generationRequest = previous == null
@@ -88,6 +78,7 @@ public class SimulationCommandCycleService {
                 : previous.generationRequest();
         CycleRuntime runtime = new CycleRuntime(
                 simulationRunId,
+                run.getExecutionVersion(),
                 intervalMs,
                 generationRequest,
                 true
@@ -121,6 +112,7 @@ public class SimulationCommandCycleService {
                 simulationRunId,
                 ignored -> new CycleRuntime(
                         simulationRunId,
+                        run.getExecutionVersion(),
                         intervalMs(run),
                         FulfillmentCommandGenerateRequest.automatic(),
                         true
@@ -142,6 +134,7 @@ public class SimulationCommandCycleService {
                 simulationRunId,
                 ignored -> new CycleRuntime(
                         simulationRunId,
+                        run.getExecutionVersion(),
                         intervalMs(run),
                         FulfillmentCommandGenerateRequest.automatic(),
                         run.getStatus() == SimulationRunStatus.RUNNING
@@ -152,11 +145,12 @@ public class SimulationCommandCycleService {
     }
 
     public SimulationCommandCycleStatusResponse status(Long simulationRunId) {
-        findRun(simulationRunId);
+        SimulationRun run = findRun(simulationRunId);
         CycleRuntime runtime = runtimes.get(simulationRunId);
         if (runtime == null) {
             return new SimulationCommandCycleStatusResponse(
                     simulationRunId,
+                    run.getExecutionVersion(),
                     false,
                     CycleState.IDLE,
                     0,
@@ -203,6 +197,16 @@ public class SimulationCommandCycleService {
     }
 
     private void execute(CycleRuntime runtime, long cycleMinute) {
+        Object executionLock = executionLocks.computeIfAbsent(
+                runtime.simulationRunId(),
+                ignored -> new Object()
+        );
+        synchronized (executionLock) {
+            executeLocked(runtime, cycleMinute);
+        }
+    }
+
+    private void executeLocked(CycleRuntime runtime, long cycleMinute) {
         Long simulationRunId = runtime.simulationRunId();
         try {
             runtime.begin(CycleState.CHECKING, null);
@@ -215,30 +219,6 @@ public class SimulationCommandCycleService {
             }
 
             runtime.requireActive();
-
-            // 이 실행·이 주기의 계획이 이미 저장돼 있으면 AI 를 거치지 않는다.
-            // 초기화 후 다시 시작한 경우가 여기에 해당하며,
-            // 처음 실행과 똑같은 작업·똑같은 경로가 다시 돈다.
-            SimulationRunPlanSnapshot snapshot = planSnapshotStore
-                    .find(simulationRunId, cycleMinute);
-
-            if (snapshot != null) {
-                runtime.begin(CycleState.PLANNING, "REPLAY");
-
-                LaroPlanResponse replayed = laroPlanService.replay(
-                        simulationRunId,
-                        planSnapshotStore.readRequest(snapshot),
-                        planSnapshotStore.readResponse(snapshot)
-                );
-
-                runtime.complete(replayed);
-                log.info(
-                        "[command-cycle] runId={}, minute={} 저장된 계획을 그대로 재생했습니다. (AI 호출 없음)",
-                        simulationRunId,
-                        cycleMinute
-                );
-                return;
-            }
 
             runtime.begin(CycleState.GENERATING, null);
             FulfillmentCommandGenerateResponse generated =
@@ -255,11 +235,19 @@ public class SimulationCommandCycleService {
             runtime.begin(replan ? CycleState.REPLANNING : CycleState.PLANNING, planningMode);
 
             LaroPlanResponse response = replan
-                    ? laroPlanService.replan(simulationRunId, planRequest)
-                    : laroPlanService.plan(simulationRunId, planRequest);
+                    ? laroPlanService.replan(
+                            simulationRunId,
+                            runtime.executionVersion(),
+                            planRequest
+                    )
+                    : laroPlanService.plan(
+                            simulationRunId,
+                            runtime.executionVersion(),
+                            planRequest
+                    );
             runtime.complete(response);
 
-            // 다음 초기화 때 그대로 다시 쓸 수 있게 남겨 둔다.
+            runtime.requireActive();
             planSnapshotStore.save(simulationRunId, cycleMinute, planRequest, response);
 
             log.info(
@@ -311,6 +299,7 @@ public class SimulationCommandCycleService {
 
     private static final class CycleRuntime {
         private final Long simulationRunId;
+        private final long executionVersion;
         private final long intervalMs;
         private long simulatedTimeMs;
         private long lastTriggeredMinute = -1;
@@ -329,11 +318,13 @@ public class SimulationCommandCycleService {
 
         private CycleRuntime(
                 Long simulationRunId,
+                long executionVersion,
                 long intervalMs,
                 FulfillmentCommandGenerateRequest generationRequest,
                 boolean active
         ) {
             this.simulationRunId = simulationRunId;
+            this.executionVersion = executionVersion;
             this.intervalMs = intervalMs;
             this.generationRequest = generationRequest;
             this.activeGenerationRequest = generationRequest;
@@ -342,6 +333,10 @@ public class SimulationCommandCycleService {
 
         synchronized Long simulationRunId() {
             return simulationRunId;
+        }
+
+        synchronized long executionVersion() {
+            return executionVersion;
         }
 
         synchronized FulfillmentCommandGenerateRequest generationRequest() {
@@ -453,6 +448,7 @@ public class SimulationCommandCycleService {
             long nextMinute = Math.max(lastTriggeredMinute + 1, simulatedTimeMs / intervalMs + 1);
             return new SimulationCommandCycleStatusResponse(
                     simulationRunId,
+                    executionVersion,
                     active,
                     state,
                     simulatedTimeMs,

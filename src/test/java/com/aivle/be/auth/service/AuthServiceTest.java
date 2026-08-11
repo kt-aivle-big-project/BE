@@ -25,7 +25,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceTest {
@@ -42,12 +41,16 @@ class AuthServiceTest {
     @Mock
     private JwtTokenProvider jwtTokenProvider;
 
+    @Mock
+    private EmailVerificationService emailVerificationService;
+
     @InjectMocks
     private AuthService authService;
 
     @Test
     void signupCreatesUserWithNormalizedEmailAndEncodedPassword() {
-        SignupRequest request = new SignupRequest(" User@Example.com ", "홍길동", "Password123!", true, true);
+        SignupRequest request = new SignupRequest(
+                " User@Example.com ", "홍길동", "Password123!", "verified-token", true, true);
         when(userRepository.existsByEmail("user@example.com")).thenReturn(false);
         when(passwordEncoder.encode("Password123!")).thenReturn("encoded-password");
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -57,13 +60,18 @@ class AuthServiceTest {
         assertThat(response.email()).isEqualTo("user@example.com");
         assertThat(response.name()).isEqualTo("홍길동");
         verify(passwordEncoder).encode("Password123!");
+        verify(emailVerificationService).consumeVerification(
+                "user@example.com",
+                "verified-token"
+        );
         verify(userRepository).save(any(User.class));
         verify(userConsentRepository, times(2)).save(any(UserConsent.class));
     }
 
     @Test
     void signupRejectsDuplicateEmail() {
-        SignupRequest request = new SignupRequest("user@example.com", "홍길동", "Password123!", true, true);
+        SignupRequest request = new SignupRequest(
+                "user@example.com", "홍길동", "Password123!", "verified-token", true, true);
         when(userRepository.existsByEmail("user@example.com")).thenReturn(true);
 
         assertThatThrownBy(() -> authService.signup(request))

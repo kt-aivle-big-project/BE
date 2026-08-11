@@ -13,6 +13,7 @@ import java.util.List;
  */
 public record SimulationRunRobotStatesResponse(
         Long simulationRunId,
+        long executionVersion,
         SimulationRunStatus status,
         List<RobotStateResponse> robots,
 

@@ -67,6 +67,7 @@ class ReoptimizationRuntimeExecutionTest {
 
         SimulationPlaybackService service = new SimulationPlaybackService(
                 runRepository,
+                mock(com.aivle.be.simulationrun.repository.SimulationRunRobotRepository.class),
                 mock(com.aivle.be.simulationrun.repository.SimulationRunStateStore.class),
                 taskRepository,
                 mock(com.aivle.be.robot.repository.RobotRepository.class),
@@ -74,7 +75,9 @@ class ReoptimizationRuntimeExecutionTest {
                 mock(com.aivle.be.warehousenode.repository.WarehouseNodeRepository.class),
                 taskService,
                 pathFinder,
-                mock(org.springframework.messaging.simp.SimpMessagingTemplate.class)
+                mock(org.springframework.messaging.simp.SimpMessagingTemplate.class),
+                mock(org.springframework.jdbc.core.JdbcTemplate.class),
+                mock(com.aivle.be.laro.service.LaroInventoryReservationService.class)
         );
         RobotRuntime robot = new RobotRuntime(10L, 10L, 100.0, 1.0, 1.0);
         PlaybackContext context = new PlaybackContext(

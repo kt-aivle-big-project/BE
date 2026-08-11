@@ -23,6 +23,7 @@ import com.aivle.be.simulationrun.controller.response.SimulationRunRobotStatesRe
 import com.aivle.be.simulationrun.controller.response.SimulationRunHistoryResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleService;
+import com.aivle.be.simulationrun.commandcycle.SimulationRunPlanSnapshotStore;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.entity.SimulationRunRobot;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
@@ -77,6 +78,7 @@ public class SimulationRunService {
     private final TaskRepository taskRepository;
     private final SimulationPlaybackService simulationPlaybackService;
     private final SimulationCommandCycleService simulationCommandCycleService;
+    private final SimulationRunPlanSnapshotStore simulationRunPlanSnapshotStore;
     private final LaroInventoryReservationService inventoryReservationService;
     private final UserRepository userRepository;
     private final ScenarioRepository scenarioRepository;
@@ -192,14 +194,15 @@ public class SimulationRunService {
             Long simulationRunId,
             AuthenticatedRequester requester
     ) {
-        SimulationRun run = findOwnedBy(simulationRunId, requester);
+        SimulationRun run = findOwnedByForUpdate(simulationRunId, requester);
         run.reset();
         simulationRunStateStore.deleteAll(simulationRunId);
         simulationPlaybackService.clear(simulationRunId);
         simulationCommandCycleService.stop(simulationRunId);
+        simulationRunPlanSnapshotStore.deleteAll(simulationRunId);
         inventoryReservationService.releaseActiveForRun(simulationRunId);
 
-        // 초기화는 "이 실행을 처음부터 다시 재생"이다.
+        // 초기화는 같은 실행 ID의 작업을 처음 상태로 되돌린 뒤 새 AI 계획을 만든다.
         //
         // 예전에는 미완료 작업을 취소했는데, 그러면 다시 시작할 때
         // 명령 생성기가 새 배치를 뽑아서 실행 ID만 같고 작업 목록은
@@ -444,6 +447,7 @@ public class SimulationRunService {
                 .toList();
         return new SimulationRunRobotStatesResponse(
                 simulationRunId,
+                run.getExecutionVersion(),
                 run.getStatus(),
                 states,
                 simulationPlaybackService.currentClockMillis(simulationRunId)
@@ -521,6 +525,21 @@ public class SimulationRunService {
             AuthenticatedRequester requester
     ) {
         SimulationRun run = findById(simulationRunId);
+        boolean owned = requester.isUser()
+                ? run.isOwnedByUser(requester.userId())
+                : run.isOwnedByGuest(requester.guestSessionId());
+        if (!owned) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
+        return run;
+    }
+
+    private SimulationRun findOwnedByForUpdate(
+            Long simulationRunId,
+            AuthenticatedRequester requester
+    ) {
+        SimulationRun run = simulationRunRepository.findByIdForUpdate(simulationRunId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND));
         boolean owned = requester.isUser()
                 ? run.isOwnedByUser(requester.userId())
                 : run.isOwnedByGuest(requester.guestSessionId());

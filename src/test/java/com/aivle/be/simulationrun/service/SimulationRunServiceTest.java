@@ -4,6 +4,7 @@ import com.aivle.be.auth.security.AuthenticatedRequester;
 import com.aivle.be.auth.security.GuestAccessPolicy;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.laro.service.LaroInventoryReservationService;
 import com.aivle.be.robot.domain.RobotAvailabilityStatus;
 import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.robot.repository.RobotRepository;
@@ -14,12 +15,13 @@ import com.aivle.be.scenario.repository.ScenarioRepository;
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
 import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateRequest;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
+import com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleService;
+import com.aivle.be.simulationrun.commandcycle.SimulationRunPlanSnapshotStore;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunRobotRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
-import com.aivle.be.task.generation.ScenarioTaskPlanner;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.user.entity.User;
 import com.aivle.be.user.repository.UserRepository;
@@ -81,7 +83,11 @@ class SimulationRunServiceTest {
     @Mock
     private SimulationPlaybackService simulationPlaybackService;
     @Mock
-    private ScenarioTaskPlanner scenarioTaskPlanner;
+    private SimulationCommandCycleService simulationCommandCycleService;
+    @Mock
+    private SimulationRunPlanSnapshotStore simulationRunPlanSnapshotStore;
+    @Mock
+    private LaroInventoryReservationService inventoryReservationService;
     @Mock
     private UserRepository userRepository;
     @Mock
@@ -98,6 +104,9 @@ class SimulationRunServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(warehouse.getId()).thenReturn(1L);
+        lenient().when(warehouse.isOwnedBy(7L)).thenReturn(true);
+        lenient().when(warehouse.isOwnedByGuest(GUEST_A)).thenReturn(true);
+        lenient().when(warehouse.isOwnedByGuest(GUEST_B)).thenReturn(true);
     }
 
     @Test
@@ -135,22 +144,18 @@ class SimulationRunServiceTest {
     }
 
     @Test
-    void guestCreationRejectsNonDemoOrMissingIds() {
+    void guestCreationValidatesReferencedEntities() {
         AuthenticatedRequester guest = AuthenticatedRequester.guest(GUEST_A);
 
-        assertAccessDenied(() -> simulationRunService.create(
+        assertBusinessError(() -> simulationRunService.create(
                 createRequest(2L, 1L),
                 guest
-        ));
-        assertAccessDenied(() -> simulationRunService.create(
+        ), ErrorCode.WAREHOUSE_NOT_FOUND);
+        when(warehouseRepository.findById(1L)).thenReturn(Optional.of(warehouse));
+        assertBusinessError(() -> simulationRunService.create(
                 createRequest(1L, 2L),
                 guest
-        ));
-        assertAccessDenied(() -> simulationRunService.create(
-                createRequest(1L, null),
-                guest
-        ));
-        verifyNoInteractions(warehouseRepository);
+        ), ErrorCode.SCENARIO_NOT_FOUND);
     }
 
     @Test
@@ -172,6 +177,7 @@ class SimulationRunServiceTest {
     void guestCanOperateOnlyOwnRunAcrossLifecycle() {
         SimulationRun run = guestRun(10L, GUEST_A);
         when(simulationRunRepository.findById(10L)).thenReturn(Optional.of(run));
+        when(simulationRunRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(run));
         prepareStartDependencies(10L);
         when(taskRepository.findAllBySimulationRun_IdOrderByRequestedAtAsc(10L))
                 .thenReturn(List.of());
@@ -193,6 +199,8 @@ class SimulationRunServiceTest {
         simulationRunService.getParticipants(10L, guest);
         simulationRunService.getRobotStates(10L, guest);
         simulationRunService.reset(10L, guest);
+        assertThat(run.getExecutionVersion()).isEqualTo(2L);
+        verify(simulationRunPlanSnapshotStore).deleteAll(10L);
         simulationRunService.stop(10L, guest);
 
         assertThat(run.getStatus()).isEqualTo(SimulationRunStatus.STOPPED);
@@ -368,19 +376,23 @@ class SimulationRunServiceTest {
     ) {
         return new SimulationRunCreateRequest(
                 warehouseId,
-                scenarioId,
                 1.0,
-                null,
-                null,
-                null
+                scenarioId
         );
     }
 
     private void assertAccessDenied(Runnable operation) {
+        assertBusinessError(operation, ErrorCode.ACCESS_DENIED);
+    }
+
+    private void assertBusinessError(
+            Runnable operation,
+            ErrorCode expectedErrorCode
+    ) {
         assertThatThrownBy(operation::run)
                 .isInstanceOf(BusinessException.class)
                 .satisfies(exception -> assertThat(
                         ((BusinessException) exception).getErrorCode()
-                ).isEqualTo(ErrorCode.ACCESS_DENIED));
+                ).isEqualTo(expectedErrorCode));
     }
 }

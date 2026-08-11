@@ -12,11 +12,10 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * AI 계획을 실행·주기 단위로 저장하고 다시 꺼내 준다.
+ * 성공한 AI 계획을 실행·주기 단위의 진단 이력으로 저장한다.
  *
- * <p>초기화 후 재시작하면 저장된 계획을 그대로 재생하므로 AI 를 다시 부르지 않는다.
- * 저장에 실패해도 시뮬레이션은 계속 돌아야 하므로 예외를 밖으로 던지지 않는다.
- * (그 경우 다음 초기화 때 재생 대신 새 계획을 만들 뿐이다)
+ * <p>초기화 시 이력은 삭제하며 새 실행 세대는 새 AI 계획을 만든다.
+ * 이력 저장 실패가 시뮬레이션 실행을 중단시키지는 않는다.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -27,21 +26,6 @@ public class SimulationRunPlanSnapshotStore {
 
     private final SimulationRunPlanSnapshotRepository repository;
     private final ObjectMapper objectMapper;
-
-    @Transactional(readOnly = true)
-    public SimulationRunPlanSnapshot find(Long simulationRunId, long cycleMinute) {
-        return repository
-                .findBySimulationRunIdAndCycleMinute(simulationRunId, cycleMinute)
-                .orElse(null);
-    }
-
-    public LaroPlanRequest readRequest(SimulationRunPlanSnapshot snapshot) {
-        return objectMapper.readValue(snapshot.getRequestJson(), LaroPlanRequest.class);
-    }
-
-    public LaroPlanResponse readResponse(SimulationRunPlanSnapshot snapshot) {
-        return objectMapper.readValue(snapshot.getResponseJson(), LaroPlanResponse.class);
-    }
 
     @Transactional
     public void save(
@@ -75,11 +59,11 @@ public class SimulationRunPlanSnapshotStore {
     }
 
     /**
-     * 이 실행에 재생할 계획이 하나라도 저장돼 있는지.
-     * 새 실행은 없고, 초기화 후 재시작이면 있다.
+     * 초기화된 실행은 이전 실행 계획을 재생하지 않고 새 계획을 만든다.
+     * 예약이 해제된 과거 계획을 다시 설치하면 계획과 재고 소유권이 어긋난다.
      */
-    @Transactional(readOnly = true)
-    public boolean hasSnapshot(Long simulationRunId) {
-        return repository.existsBySimulationRunId(simulationRunId);
+    @Transactional
+    public void deleteAll(Long simulationRunId) {
+        repository.deleteAllBySimulationRunId(simulationRunId);
     }
 }

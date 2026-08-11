@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 
 public record SimulationRunResponse(
         Long simulationRunId,
+        long executionVersion,
         Long warehouseId,
         SimulationRunStatus status,
         LocalDateTime createdAt,
@@ -36,6 +37,7 @@ public record SimulationRunResponse(
 
         return new SimulationRunResponse(
                 run.getId(),
+                run.getExecutionVersion(),
                 run.getWarehouse().getId(),
                 run.getStatus(),
                 run.getCreatedAt(),

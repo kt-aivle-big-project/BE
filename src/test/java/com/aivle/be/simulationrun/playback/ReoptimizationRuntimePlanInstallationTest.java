@@ -286,6 +286,7 @@ class ReoptimizationRuntimePlanInstallationTest {
                 mock(SimpMessagingTemplate.class);
         SimulationPlaybackService service = new SimulationPlaybackService(
                 runRepository,
+                mock(com.aivle.be.simulationrun.repository.SimulationRunRobotRepository.class),
                 stateStore,
                 taskRepository,
                 robotRepository,
@@ -293,7 +294,9 @@ class ReoptimizationRuntimePlanInstallationTest {
                 mock(WarehouseNodeRepository.class),
                 mock(TaskService.class),
                 pathFinder,
-                messagingTemplate
+                messagingTemplate,
+                mock(org.springframework.jdbc.core.JdbcTemplate.class),
+                mock(com.aivle.be.laro.service.LaroInventoryReservationService.class)
         );
         RobotRuntime first = spy(
                 new RobotRuntime(10L, 10L, 100, 1.0, 1.0)

@@ -34,6 +34,8 @@ class SimulationCommandCycleServiceTest {
     @Mock
     private TaskExecutor taskExecutor;
     @Mock
+    private SimulationRunPlanSnapshotStore planSnapshotStore;
+    @Mock
     private SimulationRun run;
 
     @InjectMocks
@@ -43,6 +45,7 @@ class SimulationCommandCycleServiceTest {
     void stopRemovesOldClockAndReturnsZeroedIdleStatus() {
         when(simulationRunRepository.findById(1L)).thenReturn(Optional.of(run));
         when(run.getGenerationIntervalSeconds()).thenReturn(300);
+        when(run.getExecutionVersion()).thenReturn(2L);
         when(run.getStatus()).thenReturn(SimulationRunStatus.CREATED);
 
         service.configure(1L, FulfillmentCommandGenerateRequest.automatic());
@@ -50,6 +53,7 @@ class SimulationCommandCycleServiceTest {
 
         SimulationCommandCycleStatusResponse status = service.status(1L);
         assertFalse(status.active());
+        assertEquals(2L, status.executionVersion());
         assertEquals(SimulationCommandCycleStatusResponse.CycleState.IDLE, status.state());
         assertEquals(0L, status.simulatedTimeMs());
         assertEquals(0L, status.nextGenerationAtMs());

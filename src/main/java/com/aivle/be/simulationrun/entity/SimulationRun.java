@@ -88,6 +88,19 @@ public class SimulationRun {
     @Column(name = "generation_interval_seconds")
     private Integer generationIntervalSeconds;
 
+    /**
+     * 같은 실행 ID를 초기화해 다시 사용할 때 비동기 작업의 세대를 구분한다.
+     *
+     * <p>JPA 낙관적 잠금용 {@link #version}과 달리 초기화할 때만 증가한다.
+     * AI 요청은 시작 당시 값을 기억하고, 응답 적용 직전에 현재 값과 비교한다.</p>
+     */
+    @Column(
+            name = "execution_version",
+            nullable = false,
+            columnDefinition = "bigint default 1"
+    )
+    private long executionVersion = 1L;
+
     // ===== 시나리오 프리셋 및 실행 설정 스냅샷 =====
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -299,6 +312,7 @@ public class SimulationRun {
      * 같은 시나리오를 반복 실행할 수 있도록 완료·중지된 실행도 다시 되돌릴 수 있다.
      */
     public void reset() {
+        executionVersion++;
         status = SimulationRunStatus.CREATED;
         startedAt = null;
         pausedAt = null;

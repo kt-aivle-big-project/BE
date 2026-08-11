@@ -892,6 +892,7 @@ class ReoptimizationServiceTest {
         SimulationPlaybackService playbackService = spy(
                 new SimulationPlaybackService(
                         runRepository,
+                        mock(com.aivle.be.simulationrun.repository.SimulationRunRobotRepository.class),
                         stateStore,
                         taskRepository,
                         mock(RobotRepository.class),
@@ -899,7 +900,9 @@ class ReoptimizationServiceTest {
                         mock(WarehouseNodeRepository.class),
                         mock(TaskService.class),
                         pathFinder,
-                        messagingTemplate
+                        messagingTemplate,
+                        mock(org.springframework.jdbc.core.JdbcTemplate.class),
+                        mock(com.aivle.be.laro.service.LaroInventoryReservationService.class)
                 )
         );
 

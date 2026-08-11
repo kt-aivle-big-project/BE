@@ -12,6 +12,7 @@ import com.aivle.be.robotstate.domain.RobotState;
 import com.aivle.be.robotstate.service.RobotStateValidationService;
 import com.aivle.be.scenario.repository.ScenarioRepository;
 import com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleService;
+import com.aivle.be.simulationrun.commandcycle.SimulationRunPlanSnapshotStore;
 import com.aivle.be.simulationrun.controller.request.SimulationRunCreateRequest;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
@@ -67,6 +68,7 @@ class SimulationRunWarehouseExecutionTest {
     @Mock private TaskRepository taskRepository;
     @Mock private SimulationPlaybackService simulationPlaybackService;
     @Mock private SimulationCommandCycleService simulationCommandCycleService;
+    @Mock private SimulationRunPlanSnapshotStore simulationRunPlanSnapshotStore;
     @Mock private LaroInventoryReservationService inventoryReservationService;
     @Mock private UserRepository userRepository;
     @Mock private ScenarioRepository scenarioRepository;

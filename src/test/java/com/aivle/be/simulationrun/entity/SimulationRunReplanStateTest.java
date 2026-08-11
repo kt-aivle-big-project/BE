@@ -27,4 +27,19 @@ class SimulationRunReplanStateTest {
         run.finishReplanning();
         assertEquals(SimulationRunStatus.RUNNING, run.getStatus());
     }
+
+    @Test
+    void resetAdvancesOnlyTheExecutionGeneration() {
+        LocalDateTime now = LocalDateTime.of(2026, 8, 2, 12, 0);
+        SimulationRun run = SimulationRun.create(null, now);
+
+        assertEquals(1L, run.getExecutionVersion());
+        run.start(now);
+        assertEquals(1L, run.getExecutionVersion());
+
+        run.reset();
+
+        assertEquals(2L, run.getExecutionVersion());
+        assertEquals(SimulationRunStatus.CREATED, run.getStatus());
+    }
 }

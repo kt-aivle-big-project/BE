@@ -9,6 +9,7 @@ import java.time.Instant;
 
 public record SimulationCommandCycleStatusResponse(
         Long simulationRunId,
+        long executionVersion,
         boolean active,
         CycleState state,
         long simulatedTimeMs,

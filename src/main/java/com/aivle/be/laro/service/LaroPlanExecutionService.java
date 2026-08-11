@@ -63,6 +63,21 @@ public class LaroPlanExecutionService {
         return true;
     }
 
+    /**
+     * 응답이 현재 실행 세대에 속할 때만 READY 계획을 설치한다.
+     * 실행 행을 잠가 초기화와 계획 설치가 서로 엇갈리지 않게 한다.
+     */
+    @Transactional
+    public boolean activateIfReady(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            LaroPlanRequest request,
+            LaroPlanResponse response
+    ) {
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+        return activateIfReady(simulationRunId, request, response);
+    }
+
     @Transactional
     public boolean stageReplanIfReady(
             Long simulationRunId,
@@ -75,6 +90,33 @@ public class LaroPlanExecutionService {
         }
         stagePrepared(prepared);
         return true;
+    }
+
+    /** 현재 실행 세대의 재계획만 안전 지점 활성화 후보로 등록한다. */
+    @Transactional
+    public boolean stageReplanIfReady(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            LaroPlanRequest request,
+            LaroPlanResponse response
+    ) {
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+        return stageReplanIfReady(simulationRunId, request, response);
+    }
+
+    private void requireCurrentExecution(
+            Long simulationRunId,
+            long expectedExecutionVersion
+    ) {
+        SimulationRun run = simulationRunRepository.findByIdForUpdate(simulationRunId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND));
+        if (run.getExecutionVersion() != expectedExecutionVersion) {
+            throw new StaleSimulationExecutionException(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    run.getExecutionVersion()
+            );
+        }
     }
 
     @Transactional

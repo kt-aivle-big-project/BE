@@ -43,15 +43,31 @@ public class LaroPlanService {
         return client.preflight(simulationRunId);
     }
 
+    /** 외부 단건 API 호환용. 요청 시작 시점의 실행 세대를 캡처한다. */
     public LaroPlanResponse plan(Long simulationRunId, LaroPlanRequest request) {
         validateExecutableWarehouse(simulationRunId);
+        return plan(
+                simulationRunId,
+                currentExecutionVersion(simulationRunId),
+                request
+        );
+    }
+
+    public LaroPlanResponse plan(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            LaroPlanRequest request
+    ) {
+        validateExecutableWarehouse(simulationRunId);
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
         LaroPlanResponse response = client.plan(simulationRunId, request);
         try {
-            LaroPlanExecutionService.PreparedExecution prepared =
-                    executionService.prepareIfReady(simulationRunId, request, response);
-            if (prepared != null) {
-                executionService.activatePrepared(prepared);
-            }
+            executionService.activateIfReady(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    request,
+                    response
+            );
             return response;
         } catch (RuntimeException exception) {
             failCandidatePlan(simulationRunId, response);
@@ -67,15 +83,17 @@ public class LaroPlanService {
      */
     public LaroPlanResponse replay(
             Long simulationRunId,
+            long expectedExecutionVersion,
             LaroPlanRequest request,
             LaroPlanResponse response
     ) {
         try {
-            LaroPlanExecutionService.PreparedExecution prepared =
-                    executionService.prepareIfReady(simulationRunId, request, response);
-            if (prepared != null) {
-                executionService.activatePrepared(prepared);
-            }
+            executionService.activateIfReady(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    request,
+                    response
+            );
             return response;
         } catch (RuntimeException exception) {
             failCandidatePlan(simulationRunId, response);
@@ -83,14 +101,19 @@ public class LaroPlanService {
         }
     }
 
-    public LaroPlanResponse replan(Long simulationRunId, LaroPlanRequest request) {
+    public LaroPlanResponse replan(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            LaroPlanRequest request
+    ) {
         validateExecutableWarehouse(simulationRunId);
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
         LaroPlanResponse response = null;
         try {
             playbackService.activeAiPlan(simulationRunId);
             playbackService.beginQuiescing(simulationRunId);
             replanStateService.startQuiescing(simulationRunId);
-            awaitSafeNodes(simulationRunId);
+            awaitSafeNodes(simulationRunId, expectedExecutionVersion);
             replanStateService.startReplanning(simulationRunId);
             SimulationPlaybackService.ActiveAiPlan active = playbackService.activeAiPlan(simulationRunId);
             response = client.replan(
@@ -100,26 +123,35 @@ public class LaroPlanService {
                     active.clockMillis(),
                     request
             );
+            requireCurrentExecution(simulationRunId, expectedExecutionVersion);
             if (!isReady(response)) {
                 playbackService.cancelQuiescing(simulationRunId);
                 replanStateService.restoreRunning(simulationRunId);
                 return response;
             }
             replanStateService.waitForActivation(simulationRunId);
-            LaroPlanExecutionService.PreparedExecution prepared =
-                    executionService.prepareIfReady(simulationRunId, request, response);
-            if (prepared == null) {
+            boolean staged = executionService.stageReplanIfReady(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    request,
+                    response
+            );
+            if (!staged) {
                 failCandidatePlan(simulationRunId, response);
                 playbackService.cancelQuiescing(simulationRunId);
                 replanStateService.restoreRunning(simulationRunId);
                 return response;
             }
-            executionService.stagePrepared(prepared);
             return response;
+        } catch (StaleSimulationExecutionException exception) {
+            failCandidatePlan(simulationRunId, response);
+            throw exception;
         } catch (RuntimeException exception) {
             failCandidatePlan(simulationRunId, response);
-            playbackService.cancelQuiescing(simulationRunId);
-            restoreRunningQuietly(simulationRunId);
+            if (isCurrentExecution(simulationRunId, expectedExecutionVersion)) {
+                playbackService.cancelQuiescing(simulationRunId);
+                restoreRunningQuietly(simulationRunId);
+            }
             throw exception;
         }
     }
@@ -133,9 +165,13 @@ public class LaroPlanService {
                 simulationRunId, response.result().plan().planId());
     }
 
-    private void awaitSafeNodes(Long simulationRunId) {
+    private void awaitSafeNodes(
+            Long simulationRunId,
+            long expectedExecutionVersion
+    ) {
         long deadline = System.nanoTime() + safeNodeWaitTimeoutMs * 1_000_000L;
         while (!playbackService.isReadyForReplanRequest(simulationRunId)) {
+            requireCurrentExecution(simulationRunId, expectedExecutionVersion);
             if (System.nanoTime() >= deadline) {
                 throw new IllegalStateException("Timed out while waiting for robots to reach safe nodes");
             }
@@ -152,6 +188,47 @@ public class LaroPlanService {
         return response != null && response.result() != null
                 && response.result().plan() != null
                 && "READY".equalsIgnoreCase(response.result().plan().status());
+    }
+
+    /** 외부 단건 재계획 API 호환용. 요청 시작 시점의 실행 세대를 캡처한다. */
+    public LaroPlanResponse replan(Long simulationRunId, LaroPlanRequest request) {
+        validateExecutableWarehouse(simulationRunId);
+        return replan(
+                simulationRunId,
+                currentExecutionVersion(simulationRunId),
+                request
+        );
+    }
+
+    private void requireCurrentExecution(
+            Long simulationRunId,
+            long expectedExecutionVersion
+    ) {
+        long actualExecutionVersion = simulationRunRepository.findById(simulationRunId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND))
+                .getExecutionVersion();
+        if (actualExecutionVersion != expectedExecutionVersion) {
+            throw new StaleSimulationExecutionException(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    actualExecutionVersion
+            );
+        }
+    }
+
+    private long currentExecutionVersion(Long simulationRunId) {
+        return simulationRunRepository.findById(simulationRunId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND))
+                .getExecutionVersion();
+    }
+
+    private boolean isCurrentExecution(
+            Long simulationRunId,
+            long expectedExecutionVersion
+    ) {
+        return simulationRunRepository.findById(simulationRunId)
+                .map(run -> run.getExecutionVersion() == expectedExecutionVersion)
+                .orElse(false);
     }
 
     private void restoreRunningQuietly(Long simulationRunId) {
