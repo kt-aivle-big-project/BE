@@ -26,7 +26,8 @@ public record ScenarioRequest(
         @Min(0) @Max(100) Integer initialBattery,
         @Min(0) @Max(100) Integer chargingThreshold,
 
-        // 기본값 : 로봇 5대, 1배속, 자동 재계획 켜짐, 장애물 꺼짐
+        // robotCount를 안 보내면 선택한 창고에 실제 등록된 로봇 수를 사용한다.
+        // 나머지 기본값: 1배속, 자동 재계획 켜짐, 장애물 꺼짐
         @Min(1) @Max(100) Integer robotCount,
         Double simulationSpeed,
         Boolean autoReplan,

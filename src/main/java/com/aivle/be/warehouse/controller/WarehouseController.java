@@ -99,7 +99,8 @@ public class WarehouseController {
      * 노드가 없는 빈 창고가 된다. 시뮬레이션을 돌리려면 지도가 필요하므로
      * 화면에서 창고를 추가할 때는 이 엔드포인트를 쓴다.
      *
-     * <p>노드·간선뿐 아니라 랙·충전소·보관위치·로봇·시나리오까지 함께 만들어진다.
+     * <p>노드·간선뿐 아니라 랙·충전소·보관위치·로봇까지 함께 만들어진다.
+     * 시나리오는 사용자가 창고를 선택해 별도로 만든다.
      */
     @PostMapping("/import")
     public ResponseEntity<WarehouseImportResponse> importWarehouse(

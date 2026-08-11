@@ -169,6 +169,23 @@ public class WarehouseImportService {
 
     @Transactional
     public WarehouseImportResponse importWarehouse(WarehouseImportRequest request, Long loginUserId) {
+        return importWarehouse(request, loginUserId, false);
+    }
+
+    /** 기본 데모 창고를 초기화할 때만 실행 설정 프리셋도 함께 만든다. */
+    @Transactional
+    public WarehouseImportResponse importWarehouseWithScenarioPresets(
+            WarehouseImportRequest request,
+            Long loginUserId
+    ) {
+        return importWarehouse(request, loginUserId, true);
+    }
+
+    private WarehouseImportResponse importWarehouse(
+            WarehouseImportRequest request,
+            Long loginUserId,
+            boolean createScenarioPresets
+    ) {
         User owner = findOwner(request.userId(), loginUserId);
 
         int[] dimensions = resolveDimensions(request);
@@ -214,7 +231,9 @@ public class WarehouseImportService {
                 warehouse.getId(), request.map(), nodeByCode
         );
         int robotCount = createRobots(warehouse, chargingSlots, request.robotCount());
-        createScenarioPresets(warehouse, robotCount);
+        if (createScenarioPresets) {
+            createScenarioPresets(warehouse, robotCount);
+        }
 
         Set<String> importedCodes = request.map().nodes().stream()
                 .map(WarehouseImportRequest.MapNode::id)

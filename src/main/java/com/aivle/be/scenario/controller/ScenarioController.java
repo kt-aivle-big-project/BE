@@ -30,10 +30,14 @@ public class ScenarioController {
     @Operation(summary = "시나리오 생성")
     @PostMapping
     public ResponseEntity<ScenarioResponse> create(
-            @Valid @RequestBody ScenarioRequest request
+            @Valid @RequestBody ScenarioRequest request,
+            Authentication authentication
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(scenarioService.create(request));
+                .body(scenarioService.create(
+                        request,
+                        requesterResolver.resolve(authentication)
+                ));
     }
 
     @Operation(summary = "시나리오 단건 조회")

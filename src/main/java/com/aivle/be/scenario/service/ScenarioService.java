@@ -1,7 +1,9 @@
 package com.aivle.be.scenario.service;
 
+import com.aivle.be.auth.security.AuthenticatedRequester;
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.scenario.controller.request.ScenarioRequest;
 import com.aivle.be.scenario.controller.request.ScenarioUpdateRequest;
 import com.aivle.be.scenario.controller.response.ScenarioResponse;
@@ -22,16 +24,31 @@ public class ScenarioService {
 
     private final ScenarioRepository scenarioRepository;
     private final WarehouseRepository warehouseRepository;
+    private final RobotRepository robotRepository;
 
     /** 화면이 안 보내는 값에 쓰는 기본값 */
-    private static final int DEFAULT_ROBOT_COUNT = 5;
     private static final double DEFAULT_SIMULATION_SPEED = 1.0;
     private static final int DEFAULT_INITIAL_BATTERY = 100;
     private static final int DEFAULT_CHARGING_THRESHOLD = 20;
 
     @Transactional
-    public ScenarioResponse create(ScenarioRequest request) {
+    public ScenarioResponse create(
+            ScenarioRequest request,
+            AuthenticatedRequester requester
+    ) {
         Warehouse warehouse = findWarehouse(request.warehouseId());
+        validateCreateAccess(warehouse, requester);
+
+        int availableRobotCount = robotRepository
+                .findAllByWarehouse_Id(warehouse.getId())
+                .size();
+        if (availableRobotCount == 0) {
+            throw new BusinessException(ErrorCode.NO_AVAILABLE_ROBOTS);
+        }
+
+        int robotCount = request.robotCount() == null
+                ? availableRobotCount
+                : Math.min(request.robotCount(), availableRobotCount);
 
         String scenarioCode = resolveScenarioCode(
                 warehouse.getId(), request.scenarioCode());
@@ -41,8 +58,7 @@ public class ScenarioService {
                 scenarioCode,
                 request.scenarioName().trim(),
                 request.description() == null ? null : request.description().trim(),
-                request.robotCount() == null
-                        ? DEFAULT_ROBOT_COUNT : request.robotCount(),
+                robotCount,
                 request.initialBattery() == null
                         ? DEFAULT_INITIAL_BATTERY : request.initialBattery(),
                 request.simulationSpeed() == null
@@ -53,6 +69,22 @@ public class ScenarioService {
                 request.obstacleEnabled() != null && request.obstacleEnabled()
         );
         return ScenarioResponse.from(scenarioRepository.save(scenario));
+    }
+
+    private void validateCreateAccess(
+            Warehouse warehouse,
+            AuthenticatedRequester requester
+    ) {
+        if (warehouse.isShared()) {
+            throw new BusinessException(ErrorCode.SHARED_WAREHOUSE_READ_ONLY);
+        }
+
+        boolean ownedByRequester = requester.isUser()
+                ? warehouse.isOwnedBy(requester.userId())
+                : warehouse.isOwnedByGuest(requester.guestSessionId());
+        if (!ownedByRequester) {
+            throw new BusinessException(ErrorCode.ACCESS_DENIED);
+        }
     }
 
     /**
