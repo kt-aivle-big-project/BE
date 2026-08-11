@@ -86,6 +86,7 @@ public class SecurityConfig {
                                 "/api/board-posts",
                                 "/api/board-posts/**"
                         ).hasRole("USER")
+                        .requestMatchers("/api/users/**").hasRole("USER")
                         .requestMatchers(
                                 HttpMethod.PATCH,
                                 "/api/board-posts",
