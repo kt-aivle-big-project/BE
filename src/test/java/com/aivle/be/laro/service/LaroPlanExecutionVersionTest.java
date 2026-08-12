@@ -3,6 +3,7 @@ package com.aivle.be.laro.service;
 import com.aivle.be.laro.client.LaroPlanClient;
 import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
+import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
@@ -18,11 +19,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -117,6 +120,41 @@ class LaroPlanExecutionVersionTest {
         );
     }
 
+    @Test
+    void replanKeepsRobotsQuiescedWhileHumanReviewIsPending() {
+        Long runId = 7L;
+        long executionVersion = 2L;
+        Warehouse warehouse = mock(Warehouse.class);
+        SimulationRun run = mock(SimulationRun.class);
+        LaroPlanRequest request = mock(LaroPlanRequest.class);
+        SimulationPlaybackService.ActiveAiPlan active =
+                new SimulationPlaybackService.ActiveAiPlan(
+                        "PLAN-1", 1, 1L, "WH-1", "SIM-1", 10_000L
+                );
+        LaroPlanResponse pending = pendingReviewResponse(runId);
+
+        when(run.getWarehouse()).thenReturn(warehouse);
+        when(run.getExecutionVersion()).thenReturn(executionVersion);
+        when(run.getStatus()).thenReturn(SimulationRunStatus.RUNNING);
+        when(warehouse.isShared()).thenReturn(false);
+        when(simulationRunRepository.findByIdWithWarehouse(runId))
+                .thenReturn(Optional.of(run));
+        when(simulationRunRepository.findById(runId)).thenReturn(Optional.of(run));
+        when(playbackService.activeAiPlan(runId)).thenReturn(active);
+        when(playbackService.isReadyForReplanRequest(runId)).thenReturn(true);
+        when(client.replan(
+                runId, "PLAN-1", 1, 10_000L, request
+        )).thenReturn(pending);
+
+        service.replan(runId, executionVersion, request);
+
+        verify(playbackService).beginQuiescing(runId);
+        verify(replanStateService).startQuiescing(runId);
+        verify(replanStateService).startReplanning(runId);
+        verify(playbackService, never()).cancelQuiescing(runId);
+        verify(replanStateService, never()).restoreRunning(runId);
+    }
+
     private LaroPlanResponse readyResponse(Long runId, String planId) {
         LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
                 planId,
@@ -163,6 +201,28 @@ class LaroPlanExecutionVersionTest {
                 result,
                 null,
                 null
+        );
+    }
+
+    private LaroPlanResponse pendingReviewResponse(Long runId) {
+        LaroPlanResponse.Result result = new LaroPlanResponse.Result(
+                "workflow_hold",
+                "WH-1",
+                "SIM-1",
+                "mixed",
+                null,
+                "AGENT",
+                "router",
+                true,
+                null,
+                null,
+                Map.of("interaction_id", "HITL-1"),
+                null,
+                null,
+                List.of()
+        );
+        return new LaroPlanResponse(
+                "v1", runId, "WH-1", 1L, "REQ-HITL", result, null, null
         );
     }
 }

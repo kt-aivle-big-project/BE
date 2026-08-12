@@ -130,11 +130,22 @@ public class FulfillmentCommandRandomSelector {
                 .size();
         require(participantCount > 0);
         List<Integer> robotWorkloads = new ArrayList<>(participantCount);
-        int automaticLimit = 0;
-        for (int index = 0; index < participantCount; index++) {
-            int robotWorkload = selectWorkloadMultiplier(random);
-            robotWorkloads.add(robotWorkload);
-            automaticLimit += robotWorkload;
+        int automaticLimit;
+        if (request.averageTasksPerRobot() != null) {
+            automaticLimit = Math.max(
+                    1,
+                    (int) Math.round(participantCount * request.averageTasksPerRobot())
+            );
+        } else {
+            automaticLimit = 0;
+            for (int index = 0; index < participantCount; index++) {
+                int robotWorkload = selectWorkloadMultiplier(random);
+                robotWorkloads.add(robotWorkload);
+                automaticLimit += robotWorkload;
+            }
+        }
+        if (mode == FulfillmentCommandMode.BOTH) {
+            automaticLimit = Math.max(2, automaticLimit);
         }
         automaticLimit = Math.min(MAX_AUTOMATIC_BATCH_SIZE, automaticLimit);
         OperationCounts counts = resolveCounts(
@@ -148,9 +159,10 @@ public class FulfillmentCommandRandomSelector {
         int inboundCount = counts.inbound();
         int outboundCount = counts.outbound();
         log.info(
-                "[fulfillment-command] runId={}, robotWorkloads={}, robots={}, target={}, inbound={}, outbound={}",
+                "[fulfillment-command] runId={}, robotWorkloads={}, averageTasksPerRobot={}, robots={}, target={}, inbound={}, outbound={}",
                 simulationRunId,
                 robotWorkloads,
+                request.averageTasksPerRobot(),
                 participantCount,
                 automaticLimit,
                 inboundCount,

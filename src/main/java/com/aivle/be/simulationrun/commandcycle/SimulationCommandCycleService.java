@@ -11,6 +11,7 @@ import com.aivle.be.laro.dto.LaroPreflightResponse;
 import com.aivle.be.laro.dto.LaroHumanReviewRequest;
 import com.aivle.be.laro.dto.LaroHumanReviewResponse;
 import com.aivle.be.laro.service.LaroPlanService;
+import com.aivle.be.laro.service.StaleSimulationExecutionException;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
@@ -31,7 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import static com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleStatusResponse.CycleState;
 
 /**
- * 시뮬레이션 시각 0분, 5분, 10분 ... 경계마다 새 명령 배치를 생성하고
+ * 시뮬레이션 시각 0분과 실행별 설정 주기 경계마다 새 명령 배치를 생성하고
  * 최초 계획 또는 안전 정지 기반 재계획을 호출한다.
  */
 @Service
@@ -73,8 +74,8 @@ public class SimulationCommandCycleService {
     public void start(Long simulationRunId) {
         SimulationRun run = findRun(simulationRunId);
 
-        long intervalMs = intervalMs(run);
         CycleRuntime previous = runtimes.get(simulationRunId);
+        long intervalMs = previous == null ? intervalMs(run) : previous.intervalMs();
         FulfillmentCommandGenerateRequest generationRequest = previous == null
                 ? FulfillmentCommandGenerateRequest.automatic()
                 : previous.generationRequest();
@@ -127,6 +128,53 @@ public class SimulationCommandCycleService {
         return runtime.snapshot();
     }
 
+    /** 사용자 자연어 의도를 이번 배치에만 주입하고 기존 명령 사이클을 즉시 실행한다. */
+    public SimulationCommandCycleStatusResponse triggerUserCommand(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            String userCommand
+    ) {
+        SimulationRun run = findRun(simulationRunId);
+        if (run.getStatus() != SimulationRunStatus.RUNNING) {
+            throw new BusinessException(ErrorCode.SIMULATION_RUN_NOT_RUNNING);
+        }
+        if (run.getExecutionVersion() != expectedExecutionVersion) {
+            throw new StaleSimulationExecutionException(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    run.getExecutionVersion()
+            );
+        }
+        String normalizedCommand = userCommand == null ? "" : userCommand.trim();
+        if (normalizedCommand.isEmpty() || normalizedCommand.length() > 4000) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        CycleRuntime runtime = runtimes.computeIfAbsent(
+                simulationRunId,
+                ignored -> new CycleRuntime(
+                        simulationRunId,
+                        run.getExecutionVersion(),
+                        intervalMs(run),
+                        FulfillmentCommandGenerateRequest.automatic(),
+                        true
+                )
+        );
+        if (runtime.executionVersion() != expectedExecutionVersion) {
+            throw new StaleSimulationExecutionException(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    runtime.executionVersion()
+            );
+        }
+        Long cycleMinute = runtime.acceptUserCommand(normalizedCommand);
+        if (cycleMinute == null) {
+            throw new BusinessException(ErrorCode.REOPTIMIZATION_ALREADY_IN_PROGRESS);
+        }
+        dispatchIfAccepted(runtime, cycleMinute);
+        return runtime.snapshot();
+    }
+
     public SimulationCommandCycleStatusResponse configure(
             Long simulationRunId,
             FulfillmentCommandGenerateRequest request
@@ -161,6 +209,9 @@ public class SimulationCommandCycleService {
                     null,
                     FulfillmentCommandGenerateRequest.automatic().effectiveCommandExpressionMode(),
                     FulfillmentCommandGenerateRequest.automatic().effectivePolicyProfile(),
+                    Math.toIntExact(intervalMs(run) / 1_000L),
+                    null,
+                    null,
                     null,
                     null,
                     null,
@@ -310,7 +361,11 @@ public class SimulationCommandCycleService {
                             runtime.activeGenerationRequest()
                     );
             runtime.generated(generated);
-            LaroPlanRequest planRequest = generated.planRequest();
+            LaroPlanRequest planRequest = withUserCommand(
+                    generated.planRequest(),
+                    runtime.cycleUserCommand()
+            );
+            runtime.planRequest(planRequest);
 
             runtime.requireActive();
             boolean replan = playbackService.hasActiveAiPlan(simulationRunId);
@@ -356,6 +411,21 @@ public class SimulationCommandCycleService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND));
     }
 
+    private LaroPlanRequest withUserCommand(
+            LaroPlanRequest request,
+            String userCommand
+    ) {
+        if (userCommand == null || userCommand.isBlank()) {
+            return request;
+        }
+        return new LaroPlanRequest(
+                request.structuredInput(),
+                userCommand,
+                request.optimizationBackend(),
+                request.runtimeSnapshot()
+        );
+    }
+
     private long intervalMs(SimulationRun run) {
         Integer seconds = run.getGenerationIntervalSeconds();
         return seconds == null || seconds <= 0 ? DEFAULT_INTERVAL_MS : seconds * 1_000L;
@@ -383,7 +453,7 @@ public class SimulationCommandCycleService {
     private static final class CycleRuntime {
         private final Long simulationRunId;
         private final long executionVersion;
-        private final long intervalMs;
+        private long intervalMs;
         private long simulatedTimeMs;
         private long lastTriggeredMinute = -1;
         private long activeCycleMinute;
@@ -394,7 +464,9 @@ public class SimulationCommandCycleService {
         private String planningMode;
         private FulfillmentCommandGenerateRequest generationRequest;
         private FulfillmentCommandGenerateRequest activeGenerationRequest;
+        private String cycleUserCommand;
         private FulfillmentCommandGenerateResponse generated;
+        private LaroPlanRequest activePlanRequest;
         private LaroPlanResponse planResponse;
         private LaroHumanReviewResponse humanReviewResponse;
         private String error;
@@ -423,6 +495,10 @@ public class SimulationCommandCycleService {
             return executionVersion;
         }
 
+        synchronized long intervalMs() {
+            return intervalMs;
+        }
+
         synchronized FulfillmentCommandGenerateRequest generationRequest() {
             return generationRequest;
         }
@@ -431,10 +507,19 @@ public class SimulationCommandCycleService {
             return activeGenerationRequest;
         }
 
+        synchronized String cycleUserCommand() {
+            return cycleUserCommand;
+        }
+
         synchronized void configure(FulfillmentCommandGenerateRequest request) {
             generationRequest = request == null
                     ? FulfillmentCommandGenerateRequest.automatic()
                     : request;
+            if (generationRequest.generationIntervalSeconds() != null) {
+                intervalMs = generationRequest.generationIntervalSeconds() * 1_000L;
+                // 변경 시점 다음의 새 주기 경계에서 재계획하도록 버킷을 다시 맞춘다.
+                lastTriggeredMinute = simulatedTimeMs / intervalMs;
+            }
             updatedAt = Instant.now();
         }
 
@@ -455,22 +540,33 @@ public class SimulationCommandCycleService {
                 return null;
             }
             lastTriggeredMinute = minute;
-            return accept(minute);
+            return accept(minute, null);
         }
 
         synchronized Long acceptManualCycle() {
             if (!active || inFlight) {
                 return null;
             }
-            return accept(simulatedTimeMs / intervalMs);
+            return accept(simulatedTimeMs / intervalMs, null);
         }
 
-        private Long accept(long minute) {
+        synchronized Long acceptUserCommand(String userCommand) {
+            if (!active || inFlight) {
+                return null;
+            }
+            long minute = simulatedTimeMs / intervalMs;
+            lastTriggeredMinute = Math.max(lastTriggeredMinute, minute);
+            return accept(minute, userCommand);
+        }
+
+        private Long accept(long minute, String userCommand) {
             inFlight = true;
             activeCycleMinute = minute;
             state = CycleState.CHECKING;
             planningMode = null;
+            cycleUserCommand = userCommand;
             generated = null;
+            activePlanRequest = null;
             planResponse = null;
             humanReviewResponse = null;
             error = null;
@@ -491,6 +587,12 @@ public class SimulationCommandCycleService {
         synchronized void generated(FulfillmentCommandGenerateResponse value) {
             requireActive();
             generated = value;
+            updatedAt = Instant.now();
+        }
+
+        synchronized void planRequest(LaroPlanRequest value) {
+            requireActive();
+            activePlanRequest = value;
             updatedAt = Instant.now();
         }
 
@@ -607,15 +709,16 @@ public class SimulationCommandCycleService {
                     || !interactionId.equals(humanReviewResponse.interactionId())) {
                 throw new IllegalStateException("Human review is not held for this interaction");
             }
+            String userCommand = cycleUserCommand;
             inFlight = false;
-            return acceptManualCycle();
+            return accept(simulatedTimeMs / intervalMs, userCommand);
         }
 
         synchronized LaroPlanRequest planRequest() {
-            if (generated == null || generated.planRequest() == null) {
+            if (activePlanRequest == null) {
                 throw new IllegalStateException("Human review has no originating plan request");
             }
-            return generated.planRequest();
+            return activePlanRequest;
         }
 
         synchronized long activeCycleMinute() {
@@ -659,6 +762,9 @@ public class SimulationCommandCycleService {
                     planningMode,
                     generationRequest.effectiveCommandExpressionMode(),
                     generationRequest.effectivePolicyProfile(),
+                    Math.toIntExact(intervalMs / 1_000L),
+                    generationRequest.averageTasksPerRobot(),
+                    cycleUserCommand,
                     generated,
                     planResponse,
                     humanReviewResponse,

@@ -8,6 +8,7 @@ import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
 import com.aivle.be.laro.dto.LaroHumanReviewRequest;
 import com.aivle.be.laro.dto.LaroHumanReviewResponse;
+import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -69,6 +70,8 @@ public class LaroPlanService {
                     planRequest,
                     response.planResponse()
             );
+        } else if (isTerminalWithoutPlan(response)) {
+            restorePreviousPlan(simulationRunId);
         }
         return response;
     }
@@ -158,10 +161,10 @@ public class LaroPlanService {
         }
 
         try {
-            playbackService.beginQuiescing(simulationRunId);
-            replanStateService.startQuiescing(simulationRunId);
-            awaitSafeNodes(simulationRunId, expectedExecutionVersion);
-            replanStateService.startReplanning(simulationRunId);
+            prepareReplanAtSafeNodes(
+                    simulationRunId,
+                    expectedExecutionVersion
+            );
             requireCurrentExecution(simulationRunId, expectedExecutionVersion);
             replanStateService.waitForActivation(simulationRunId);
             boolean staged = executionService.stageReplanIfReady(
@@ -195,10 +198,10 @@ public class LaroPlanService {
         LaroPlanResponse response = null;
         try {
             playbackService.activeAiPlan(simulationRunId);
-            playbackService.beginQuiescing(simulationRunId);
-            replanStateService.startQuiescing(simulationRunId);
-            awaitSafeNodes(simulationRunId, expectedExecutionVersion);
-            replanStateService.startReplanning(simulationRunId);
+            prepareReplanAtSafeNodes(
+                    simulationRunId,
+                    expectedExecutionVersion
+            );
             SimulationPlaybackService.ActiveAiPlan active = playbackService.activeAiPlan(simulationRunId);
             response = client.replan(
                     simulationRunId,
@@ -209,6 +212,9 @@ public class LaroPlanService {
             );
             requireCurrentExecution(simulationRunId, expectedExecutionVersion);
             if (!isReady(response)) {
+                if (hasPendingHumanReview(response)) {
+                    return response;
+                }
                 playbackService.cancelQuiescing(simulationRunId);
                 replanStateService.restoreRunning(simulationRunId);
                 return response;
@@ -272,6 +278,66 @@ public class LaroPlanService {
         return response != null && response.result() != null
                 && response.result().plan() != null
                 && "READY".equalsIgnoreCase(response.result().plan().status());
+    }
+
+    private boolean hasPendingHumanReview(LaroPlanResponse response) {
+        return response != null
+                && response.result() != null
+                && response.result().pendingHumanInteraction() != null
+                && !response.result().pendingHumanInteraction().isEmpty();
+    }
+
+    private boolean isTerminalWithoutPlan(LaroHumanReviewResponse response) {
+        if (response == null || response.resumeOutcome() == null) {
+            return false;
+        }
+        return "TERMINATED".equalsIgnoreCase(response.resumeOutcome())
+                || "FAILED".equalsIgnoreCase(response.resumeOutcome());
+    }
+
+    /** Review 대기 중 이미 정지한 재계획은 다시 RUNNING부터 시작하지 않는다. */
+    private void prepareReplanAtSafeNodes(
+            Long simulationRunId,
+            long expectedExecutionVersion
+    ) {
+        SimulationRunStatus status = simulationRunRepository.findById(simulationRunId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND))
+                .getStatus();
+        switch (status) {
+            case RUNNING -> {
+                playbackService.beginQuiescing(simulationRunId);
+                replanStateService.startQuiescing(simulationRunId);
+                awaitSafeNodes(simulationRunId, expectedExecutionVersion);
+                replanStateService.startReplanning(simulationRunId);
+            }
+            case QUIESCING -> {
+                awaitSafeNodes(simulationRunId, expectedExecutionVersion);
+                replanStateService.startReplanning(simulationRunId);
+            }
+            case REPLANNING -> awaitSafeNodes(
+                    simulationRunId,
+                    expectedExecutionVersion
+            );
+            default -> throw new BusinessException(
+                    ErrorCode.INVALID_SIMULATION_RUN_TRANSITION
+            );
+        }
+    }
+
+    private void restorePreviousPlan(Long simulationRunId) {
+        if (!playbackService.hasActiveAiPlan(simulationRunId)) {
+            return;
+        }
+        SimulationRunStatus status = simulationRunRepository.findById(simulationRunId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND))
+                .getStatus();
+        if (status != SimulationRunStatus.QUIESCING
+                && status != SimulationRunStatus.REPLANNING
+                && status != SimulationRunStatus.PENDING_ACTIVATION) {
+            return;
+        }
+        playbackService.cancelQuiescing(simulationRunId);
+        replanStateService.restoreRunning(simulationRunId);
     }
 
     /** 외부 단건 재계획 API 호환용. 요청 시작 시점의 실행 세대를 캡처한다. */

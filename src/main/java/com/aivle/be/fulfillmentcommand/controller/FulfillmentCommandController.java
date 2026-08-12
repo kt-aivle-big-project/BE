@@ -38,7 +38,7 @@ public class FulfillmentCommandController {
                 : service.generate(simulationRunId, request));
     }
 
-    @Operation(summary = "0분·5분·10분 자동 명령 생성 및 AI 계획 상태 조회")
+    @Operation(summary = "설정된 주기별 자동 명령 생성 및 AI 계획 상태 조회")
     @GetMapping("/{simulationRunId}/command-cycle")
     public ResponseEntity<SimulationCommandCycleStatusResponse> commandCycleStatus(
             @PathVariable Long simulationRunId
@@ -46,7 +46,7 @@ public class FulfillmentCommandController {
         return ResponseEntity.ok(commandCycleService.status(simulationRunId));
     }
 
-    @Operation(summary = "다음 5분 경계를 기다리지 않고 명령 생성 및 AI 계획 즉시 실행")
+    @Operation(summary = "다음 자동 재계획 경계를 기다리지 않고 명령 생성 및 AI 계획 즉시 실행")
     @PostMapping("/{simulationRunId}/command-cycle/trigger")
     public ResponseEntity<SimulationCommandCycleStatusResponse> triggerCommandCycle(
             @PathVariable Long simulationRunId,
@@ -57,7 +57,7 @@ public class FulfillmentCommandController {
         );
     }
 
-    @Operation(summary = "자동·수동 명령 생성에서 사용할 AI 입력 표현 방식 저장")
+    @Operation(summary = "자동 계획 주기·평균 작업량·AI 입력 표현 방식 저장")
     @PutMapping("/{simulationRunId}/command-cycle/configuration")
     public ResponseEntity<SimulationCommandCycleStatusResponse> configureCommandCycle(
             @PathVariable Long simulationRunId,

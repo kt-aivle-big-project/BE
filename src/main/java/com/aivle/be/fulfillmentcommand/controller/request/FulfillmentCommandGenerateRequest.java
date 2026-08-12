@@ -5,6 +5,8 @@ import com.aivle.be.fulfillmentcommand.domain.CommandExpressionMode;
 import com.aivle.be.fulfillmentcommand.domain.CommandPolicyProfile;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -67,8 +69,47 @@ public record FulfillmentCommandGenerateRequest(
                 description = "구조화 입력을 기본으로 유지하면서 전체 자연어 표현을 30% 확률로 적용",
                 example = "false"
         )
-        Boolean mixNaturalLanguage
+        Boolean mixNaturalLanguage,
+
+        @Min(60) @Max(3_600)
+        @Schema(description = "자동 재계획 주기(초). null이면 실행 기본값 300초 유지", example = "300")
+        Integer generationIntervalSeconds,
+
+        @DecimalMin("1.0") @DecimalMax("5.0")
+        @Schema(description = "자동 배치에서 로봇 한 대당 목표 평균 작업 수", example = "3.5")
+        Double averageTasksPerRobot
 ) {
+    /** 기존 명령 생성 호출부와의 소스 호환성을 유지한다. */
+    public FulfillmentCommandGenerateRequest(
+            FulfillmentCommandMode mode,
+            Integer inboundCount,
+            Integer outboundCount,
+            List<String> inboundProductCodes,
+            List<String> outboundProductCodes,
+            String priority,
+            Long releaseIntervalMs,
+            CommandExpressionMode commandExpressionMode,
+            CommandPolicyProfile policyProfile,
+            Boolean mixStructuredWithPolicy,
+            Boolean mixNaturalLanguage
+    ) {
+        this(
+                mode,
+                inboundCount,
+                outboundCount,
+                inboundProductCodes,
+                outboundProductCodes,
+                priority,
+                releaseIntervalMs,
+                commandExpressionMode,
+                policyProfile,
+                mixStructuredWithPolicy,
+                mixNaturalLanguage,
+                null,
+                null
+        );
+    }
+
     public record ExpressionMix(int structuredOnly, int structuredWithPolicy, int naturalLanguage) {
         public ExpressionMix {
             if (structuredOnly < 0 || structuredWithPolicy < 0 || naturalLanguage < 0
@@ -90,7 +131,9 @@ public record FulfillmentCommandGenerateRequest(
                 CommandExpressionMode.AUTO,
                 CommandPolicyProfile.AUTO,
                 false,
-                false
+                false,
+                null,
+                null
         );
     }
 
@@ -126,7 +169,9 @@ public record FulfillmentCommandGenerateRequest(
                 commandExpressionMode,
                 policyProfile,
                 mixStructuredWithPolicy,
-                mixNaturalLanguage
+                mixNaturalLanguage,
+                generationIntervalSeconds,
+                averageTasksPerRobot
         );
     }
 

@@ -145,6 +145,31 @@ class FulfillmentCommandRandomSelectorTest {
 
         assertThat(perRobotFiveTimesSelection.outboundCount()).isEqualTo(10);
         assertThat(perRobotFiveTimesSelection.operations()).hasSize(10);
+
+        FulfillmentCommandGenerateRequest configuredAverageRequest =
+                new FulfillmentCommandGenerateRequest(
+                        FulfillmentCommandMode.OUTBOUND,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "medium",
+                        0L,
+                        CommandExpressionMode.STRUCTURED_ONLY,
+                        CommandPolicyProfile.AUTO,
+                        false,
+                        false,
+                        300,
+                        2.5
+                );
+
+        FulfillmentCommandSelection configuredAverageSelection = selector.select(
+                9L,
+                configuredAverageRequest
+        );
+
+        assertThat(configuredAverageSelection.outboundCount()).isEqualTo(5);
+        assertThat(configuredAverageSelection.operations()).hasSize(5);
     }
     @Test
     void zeroQuantityRowsAreCountedAsEmptySlotsForInbound() {
