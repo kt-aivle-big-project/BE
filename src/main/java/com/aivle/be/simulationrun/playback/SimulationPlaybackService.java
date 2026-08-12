@@ -7,8 +7,6 @@ import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.service.LaroInventoryReservationService;
 import com.aivle.be.laro.service.LaroTaskId;
-import com.aivle.be.global.exception.BusinessException;
-import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.optimization.entity.ReoptimizationPlanStage;
 import com.aivle.be.optimization.staging.ReoptimizationActivationPlan;
 import com.aivle.be.robot.entity.Robot;
@@ -109,6 +107,10 @@ public class SimulationPlaybackService {
     // Keep the request pending until the command cycle explicitly accepts it.
     private final Map<Long, LowBatteryReplanRequest> lowBatteryReplanRequests =
             new ConcurrentHashMap<>();
+
+    // A broken playback run must not abort every other run on the shared scheduler.
+    // Freeze it after the first failure to prevent partial in-memory progress and log storms.
+    private final Set<Long> suspendedAiRunIds = ConcurrentHashMap.newKeySet();
 
     // 노드 코드 캐시 (nodeId -> nodeCode)
     private final Map<Long, String> nodeCodeCache = new ConcurrentHashMap<>();
@@ -257,6 +259,7 @@ public class SimulationPlaybackService {
         assignPlannedTasks(prepared.assignedRobotByTask());
         contexts.remove(simulationRunId);
         pendingAiPlans.remove(simulationRunId);
+        suspendedAiRunIds.remove(simulationRunId);
         aiContexts.put(simulationRunId, prepared.context());
         logPreparedPlan("installed", prepared);
     }
@@ -647,36 +650,50 @@ public class SimulationPlaybackService {
             if (!canAdvanceAiPlan(run.getStatus())) {
                 continue;
             }
-
-            context.advanceClock(tickMillis);
-            for (AiPlaybackContext.RobotTimeline robot : context.getRobots()) {
-                advanceAiRobot(context, robot);
-            }
-
-            PendingAiPlan pending = pendingAiPlans.get(runId);
-            if (pending != null && context.allRobotsHeld()) {
-                try {
-                    activatePendingPlan(run, context, pending);
-                } catch (RuntimeException exception) {
-                    recoverFromActivationFailure(run, context, pending, exception);
-                }
+            if (suspendedAiRunIds.contains(runId)) {
                 continue;
             }
 
-            if (!context.isQuiescing()
-                    && context.isFinished() && !context.isTasksFinalized()) {
+            try {
+                context.advanceClock(tickMillis);
                 for (AiPlaybackContext.RobotTimeline robot : context.getRobots()) {
-                    if (!robot.isFailed()) {
-                        robot.setStatus(RobotStatus.IDLE);
-                        robot.setCurrentTaskId(null);
-                        publishAi(context, robot, null);
-                    }
+                    advanceAiRobot(context, robot);
                 }
-                finalizeAiTasks(context);
-                context.markTasksFinalized();
-                aiContexts.remove(runId);
-                log.info("[AI playback] completed runId={}, planId={}, simTimeMs={}",
-                        runId, context.getPlanId(), context.getClockMillis());
+
+                PendingAiPlan pending = pendingAiPlans.get(runId);
+                if (pending != null && context.allRobotsHeld()) {
+                    try {
+                        activatePendingPlan(run, context, pending);
+                    } catch (RuntimeException exception) {
+                        recoverFromActivationFailure(run, context, pending, exception);
+                    }
+                    continue;
+                }
+
+                if (!context.isQuiescing()
+                        && context.isFinished() && !context.isTasksFinalized()) {
+                    for (AiPlaybackContext.RobotTimeline robot : context.getRobots()) {
+                        if (!robot.isFailed()) {
+                            robot.setStatus(RobotStatus.IDLE);
+                            robot.setCurrentTaskId(null);
+                            publishAi(context, robot, null);
+                        }
+                    }
+                    finalizeAiTasks(context);
+                    context.markTasksFinalized();
+                    aiContexts.remove(runId);
+                    log.info("[AI playback] completed runId={}, planId={}, simTimeMs={}",
+                            runId, context.getPlanId(), context.getClockMillis());
+                }
+            } catch (RuntimeException exception) {
+                suspendedAiRunIds.add(runId);
+                log.error(
+                        "[AI playback] run suspended after tick failure: runId={}, planId={}, simTimeMs={}",
+                        runId,
+                        context.getPlanId(),
+                        context.getClockMillis(),
+                        exception
+                );
             }
         }
     }
@@ -1072,6 +1089,14 @@ public class SimulationPlaybackService {
                         + "% · 충전 기준 " + context.getChargingThreshold()
                         + "% 도달 · Rule 재계획 요청 중"
                 : waiting ? userFacingWaitReason(activeStep.reason()) : null;
+        Long waitStartedAtMillis = null;
+        Long estimatedResumeAtMillis = null;
+        if (lowBatteryWaiting) {
+            waitStartedAtMillis = robot.getLowBatteryWaitStartedAtMillis();
+        } else if (waiting) {
+            waitStartedAtMillis = activeStep.startAtMillis();
+            estimatedResumeAtMillis = activeStep.endAtMillis();
+        }
 
         RobotState state = new RobotState(
                 robot.getRobotId(),
@@ -1097,10 +1122,8 @@ public class SimulationPlaybackService {
                 waitingReason,
                 waitingNodeId == null ? null : nodeCodeCache.get(waitingNodeId),
                 null,
-                lowBatteryWaiting
-                        ? robot.getLowBatteryWaitStartedAtMillis()
-                        : waiting ? activeStep.startAtMillis() : null,
-                lowBatteryWaiting ? null : waiting ? activeStep.endAtMillis() : null,
+                waitStartedAtMillis,
+                estimatedResumeAtMillis,
                 LocalDateTime.now()
         );
         simulationRunStateStore.save(context.getSimulationRunId(), state);
@@ -1988,6 +2011,7 @@ public class SimulationPlaybackService {
         aiContexts.remove(simulationRunId);
         pendingAiPlans.remove(simulationRunId);
         lowBatteryReplanRequests.remove(simulationRunId);
+        suspendedAiRunIds.remove(simulationRunId);
     }
 
     /**

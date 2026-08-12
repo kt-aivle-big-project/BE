@@ -23,10 +23,13 @@ import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunRobotRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.repository.TaskRepository;
+import com.aivle.be.task.entity.Task;
+import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.user.entity.User;
 import com.aivle.be.user.repository.UserRepository;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
+import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -200,11 +203,40 @@ class SimulationRunServiceTest {
         simulationRunService.getRobotStates(10L, guest);
         simulationRunService.reset(10L, guest);
         assertThat(run.getExecutionVersion()).isEqualTo(2L);
+        assertThat(run.getStatus()).isEqualTo(SimulationRunStatus.STOPPED);
         verify(simulationRunPlanSnapshotStore).deleteAll(10L);
-        simulationRunService.stop(10L, guest);
 
         assertThat(run.getStatus()).isEqualTo(SimulationRunStatus.STOPPED);
         assertThat(run.getSimulationSpeed()).isEqualTo(2.0);
+    }
+
+    @Test
+    void resetCancelsUnfinishedTasksInsteadOfReplayingAppliedInventory() {
+        SimulationRun run = guestRun(10L, GUEST_A);
+        Task pending = org.mockito.Mockito.mock(Task.class);
+        Task done = org.mockito.Mockito.mock(Task.class);
+        WarehouseNode node = org.mockito.Mockito.mock(WarehouseNode.class);
+        lenient().when(pending.getWarehouse()).thenReturn(warehouse);
+        lenient().when(done.getWarehouse()).thenReturn(warehouse);
+        lenient().when(pending.getStartNode()).thenReturn(node);
+        lenient().when(pending.getEndNode()).thenReturn(node);
+        lenient().when(done.getStartNode()).thenReturn(node);
+        lenient().when(done.getEndNode()).thenReturn(node);
+        when(pending.getStatus()).thenReturn(TaskStatus.PENDING);
+        when(done.getStatus()).thenReturn(TaskStatus.DONE);
+        when(simulationRunRepository.findByIdForUpdate(10L))
+                .thenReturn(Optional.of(run));
+        when(taskRepository.findAllBySimulationRun_IdOrderByRequestedAtAsc(10L))
+                .thenReturn(List.of(pending, done));
+
+        simulationRunService.reset(
+                10L,
+                AuthenticatedRequester.guest(GUEST_A)
+        );
+
+        verify(pending).cancel();
+        verify(done, never()).cancel();
+        assertThat(run.getStatus()).isEqualTo(SimulationRunStatus.STOPPED);
     }
 
     @Test
