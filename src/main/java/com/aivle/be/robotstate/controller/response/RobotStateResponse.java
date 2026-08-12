@@ -55,6 +55,16 @@ public record RobotStateResponse(
         Double serviceProgress,
         @Schema(description = "BOX 적재 여부", example = "true")
         Boolean carryingLoad,
+        @Schema(description = "현재 대기 사유", example = "통행 예약 순서를 기다리는 중", nullable = true)
+        String waitingReason,
+        @Schema(description = "대기 후 진입할 노드 코드", example = "R3_8", nullable = true)
+        String waitingNodeCode,
+        @Schema(description = "통과를 기다리는 상대 로봇 ID", nullable = true)
+        Long blockingRobotId,
+        @Schema(description = "WAIT 시작 시뮬레이션 시각(ms)", nullable = true)
+        Long waitStartedAtMillis,
+        @Schema(description = "WAIT 종료 예정 시뮬레이션 시각(ms)", nullable = true)
+        Long estimatedResumeAtMillis,
         LocalDateTime updatedAt
 ) {
     public static RobotStateResponse from(RobotState state) {
@@ -79,6 +89,11 @@ public record RobotStateResponse(
                 state.serviceKind(),
                 state.serviceProgress(),
                 state.carryingLoad(),
+                state.waitingReason(),
+                state.waitingNodeCode(),
+                state.blockingRobotId(),
+                state.waitStartedAtMillis(),
+                state.estimatedResumeAtMillis(),
                 state.updatedAt()
         );
     }

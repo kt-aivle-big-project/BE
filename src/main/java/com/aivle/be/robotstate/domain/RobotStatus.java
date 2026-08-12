@@ -13,6 +13,9 @@ public enum RobotStatus {
     // 작업 배정됨 (아직 이동 전)
     ASSIGNED,
 
+    // 충돌 회피·통행 예약 등 계획된 대기
+    WAITING,
+
     // 이동 중
     MOVING,
 

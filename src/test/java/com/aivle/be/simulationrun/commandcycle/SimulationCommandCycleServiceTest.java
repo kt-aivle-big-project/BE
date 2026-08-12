@@ -159,6 +159,63 @@ class SimulationCommandCycleServiceTest {
     }
 
     @Test
+    void lowBatteryPlaybackSignalUsesExistingReplanWithRuleReason() {
+        when(simulationRunRepository.findById(1L)).thenReturn(Optional.of(run));
+        when(run.getGenerationIntervalSeconds()).thenReturn(300);
+        when(run.getExecutionVersion()).thenReturn(2L);
+        when(run.getStatus()).thenReturn(SimulationRunStatus.RUNNING);
+        when(run.getSimulationSpeed()).thenReturn(1.0);
+        when(laroPlanService.preflight(1L)).thenReturn(new LaroPreflightResponse(
+                "READY", true, 1L, "WH-1", 1L,
+                Map.of(), Map.of(), "redis", List.of()
+        ));
+
+        LaroPlanRequest.StructuredOperation operation = mock(
+                LaroPlanRequest.StructuredOperation.class
+        );
+        LaroPlanRequest planRequest = new LaroPlanRequest(
+                new LaroPlanRequest.StructuredInput(
+                        "REQ-BATTERY", List.of(operation), Map.of(), null
+                ),
+                null,
+                null,
+                null
+        );
+        FulfillmentCommandGenerateResponse.FrontView frontView = mock(
+                FulfillmentCommandGenerateResponse.FrontView.class
+        );
+        when(frontView.requestId()).thenReturn("REQ-BATTERY");
+        when(commandGenerationService.generate(eq(1L), any()))
+                .thenReturn(new FulfillmentCommandGenerateResponse(planRequest, frontView));
+        when(playbackService.hasActiveAiPlan(1L)).thenReturn(false, true);
+        when(laroPlanService.plan(eq(1L), eq(2L), any()))
+                .thenReturn(mock(LaroPlanResponse.class));
+        when(laroPlanService.replan(eq(1L), eq(2L), any(), eq("LOW_BATTERY")))
+                .thenReturn(mock(LaroPlanResponse.class));
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(0).run();
+            return null;
+        }).when(taskExecutor).execute(any(Runnable.class));
+
+        service.start(1L);
+        when(playbackService.pendingLowBatteryReplanRequests()).thenReturn(List.of(
+                new SimulationPlaybackService.LowBatteryReplanRequest(
+                        1L, 55L, 20, 20
+                )
+        ));
+
+        service.tick();
+
+        verify(playbackService).acknowledgeLowBatteryReplanRequest(1L, 55L);
+        verify(laroPlanService).replan(eq(1L), eq(2L), any(), eq("LOW_BATTERY"));
+        verify(commandGenerationService, times(1)).generate(eq(1L), any());
+        assertEquals(
+                "LOW_BATTERY_REPLAN",
+                service.status(1L).planningMode()
+        );
+    }
+
+    @Test
     void planFailureBlocksFollowingCyclesUntilHumanReviewRetries() {
         when(simulationRunRepository.findById(1L)).thenReturn(Optional.of(run));
         when(run.getGenerationIntervalSeconds()).thenReturn(300);
@@ -208,6 +265,15 @@ class SimulationCommandCycleServiceTest {
                 "AI_GATEWAY_TIMEOUT",
                 failed.pendingHumanInteraction().get("reason_code")
         );
+        assertEquals(
+                "AI 계획 응답이 제한 시간 안에 도착하지 않았습니다. 일시적인 지연일 수 있으니 잠시 후 다시 시도해 주세요.",
+                failed.pendingHumanInteraction().get("prompt")
+        );
+        assertEquals(
+                "504 Gateway Timeout: upstream request timeout",
+                failed.pendingHumanInteraction().get("technical_detail")
+        );
+        verify(laroPlanService).holdForHumanReview(1L, 2L);
 
         service.triggerNow(1L);
         verify(commandGenerationService, times(1)).generate(eq(1L), any());
@@ -233,6 +299,7 @@ class SimulationCommandCycleServiceTest {
                 SimulationCommandCycleStatusResponse.CycleState.COMPLETE,
                 retried.state()
         );
+        verify(laroPlanService).resumeForHumanReviewDecision(1L, 2L);
         verify(commandGenerationService, times(2)).generate(eq(1L), any());
         verify(laroPlanService, times(2)).plan(eq(1L), eq(2L), any());
     }

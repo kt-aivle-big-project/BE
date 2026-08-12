@@ -272,6 +272,17 @@ public class SimulationRun {
         pausedAt = now;
     }
 
+    public void pauseForHumanReview(LocalDateTime now) {
+        if (status != SimulationRunStatus.RUNNING
+                && status != SimulationRunStatus.QUIESCING
+                && status != SimulationRunStatus.REPLANNING
+                && status != SimulationRunStatus.PENDING_ACTIVATION) {
+            throw new BusinessException(ErrorCode.INVALID_SIMULATION_RUN_TRANSITION);
+        }
+        status = SimulationRunStatus.PAUSED;
+        pausedAt = now;
+    }
+
     public void resume() {
         requireStatus(SimulationRunStatus.PAUSED);
         status = SimulationRunStatus.RUNNING;

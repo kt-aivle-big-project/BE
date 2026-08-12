@@ -155,6 +155,38 @@ class LaroPlanExecutionVersionTest {
         verify(replanStateService, never()).restoreRunning(runId);
     }
 
+    @Test
+    void humanReviewPausesEvenWhenSafeNodeWaitTimesOut() {
+        Long runId = 7L;
+        long executionVersion = 2L;
+        SimulationRun run = mock(SimulationRun.class);
+        LaroPlanService zeroTimeoutService = new LaroPlanService(
+                client,
+                executionService,
+                replanStateService,
+                playbackService,
+                inventoryReservationService,
+                simulationRunRepository,
+                0L
+        );
+
+        when(run.getExecutionVersion()).thenReturn(executionVersion);
+        when(run.getStatus()).thenReturn(SimulationRunStatus.RUNNING);
+        when(simulationRunRepository.findById(runId)).thenReturn(Optional.of(run));
+        when(playbackService.hasActiveAiPlan(runId)).thenReturn(true);
+        when(playbackService.isReadyForReplanRequest(runId)).thenReturn(false);
+
+        assertThatThrownBy(() -> zeroTimeoutService.holdForHumanReview(
+                runId,
+                executionVersion
+        )).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("safe nodes");
+
+        verify(playbackService).beginQuiescing(runId);
+        verify(replanStateService).startQuiescing(runId);
+        verify(replanStateService).pauseForHumanReview(runId);
+    }
+
     private LaroPlanResponse readyResponse(Long runId, String planId) {
         LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
                 planId,
