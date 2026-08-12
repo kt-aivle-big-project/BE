@@ -105,6 +105,31 @@ class AiPlaybackContextTest {
     }
 
     @Test
+    void simulationBatteryRatesAreAcceleratedTenTimes() {
+        assertEquals(0.5, SimulationPlaybackService.simulationBatteryRate(0.05));
+        assertEquals(1.5, SimulationPlaybackService.simulationBatteryRate(0.15));
+        assertEquals(0.0, SimulationPlaybackService.simulationBatteryRate(null));
+
+        AiPlaybackContext.RobotTimeline robot = new AiPlaybackContext.RobotTimeline(
+                10001L,
+                List.of(new AiPlaybackContext.TimedStep(
+                        "MOVE-1", 1, AiPlaybackContext.StepType.MOVE,
+                        0, 1_000, null, 10L, 11L, null, null
+                )),
+                10L,
+                100,
+                SimulationPlaybackService.simulationBatteryRate(0.05),
+                SimulationPlaybackService.simulationBatteryRate(0.15)
+        );
+
+        robot.consumeMoveBattery();
+        assertEquals(100, robot.getBatteryLevel());
+
+        robot.consumeWorkBattery();
+        assertEquals(98, robot.getBatteryLevel());
+    }
+
+    @Test
     void lowBatteryRequestsReplanOnlyWhenNoChargeLegIsAlreadyPlanned() {
         AiPlaybackContext.RobotTimeline withoutCharge = new AiPlaybackContext.RobotTimeline(
                 10001L,

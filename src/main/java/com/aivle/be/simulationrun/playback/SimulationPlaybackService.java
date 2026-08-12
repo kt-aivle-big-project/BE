@@ -76,6 +76,10 @@ public class SimulationPlaybackService {
     // 예기치 못한 무한 루프는 막는다.
     private static final int MAX_STEPS_PER_TICK = 50;
 
+    // Battery specs describe the real-device rate. Accelerate consumption in the
+    // simulator so that movement and work consumption remain visible to users.
+    static final double SIMULATION_BATTERY_RATE_MULTIPLIER = 10.0;
+
     // 계획 대상 작업 상태
     private static final List<TaskStatus> PLANNABLE_STATUSES =
             List.of(TaskStatus.PENDING, TaskStatus.ASSIGNED);
@@ -198,8 +202,8 @@ public class SimulationPlaybackService {
                         robot.getId(),
                         robot.getNodeId(),
                         currentBattery(simulationRunId, run, robot),
-                        robot.getRobotSpec().getBaseBatteryRate(),
-                        robot.getRobotSpec().getWorkBatteryRate()
+                        simulationBatteryRate(robot.getRobotSpec().getBaseBatteryRate()),
+                        simulationBatteryRate(robot.getRobotSpec().getWorkBatteryRate())
                 ))
                 .toList();
 
@@ -357,8 +361,8 @@ public class SimulationPlaybackService {
                     steps,
                     resolveInitialNode(robotPlan, nodesByCode, robot),
                     currentBattery(simulationRunId, run, robot),
-                    robot.getRobotSpec().getBaseBatteryRate(),
-                    robot.getRobotSpec().getWorkBatteryRate()
+                    simulationBatteryRate(robot.getRobotSpec().getBaseBatteryRate()),
+                    simulationBatteryRate(robot.getRobotSpec().getWorkBatteryRate())
             );
             timelines.add(timeline);
             for (AiPlaybackContext.TimedStep step : steps) {
@@ -1139,6 +1143,13 @@ public class SimulationPlaybackService {
                 0.0,
                 Math.min(1.0, (nowMillis - startMillis) / (double) durationMillis)
         );
+    }
+
+    static double simulationBatteryRate(Double configuredRate) {
+        if (configuredRate == null || configuredRate <= 0) {
+            return 0.0;
+        }
+        return configuredRate * SIMULATION_BATTERY_RATE_MULTIPLIER;
     }
 
     private String userFacingWaitReason(String reason) {
