@@ -9,6 +9,7 @@ import com.aivle.be.fulfillmentcommand.service.FulfillmentCommandGenerationServi
 import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
+import com.aivle.be.laro.dto.LaroHumanReviewRequest;
 import com.aivle.be.laro.service.LaroPlanService;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
@@ -27,11 +28,13 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 import org.mockito.ArgumentCaptor;
 
@@ -153,5 +156,84 @@ class SimulationCommandCycleServiceTest {
         assertEquals("출고 작업을 우선 처리해 줘", requestCaptor.getValue().userCommand());
         assertEquals("출고 작업을 우선 처리해 줘", status.userCommand());
         assertEquals(SimulationCommandCycleStatusResponse.CycleState.COMPLETE, status.state());
+    }
+
+    @Test
+    void planFailureBlocksFollowingCyclesUntilHumanReviewRetries() {
+        when(simulationRunRepository.findById(1L)).thenReturn(Optional.of(run));
+        when(run.getGenerationIntervalSeconds()).thenReturn(300);
+        when(run.getExecutionVersion()).thenReturn(2L);
+        when(run.getStatus()).thenReturn(SimulationRunStatus.RUNNING);
+        when(laroPlanService.preflight(1L)).thenReturn(new LaroPreflightResponse(
+                "READY", true, 1L, "WH-1", 1L,
+                Map.of(), Map.of(), "redis", List.of()
+        ));
+
+        LaroPlanRequest.StructuredOperation operation = mock(
+                LaroPlanRequest.StructuredOperation.class
+        );
+        LaroPlanRequest planRequest = new LaroPlanRequest(
+                new LaroPlanRequest.StructuredInput(
+                        "REQ-ERROR", List.of(operation), Map.of(), null
+                ),
+                null,
+                null,
+                null
+        );
+        FulfillmentCommandGenerateResponse.FrontView frontView = mock(
+                FulfillmentCommandGenerateResponse.FrontView.class
+        );
+        when(frontView.requestId()).thenReturn("REQ-ERROR");
+        when(commandGenerationService.generate(eq(1L), any()))
+                .thenReturn(new FulfillmentCommandGenerateResponse(planRequest, frontView));
+        when(playbackService.hasActiveAiPlan(1L)).thenReturn(false);
+        when(laroPlanService.plan(eq(1L), eq(2L), any()))
+                .thenThrow(new IllegalStateException(
+                        "504 Gateway Timeout: upstream request timeout"
+                ))
+                .thenReturn(mock(LaroPlanResponse.class));
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(0).run();
+            return null;
+        }).when(taskExecutor).execute(any(Runnable.class));
+
+        SimulationCommandCycleStatusResponse failed = service.triggerNow(1L);
+
+        assertEquals(
+                SimulationCommandCycleStatusResponse.CycleState.REVIEW_REQUIRED,
+                failed.state()
+        );
+        assertNotNull(failed.pendingHumanInteraction());
+        assertEquals(
+                "AI_GATEWAY_TIMEOUT",
+                failed.pendingHumanInteraction().get("reason_code")
+        );
+
+        service.triggerNow(1L);
+        verify(commandGenerationService, times(1)).generate(eq(1L), any());
+
+        String interactionId = failed.pendingHumanInteraction()
+                .get("interaction_id")
+                .toString();
+        SimulationCommandCycleStatusResponse retried = service.respondToHumanReview(
+                1L,
+                interactionId,
+                new LaroHumanReviewRequest(
+                        "SELECT",
+                        "RETRY_NOW",
+                        List.of(),
+                        null,
+                        "일시적인 게이트웨이 오류를 확인함",
+                        2L
+                ),
+                "USER-1"
+        );
+
+        assertEquals(
+                SimulationCommandCycleStatusResponse.CycleState.COMPLETE,
+                retried.state()
+        );
+        verify(commandGenerationService, times(2)).generate(eq(1L), any());
+        verify(laroPlanService, times(2)).plan(eq(1L), eq(2L), any());
     }
 }

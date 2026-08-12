@@ -25,8 +25,10 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleStatusResponse.CycleState;
@@ -216,6 +218,7 @@ public class SimulationCommandCycleService {
                     null,
                     null,
                     null,
+                    null,
                     Instant.now()
             );
         }
@@ -246,6 +249,14 @@ public class SimulationCommandCycleService {
                 ignored -> new Object()
         );
         synchronized (executionLock) {
+            if (runtime.isOperationalFailureReview(interactionId)) {
+                Long retryMinute = runtime.resolveOperationalFailure(
+                        interactionId,
+                        request
+                );
+                dispatchIfAccepted(runtime, retryMinute);
+                return runtime.snapshot();
+            }
             runtime.beginHumanReview(interactionId, request.executionVersion());
             LaroPlanRequest planRequest = runtime.planRequest();
             try {
@@ -396,7 +407,7 @@ public class SimulationCommandCycleService {
                     generated.frontView().requestId()
             );
         } catch (RuntimeException exception) {
-            runtime.fail(exception.getMessage());
+            runtime.failForHumanReview(exception.getMessage());
             log.warn(
                     "[command-cycle] runId={}, minute={} failed: {}",
                     simulationRunId,
@@ -468,6 +479,8 @@ public class SimulationCommandCycleService {
         private FulfillmentCommandGenerateResponse generated;
         private LaroPlanRequest activePlanRequest;
         private LaroPlanResponse planResponse;
+        private Map<String, Object> pendingHumanInteraction;
+        private boolean operationalFailureReview;
         private LaroHumanReviewResponse humanReviewResponse;
         private String error;
         private Instant updatedAt = Instant.now();
@@ -568,6 +581,8 @@ public class SimulationCommandCycleService {
             generated = null;
             activePlanRequest = null;
             planResponse = null;
+            pendingHumanInteraction = null;
+            operationalFailureReview = false;
             humanReviewResponse = null;
             error = null;
             activeGenerationRequest = generationRequest;
@@ -610,12 +625,28 @@ public class SimulationCommandCycleService {
         synchronized void acceptPlanResult(LaroPlanResponse value) {
             if (pendingInteractionId(value) != null) {
                 planResponse = value;
+                pendingHumanInteraction = value.result().pendingHumanInteraction();
+                operationalFailureReview = false;
                 humanReviewResponse = null;
                 state = CycleState.REVIEW_REQUIRED;
                 error = null;
                 // Keep inFlight true so another automatic cycle cannot overtake review.
                 inFlight = true;
                 updatedAt = Instant.now();
+                return;
+            }
+            if (value != null && value.result() != null
+                    && value.result().errors() != null
+                    && !value.result().errors().isEmpty()) {
+                planResponse = value;
+                LaroPlanResponse.WorkflowError firstError = value.result().errors().get(0);
+                String code = firstError.code() == null || firstError.code().isBlank()
+                        ? "PLAN_RESPONSE_ERROR"
+                        : firstError.code();
+                String message = firstError.message() == null || firstError.message().isBlank()
+                        ? "AI 계획 응답에 오류가 포함되어 있습니다."
+                        : firstError.message();
+                failForHumanReview(code + ": " + message);
                 return;
             }
             complete(value);
@@ -632,7 +663,7 @@ public class SimulationCommandCycleService {
             if (state != CycleState.REVIEW_REQUIRED) {
                 throw new IllegalStateException("No pending human review for this cycle");
             }
-            String pendingId = pendingInteractionId(planResponse);
+            String pendingId = pendingInteractionId();
             if (pendingId == null || !pendingId.equals(interactionId)) {
                 throw new IllegalStateException(
                         "Human review interaction does not match the pending cycle"
@@ -735,6 +766,123 @@ public class SimulationCommandCycleService {
             updatedAt = Instant.now();
         }
 
+        synchronized void failForHumanReview(String message) {
+            if (!active) {
+                return;
+            }
+            String normalizedMessage = message == null || message.isBlank()
+                    ? "알 수 없는 자동 계획 오류가 발생했습니다."
+                    : message.trim();
+            String reasonCode = classifyFailure(normalizedMessage, state);
+            String interactionId = "CYCLE-ERROR-"
+                    + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+            boolean transientFailure = isTransientFailure(normalizedMessage);
+
+            Map<String, Object> retryOption = new LinkedHashMap<>();
+            retryOption.put("option_id", "RETRY_NOW");
+            retryOption.put("label", "다시 시도");
+            retryOption.put(
+                    "description",
+                    "현재 오류를 확인한 뒤 같은 계획 주기를 다시 실행합니다."
+            );
+            retryOption.put("impact_summary", "검토 즉시 명령 생성과 계획을 다시 시작합니다.");
+            retryOption.put("outcome", "RESUME");
+
+            Map<String, Object> terminateOption = new LinkedHashMap<>();
+            terminateOption.put("option_id", "TERMINATE_CYCLE");
+            terminateOption.put("label", "이번 계획 종료");
+            terminateOption.put(
+                    "description",
+                    "오류가 발생한 계획 주기를 종료하고 현재 실행 상태를 유지합니다."
+            );
+            terminateOption.put("impact_summary", "다음 주기 전까지 새 계획을 실행하지 않습니다.");
+            terminateOption.put("outcome", "TERMINATE");
+
+            Map<String, Object> interaction = new LinkedHashMap<>();
+            interaction.put("interaction_id", interactionId);
+            interaction.put("kind", "APPROVAL");
+            interaction.put("stage", failureStage(state));
+            interaction.put("reason_code", reasonCode);
+            interaction.put("headline", "자동 계획 오류를 확인해 주세요.");
+            interaction.put("prompt", normalizedMessage);
+            interaction.put(
+                    "context_summary",
+                    "오류 이후의 자동 계획은 중지되었습니다. 오류를 확인한 뒤 다시 시도하거나 이번 계획을 종료해 주세요."
+            );
+            interaction.put("evidence_ids", List.of(
+                    "cycle_state=" + state.name(),
+                    "planning_mode=" + (planningMode == null ? "UNKNOWN" : planningMode)
+            ));
+            interaction.put("options", List.of(retryOption, terminateOption));
+            interaction.put(
+                    "recommended_option_id",
+                    transientFailure ? "RETRY_NOW" : "TERMINATE_CYCLE"
+            );
+
+            pendingHumanInteraction = Map.copyOf(interaction);
+            operationalFailureReview = true;
+            state = CycleState.REVIEW_REQUIRED;
+            error = normalizedMessage;
+            // 검토가 끝나기 전에는 다음 자동 계획 주기가 현재 오류를 추월할 수 없다.
+            inFlight = true;
+            updatedAt = Instant.now();
+        }
+
+        synchronized boolean isOperationalFailureReview(String interactionId) {
+            return state == CycleState.REVIEW_REQUIRED
+                    && operationalFailureReview
+                    && pendingHumanInteraction != null
+                    && interactionId != null
+                    && interactionId.equals(pendingInteractionId());
+        }
+
+        synchronized Long resolveOperationalFailure(
+                String interactionId,
+                LaroHumanReviewRequest request
+        ) {
+            requireActive();
+            if (executionVersion != request.executionVersion()) {
+                throw new IllegalStateException("stale operational review execution version");
+            }
+            if (!isOperationalFailureReview(interactionId)) {
+                throw new IllegalStateException("Operational review does not match the pending cycle");
+            }
+
+            String selectedOptionId = request.selectedOptionId();
+            boolean terminate = "REJECT".equalsIgnoreCase(request.action())
+                    || "CANCEL".equalsIgnoreCase(request.action())
+                    || "TERMINATE_CYCLE".equalsIgnoreCase(selectedOptionId);
+            if (terminate) {
+                state = CycleState.CANCELLED;
+                error = null;
+                inFlight = false;
+                lastTriggeredMinute = Math.max(
+                        lastTriggeredMinute,
+                        simulatedTimeMs / intervalMs
+                );
+                humanReviewResponse = new LaroHumanReviewResponse(
+                        interactionId,
+                        "RESOLVED",
+                        "TERMINATED",
+                        "오류가 발생한 이번 계획 주기를 종료했습니다.",
+                        "CANCELLED",
+                        null,
+                        null
+                );
+                updatedAt = Instant.now();
+                return null;
+            }
+
+            if (!"RETRY_NOW".equalsIgnoreCase(selectedOptionId)
+                    && !"APPROVE".equalsIgnoreCase(request.action())) {
+                throw new IllegalStateException("Select a valid recovery action");
+            }
+            long retryMinute = activeCycleMinute;
+            String userCommand = cycleUserCommand;
+            inFlight = false;
+            return accept(retryMinute, userCommand);
+        }
+
         synchronized void requireActive() {
             if (!active) {
                 throw new IllegalStateException("simulation command cycle stopped");
@@ -767,6 +915,7 @@ public class SimulationCommandCycleService {
                     cycleUserCommand,
                     generated,
                     planResponse,
+                    pendingHumanInteraction,
                     humanReviewResponse,
                     error,
                     updatedAt
@@ -783,6 +932,56 @@ public class SimulationCommandCycleService {
                 value = response.result().pendingHumanInteraction().get("interactionId");
             }
             return value == null ? null : value.toString();
+        }
+
+        private String pendingInteractionId() {
+            if (pendingHumanInteraction != null) {
+                Object value = pendingHumanInteraction.get("interaction_id");
+                if (value == null) {
+                    value = pendingHumanInteraction.get("interactionId");
+                }
+                if (value != null) {
+                    return value.toString();
+                }
+            }
+            return pendingInteractionId(planResponse);
+        }
+
+        private static String classifyFailure(String message, CycleState failedState) {
+            String normalized = message.toLowerCase();
+            if (normalized.contains("504") || normalized.contains("gateway timeout")
+                    || normalized.contains("upstream request timeout")) {
+                return "AI_GATEWAY_TIMEOUT";
+            }
+            if (normalized.contains("timeout") || normalized.contains("timed out")) {
+                return "AI_REQUEST_TIMEOUT";
+            }
+            if (normalized.contains("connection") || normalized.contains("connect")) {
+                return "AI_CONNECTION_ERROR";
+            }
+            return switch (failedState) {
+                case CHECKING -> "PREFLIGHT_FAILED";
+                case GENERATING -> "COMMAND_GENERATION_FAILED";
+                case PLANNING, REPLANNING -> "PLAN_REQUEST_FAILED";
+                default -> "COMMAND_CYCLE_FAILED";
+            };
+        }
+
+        private static String failureStage(CycleState failedState) {
+            return switch (failedState) {
+                case PLANNING, REPLANNING -> "PRE_OPTIMIZATION";
+                default -> "PRE_ROUTE";
+            };
+        }
+
+        private static boolean isTransientFailure(String message) {
+            String normalized = message.toLowerCase();
+            return normalized.contains("timeout")
+                    || normalized.contains("timed out")
+                    || normalized.contains("connection")
+                    || normalized.contains("502")
+                    || normalized.contains("503")
+                    || normalized.contains("504");
         }
     }
 }

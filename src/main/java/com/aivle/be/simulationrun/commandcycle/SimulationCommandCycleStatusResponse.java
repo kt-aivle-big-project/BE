@@ -7,6 +7,7 @@ import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroHumanReviewResponse;
 
 import java.time.Instant;
+import java.util.Map;
 
 public record SimulationCommandCycleStatusResponse(
         Long simulationRunId,
@@ -24,6 +25,7 @@ public record SimulationCommandCycleStatusResponse(
         String userCommand,
         FulfillmentCommandGenerateResponse generated,
         LaroPlanResponse planResponse,
+        Map<String, Object> pendingHumanInteraction,
         LaroHumanReviewResponse humanReviewResponse,
         String error,
         Instant updatedAt
