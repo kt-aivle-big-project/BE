@@ -6,6 +6,8 @@ import com.aivle.be.laro.client.LaroPlanClient;
 import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
+import com.aivle.be.laro.dto.LaroHumanReviewRequest;
+import com.aivle.be.laro.dto.LaroHumanReviewResponse;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,6 +43,34 @@ public class LaroPlanService {
 
     public LaroPreflightResponse preflight(Long simulationRunId) {
         return client.preflight(simulationRunId);
+    }
+
+    public LaroHumanReviewResponse respondToHumanReview(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            String interactionId,
+            LaroHumanReviewRequest reviewRequest,
+            String actorId,
+            LaroPlanRequest planRequest
+    ) {
+        validateExecutableWarehouse(simulationRunId);
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+        LaroHumanReviewResponse response = client.respondToHumanReview(
+                simulationRunId,
+                interactionId,
+                reviewRequest,
+                actorId
+        );
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+        if (response.planResponse() != null) {
+            applyHumanReviewPlan(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    planRequest,
+                    response.planResponse()
+            );
+        }
+        return response;
     }
 
     /** 외부 단건 API 호환용. 요청 시작 시점의 실행 세대를 캡처한다. */
@@ -97,6 +127,60 @@ public class LaroPlanService {
             return response;
         } catch (RuntimeException exception) {
             failCandidatePlan(simulationRunId, response);
+            throw exception;
+        }
+    }
+
+    /** Apply a plan returned after Human Review without issuing another AI request. */
+    public LaroPlanResponse applyHumanReviewPlan(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            LaroPlanRequest request,
+            LaroPlanResponse response
+    ) {
+        validateExecutableWarehouse(simulationRunId);
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+        if (!isReady(response)) {
+            return response;
+        }
+
+        boolean replan = response.result().plan().planKind() != null
+                && "REPLAN".equalsIgnoreCase(response.result().plan().planKind())
+                && playbackService.hasActiveAiPlan(simulationRunId);
+        if (!replan) {
+            executionService.activateIfReady(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    request,
+                    response
+            );
+            return response;
+        }
+
+        try {
+            playbackService.beginQuiescing(simulationRunId);
+            replanStateService.startQuiescing(simulationRunId);
+            awaitSafeNodes(simulationRunId, expectedExecutionVersion);
+            replanStateService.startReplanning(simulationRunId);
+            requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+            replanStateService.waitForActivation(simulationRunId);
+            boolean staged = executionService.stageReplanIfReady(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    request,
+                    response
+            );
+            if (!staged) {
+                playbackService.cancelQuiescing(simulationRunId);
+                replanStateService.restoreRunning(simulationRunId);
+            }
+            return response;
+        } catch (RuntimeException exception) {
+            failCandidatePlan(simulationRunId, response);
+            if (isCurrentExecution(simulationRunId, expectedExecutionVersion)) {
+                playbackService.cancelQuiescing(simulationRunId);
+                restoreRunningQuietly(simulationRunId);
+            }
             throw exception;
         }
     }

@@ -8,6 +8,8 @@ import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
+import com.aivle.be.laro.dto.LaroHumanReviewRequest;
+import com.aivle.be.laro.dto.LaroHumanReviewResponse;
 import com.aivle.be.laro.service.LaroPlanService;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
@@ -162,9 +164,90 @@ public class SimulationCommandCycleService {
                     null,
                     null,
                     null,
+                    null,
                     Instant.now()
             );
         }
+        return runtime.snapshot();
+    }
+
+    public SimulationCommandCycleStatusResponse respondToHumanReview(
+            Long simulationRunId,
+            String interactionId,
+            LaroHumanReviewRequest request,
+            String actorId
+    ) {
+        SimulationRun run = findRun(simulationRunId);
+        if (run.getExecutionVersion() != request.executionVersion()) {
+            throw new IllegalStateException(
+                    "stale human review: expected executionVersion="
+                            + request.executionVersion()
+                            + ", actual=" + run.getExecutionVersion()
+            );
+        }
+        CycleRuntime runtime = runtimes.get(simulationRunId);
+        if (runtime == null) {
+            throw new IllegalStateException("No active command cycle for human review");
+        }
+
+        Object executionLock = executionLocks.computeIfAbsent(
+                simulationRunId,
+                ignored -> new Object()
+        );
+        synchronized (executionLock) {
+            runtime.beginHumanReview(interactionId, request.executionVersion());
+            LaroPlanRequest planRequest = runtime.planRequest();
+            try {
+                LaroHumanReviewResponse response = laroPlanService.respondToHumanReview(
+                        simulationRunId,
+                        request.executionVersion(),
+                        interactionId,
+                        request,
+                        actorId,
+                        planRequest
+                );
+                runtime.finishHumanReview(response);
+                if (response.planResponse() != null) {
+                    planSnapshotStore.save(
+                            simulationRunId,
+                            runtime.activeCycleMinute(),
+                            planRequest,
+                            response.planResponse()
+                    );
+                }
+                return runtime.snapshot();
+            } catch (RuntimeException exception) {
+                runtime.failHumanReview(exception.getMessage());
+                throw exception;
+            }
+        }
+    }
+
+    public SimulationCommandCycleStatusResponse retryAfterHumanAction(
+            Long simulationRunId,
+            String interactionId,
+            long expectedExecutionVersion
+    ) {
+        SimulationRun run = findRun(simulationRunId);
+        if (run.getExecutionVersion() != expectedExecutionVersion) {
+            throw new IllegalStateException("stale human review retry execution version");
+        }
+        CycleRuntime runtime = runtimes.get(simulationRunId);
+        if (runtime == null) {
+            throw new IllegalStateException("No held command cycle to retry");
+        }
+        Long cycleMinute;
+        Object executionLock = executionLocks.computeIfAbsent(
+                simulationRunId,
+                ignored -> new Object()
+        );
+        synchronized (executionLock) {
+            cycleMinute = runtime.retryAfterHumanAction(
+                    interactionId,
+                    expectedExecutionVersion
+            );
+        }
+        dispatchIfAccepted(runtime, cycleMinute);
         return runtime.snapshot();
     }
 
@@ -245,7 +328,7 @@ public class SimulationCommandCycleService {
                             runtime.executionVersion(),
                             planRequest
                     );
-            runtime.complete(response);
+            runtime.acceptPlanResult(response);
 
             runtime.requireActive();
             planSnapshotStore.save(simulationRunId, cycleMinute, planRequest, response);
@@ -313,6 +396,7 @@ public class SimulationCommandCycleService {
         private FulfillmentCommandGenerateRequest activeGenerationRequest;
         private FulfillmentCommandGenerateResponse generated;
         private LaroPlanResponse planResponse;
+        private LaroHumanReviewResponse humanReviewResponse;
         private String error;
         private Instant updatedAt = Instant.now();
 
@@ -388,6 +472,7 @@ public class SimulationCommandCycleService {
             planningMode = null;
             generated = null;
             planResponse = null;
+            humanReviewResponse = null;
             error = null;
             activeGenerationRequest = generationRequest;
             updatedAt = Instant.now();
@@ -418,6 +503,123 @@ public class SimulationCommandCycleService {
             error = null;
             inFlight = false;
             updatedAt = Instant.now();
+        }
+
+        synchronized void acceptPlanResult(LaroPlanResponse value) {
+            if (pendingInteractionId(value) != null) {
+                planResponse = value;
+                humanReviewResponse = null;
+                state = CycleState.REVIEW_REQUIRED;
+                error = null;
+                // Keep inFlight true so another automatic cycle cannot overtake review.
+                inFlight = true;
+                updatedAt = Instant.now();
+                return;
+            }
+            complete(value);
+        }
+
+        synchronized void beginHumanReview(
+                String interactionId,
+                long expectedExecutionVersion
+        ) {
+            requireActive();
+            if (executionVersion != expectedExecutionVersion) {
+                throw new IllegalStateException("stale human review execution version");
+            }
+            if (state != CycleState.REVIEW_REQUIRED) {
+                throw new IllegalStateException("No pending human review for this cycle");
+            }
+            String pendingId = pendingInteractionId(planResponse);
+            if (pendingId == null || !pendingId.equals(interactionId)) {
+                throw new IllegalStateException(
+                        "Human review interaction does not match the pending cycle"
+                );
+            }
+            state = CycleState.REVIEW_PROCESSING;
+            error = null;
+            inFlight = true;
+            updatedAt = Instant.now();
+        }
+
+        synchronized void finishHumanReview(LaroHumanReviewResponse response) {
+            humanReviewResponse = response;
+            String outcome = response.resumeOutcome() == null
+                    ? "FAILED"
+                    : response.resumeOutcome().toUpperCase();
+            switch (outcome) {
+                case "PENDING_REVIEW" -> {
+                    if (response.planResponse() == null
+                            || pendingInteractionId(response.planResponse()) == null) {
+                        fail("LARO returned PENDING_REVIEW without a pending interaction");
+                        return;
+                    }
+                    planResponse = response.planResponse();
+                    state = CycleState.REVIEW_REQUIRED;
+                    error = null;
+                    inFlight = true;
+                }
+                case "RESUMED" -> {
+                    planResponse = response.planResponse();
+                    state = CycleState.COMPLETE;
+                    error = null;
+                    inFlight = false;
+                }
+                case "HELD" -> {
+                    state = CycleState.HELD;
+                    error = null;
+                    inFlight = true;
+                }
+                case "TERMINATED" -> {
+                    state = CycleState.CANCELLED;
+                    error = null;
+                    inFlight = false;
+                }
+                default -> {
+                    state = CycleState.ERROR;
+                    error = response.message() == null
+                            ? "Human review resume failed"
+                            : response.message();
+                    inFlight = false;
+                }
+            }
+            updatedAt = Instant.now();
+        }
+
+        synchronized void failHumanReview(String message) {
+            state = CycleState.REVIEW_REQUIRED;
+            error = message == null || message.isBlank()
+                    ? "Human review request failed"
+                    : message;
+            inFlight = true;
+            updatedAt = Instant.now();
+        }
+
+        synchronized Long retryAfterHumanAction(
+                String interactionId,
+                long expectedExecutionVersion
+        ) {
+            requireActive();
+            if (executionVersion != expectedExecutionVersion) {
+                throw new IllegalStateException("stale human review retry execution version");
+            }
+            if (state != CycleState.HELD || humanReviewResponse == null
+                    || !interactionId.equals(humanReviewResponse.interactionId())) {
+                throw new IllegalStateException("Human review is not held for this interaction");
+            }
+            inFlight = false;
+            return acceptManualCycle();
+        }
+
+        synchronized LaroPlanRequest planRequest() {
+            if (generated == null || generated.planRequest() == null) {
+                throw new IllegalStateException("Human review has no originating plan request");
+            }
+            return generated.planRequest();
+        }
+
+        synchronized long activeCycleMinute() {
+            return activeCycleMinute;
         }
 
         synchronized void fail(String message) {
@@ -459,9 +661,22 @@ public class SimulationCommandCycleService {
                     generationRequest.effectivePolicyProfile(),
                     generated,
                     planResponse,
+                    humanReviewResponse,
                     error,
                     updatedAt
             );
+        }
+
+        private static String pendingInteractionId(LaroPlanResponse response) {
+            if (response == null || response.result() == null
+                    || response.result().pendingHumanInteraction() == null) {
+                return null;
+            }
+            Object value = response.result().pendingHumanInteraction().get("interaction_id");
+            if (value == null) {
+                value = response.result().pendingHumanInteraction().get("interactionId");
+            }
+            return value == null ? null : value.toString();
         }
     }
 }

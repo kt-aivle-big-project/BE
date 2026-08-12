@@ -3,6 +3,8 @@ package com.aivle.be.laro.client;
 import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
+import com.aivle.be.laro.dto.LaroHumanReviewRequest;
+import com.aivle.be.laro.dto.LaroHumanReviewResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -75,6 +77,36 @@ public class LaroPlanClient {
                 .body(LaroPlanResponse.class);
         if (response == null) {
             throw new IllegalStateException("LARO replan returned an empty response");
+        }
+        return response;
+    }
+
+    public LaroHumanReviewResponse respondToHumanReview(
+            Long simulationRunId,
+            String interactionId,
+            LaroHumanReviewRequest request,
+            String actorId
+    ) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("action", request.action().trim().toUpperCase());
+        put(body, "selected_option_id", request.selectedOptionId());
+        body.put("selected_entity_ids", request.effectiveSelectedEntityIds());
+        put(body, "resolution_value", request.resolutionValue());
+        body.put("actor_id", actorId);
+        put(body, "comment", request.comment());
+
+        LaroHumanReviewResponse response = restClient.post()
+                .uri(
+                        "/api/v1/simulation-runs/{runId}/hitl/{interactionId}/respond",
+                        simulationRunId,
+                        interactionId
+                )
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(serialize(body))
+                .retrieve()
+                .body(LaroHumanReviewResponse.class);
+        if (response == null) {
+            throw new IllegalStateException("LARO human review returned an empty response");
         }
         return response;
     }
