@@ -250,16 +250,35 @@ public class SimulationCommandCycleService {
         );
         synchronized (executionLock) {
             if (runtime.isOperationalFailureReview(interactionId)) {
+                if (!isOperationalReviewTermination(request)) {
+                    laroPlanService.resumeForHumanReviewDecision(
+                            simulationRunId,
+                            request.executionVersion()
+                    );
+                }
                 Long retryMinute = runtime.resolveOperationalFailure(
                         interactionId,
                         request
                 );
-                dispatchIfAccepted(runtime, retryMinute);
+                if (retryMinute != null) {
+                    dispatchIfAccepted(runtime, retryMinute);
+                } else {
+                    // 활성 계획이 있으면 안전 정지를 풀고 기존 계획을 계속한다.
+                    // 최초 계획 오류처럼 실행할 계획이 없으면 PAUSED 상태를 유지한다.
+                    laroPlanService.cancelHumanReviewHold(
+                            simulationRunId,
+                            request.executionVersion()
+                    );
+                }
                 return runtime.snapshot();
             }
             runtime.beginHumanReview(interactionId, request.executionVersion());
             LaroPlanRequest planRequest = runtime.planRequest();
             try {
+                laroPlanService.resumeForHumanReviewDecision(
+                        simulationRunId,
+                        request.executionVersion()
+                );
                 LaroHumanReviewResponse response = laroPlanService.respondToHumanReview(
                         simulationRunId,
                         request.executionVersion(),
@@ -277,9 +296,15 @@ public class SimulationCommandCycleService {
                             response.planResponse()
                     );
                 }
+                if (runtime.requiresHumanReviewHold()
+                        || (isTerminalReview(response)
+                        && !playbackService.hasActiveAiPlan(simulationRunId))) {
+                    holdForHumanReviewQuietly(runtime);
+                }
                 return runtime.snapshot();
             } catch (RuntimeException exception) {
                 runtime.failHumanReview(exception.getMessage());
+                holdForHumanReviewQuietly(runtime);
                 throw exception;
             }
         }
@@ -304,6 +329,10 @@ public class SimulationCommandCycleService {
                 ignored -> new Object()
         );
         synchronized (executionLock) {
+            laroPlanService.resumeForHumanReviewDecision(
+                    simulationRunId,
+                    expectedExecutionVersion
+            );
             cycleMinute = runtime.retryAfterHumanAction(
                     interactionId,
                     expectedExecutionVersion
@@ -315,6 +344,7 @@ public class SimulationCommandCycleService {
 
     /** 배속이 적용된 시뮬레이션 시계를 전진시키고 분 경계를 감지한다. */
     public void tick() {
+        dispatchPendingLowBatteryReplans();
         long nowNanos = System.nanoTime();
         for (CycleRuntime runtime : List.copyOf(runtimes.values())) {
             SimulationRun run = simulationRunRepository.findById(runtime.simulationRunId()).orElse(null);
@@ -331,6 +361,52 @@ public class SimulationCommandCycleService {
             double speed = run.getSimulationSpeed() == null ? 1.0 : run.getSimulationSpeed();
             long dueMinute = runtime.advance(elapsedNanos, speed);
             dispatchIfAccepted(runtime, runtime.acceptScheduledCycle(dueMinute));
+        }
+    }
+
+    private void dispatchPendingLowBatteryReplans() {
+        for (SimulationPlaybackService.LowBatteryReplanRequest request
+                : playbackService.pendingLowBatteryReplanRequests()) {
+            SimulationRun run = simulationRunRepository
+                    .findById(request.simulationRunId())
+                    .orElse(null);
+            if (run == null || run.getStatus() != SimulationRunStatus.RUNNING) {
+                continue;
+            }
+            CycleRuntime runtime = runtimes.computeIfAbsent(
+                    request.simulationRunId(),
+                    ignored -> new CycleRuntime(
+                            request.simulationRunId(),
+                            run.getExecutionVersion(),
+                            intervalMs(run),
+                            FulfillmentCommandGenerateRequest.automatic(),
+                            true
+                    )
+            );
+            Long cycleMinute = runtime.acceptLowBatteryReplan();
+            if (cycleMinute == null) {
+                continue;
+            }
+            playbackService.acknowledgeLowBatteryReplanRequest(
+                    request.simulationRunId(),
+                    request.robotId()
+            );
+            if (request.batteryLevel() <= 0) {
+                runtime.failForHumanReview(
+                        "BATTERY_DEPLETED: R" + request.robotId()
+                                + " battery reached 0% before a charger was reachable"
+                );
+                holdForHumanReviewQuietly(runtime);
+                continue;
+            }
+            log.info(
+                    "[command-cycle] runId={}, robotId={}, battery={}%, threshold={}%: LOW_BATTERY Rule replan accepted",
+                    request.simulationRunId(),
+                    request.robotId(),
+                    request.batteryLevel(),
+                    request.chargingThreshold()
+            );
+            dispatchIfAccepted(runtime, cycleMinute);
         }
     }
 
@@ -366,25 +442,41 @@ public class SimulationCommandCycleService {
             runtime.requireActive();
 
             runtime.begin(CycleState.GENERATING, null);
-            FulfillmentCommandGenerateResponse generated =
-                    commandGenerationService.generate(
+            boolean lowBatteryCycle = "LOW_BATTERY".equals(runtime.replanReason());
+            FulfillmentCommandGenerateResponse generated = lowBatteryCycle
+                    ? null
+                    : commandGenerationService.generate(
                             simulationRunId,
                             runtime.activeGenerationRequest()
                     );
-            runtime.generated(generated);
-            LaroPlanRequest planRequest = withUserCommand(
-                    generated.planRequest(),
-                    runtime.cycleUserCommand()
-            );
+            if (generated != null) {
+                runtime.generated(generated);
+            }
+            LaroPlanRequest planRequest = lowBatteryCycle
+                    ? runtime.lowBatteryPlanRequest()
+                    : withUserCommand(
+                            generated.planRequest(),
+                            runtime.cycleUserCommand()
+                    );
             runtime.planRequest(planRequest);
 
             runtime.requireActive();
             boolean replan = playbackService.hasActiveAiPlan(simulationRunId);
-            String planningMode = replan ? "REPLAN" : "INITIAL_PLAN";
+            boolean lowBatteryReplan = replan
+                    && lowBatteryCycle;
+            String planningMode = lowBatteryReplan
+                    ? "LOW_BATTERY_REPLAN"
+                    : replan ? "REPLAN" : "INITIAL_PLAN";
             runtime.begin(replan ? CycleState.REPLANNING : CycleState.PLANNING, planningMode);
 
-            LaroPlanResponse response = replan
+            LaroPlanResponse response = lowBatteryReplan
                     ? laroPlanService.replan(
+                            simulationRunId,
+                            runtime.executionVersion(),
+                            planRequest,
+                            "LOW_BATTERY"
+                    )
+                    : replan ? laroPlanService.replan(
                             simulationRunId,
                             runtime.executionVersion(),
                             planRequest
@@ -395,6 +487,9 @@ public class SimulationCommandCycleService {
                             planRequest
                     );
             runtime.acceptPlanResult(response);
+            if (runtime.requiresHumanReviewHold()) {
+                holdForHumanReviewQuietly(runtime);
+            }
 
             runtime.requireActive();
             planSnapshotStore.save(simulationRunId, cycleMinute, planRequest, response);
@@ -404,10 +499,13 @@ public class SimulationCommandCycleService {
                     simulationRunId,
                     cycleMinute,
                     planningMode,
-                    generated.frontView().requestId()
+                    generated == null
+                            ? planRequest.structuredInput().requestId()
+                            : generated.frontView().requestId()
             );
         } catch (RuntimeException exception) {
             runtime.failForHumanReview(exception.getMessage());
+            holdForHumanReviewQuietly(runtime);
             log.warn(
                     "[command-cycle] runId={}, minute={} failed: {}",
                     simulationRunId,
@@ -415,6 +513,33 @@ public class SimulationCommandCycleService {
                     exception.getMessage()
             );
         }
+    }
+
+    private void holdForHumanReviewQuietly(CycleRuntime runtime) {
+        try {
+            laroPlanService.holdForHumanReview(
+                    runtime.simulationRunId(),
+                    runtime.executionVersion()
+            );
+        } catch (RuntimeException holdFailure) {
+            log.warn(
+                    "[command-cycle] runId={} could not enter Human Review pause: {}",
+                    runtime.simulationRunId(),
+                    holdFailure.getMessage()
+            );
+        }
+    }
+
+    private boolean isTerminalReview(LaroHumanReviewResponse response) {
+        return response != null && response.resumeOutcome() != null
+                && ("TERMINATED".equalsIgnoreCase(response.resumeOutcome())
+                || "FAILED".equalsIgnoreCase(response.resumeOutcome()));
+    }
+
+    private boolean isOperationalReviewTermination(LaroHumanReviewRequest request) {
+        return "REJECT".equalsIgnoreCase(request.action())
+                || "CANCEL".equalsIgnoreCase(request.action())
+                || "TERMINATE_CYCLE".equalsIgnoreCase(request.selectedOptionId());
     }
 
     private SimulationRun findRun(Long simulationRunId) {
@@ -476,8 +601,10 @@ public class SimulationCommandCycleService {
         private FulfillmentCommandGenerateRequest generationRequest;
         private FulfillmentCommandGenerateRequest activeGenerationRequest;
         private String cycleUserCommand;
+        private String replanReason = "NEW_ORDER";
         private FulfillmentCommandGenerateResponse generated;
         private LaroPlanRequest activePlanRequest;
+        private LaroPlanRequest lastPlanRequest;
         private LaroPlanResponse planResponse;
         private Map<String, Object> pendingHumanInteraction;
         private boolean operationalFailureReview;
@@ -524,6 +651,10 @@ public class SimulationCommandCycleService {
             return cycleUserCommand;
         }
 
+        synchronized String replanReason() {
+            return replanReason;
+        }
+
         synchronized void configure(FulfillmentCommandGenerateRequest request) {
             generationRequest = request == null
                     ? FulfillmentCommandGenerateRequest.automatic()
@@ -553,14 +684,14 @@ public class SimulationCommandCycleService {
                 return null;
             }
             lastTriggeredMinute = minute;
-            return accept(minute, null);
+            return accept(minute, null, "NEW_ORDER");
         }
 
         synchronized Long acceptManualCycle() {
             if (!active || inFlight) {
                 return null;
             }
-            return accept(simulatedTimeMs / intervalMs, null);
+            return accept(simulatedTimeMs / intervalMs, null, "NEW_ORDER");
         }
 
         synchronized Long acceptUserCommand(String userCommand) {
@@ -569,15 +700,31 @@ public class SimulationCommandCycleService {
             }
             long minute = simulatedTimeMs / intervalMs;
             lastTriggeredMinute = Math.max(lastTriggeredMinute, minute);
-            return accept(minute, userCommand);
+            return accept(minute, userCommand, "NEW_ORDER");
         }
 
-        private Long accept(long minute, String userCommand) {
+        synchronized Long acceptLowBatteryReplan() {
+            if (!active || inFlight) {
+                return null;
+            }
+            long minute = simulatedTimeMs / intervalMs;
+            lastTriggeredMinute = Math.max(lastTriggeredMinute, minute);
+            return accept(minute, null, "LOW_BATTERY");
+        }
+
+        private Long accept(
+                long minute,
+                String userCommand,
+                String nextReplanReason
+        ) {
             inFlight = true;
             activeCycleMinute = minute;
             state = CycleState.CHECKING;
             planningMode = null;
             cycleUserCommand = userCommand;
+            replanReason = nextReplanReason == null || nextReplanReason.isBlank()
+                    ? "NEW_ORDER"
+                    : nextReplanReason;
             generated = null;
             activePlanRequest = null;
             planResponse = null;
@@ -608,7 +755,31 @@ public class SimulationCommandCycleService {
         synchronized void planRequest(LaroPlanRequest value) {
             requireActive();
             activePlanRequest = value;
+            lastPlanRequest = value;
             updatedAt = Instant.now();
+        }
+
+        synchronized LaroPlanRequest lowBatteryPlanRequest() {
+            requireActive();
+            if (lastPlanRequest == null || lastPlanRequest.structuredInput() == null) {
+                throw new IllegalStateException(
+                        "LOW_BATTERY replan has no active structured plan request"
+                );
+            }
+            LaroPlanRequest.StructuredInput previous = lastPlanRequest.structuredInput();
+            LaroPlanRequest.StructuredInput structured = new LaroPlanRequest.StructuredInput(
+                    "REQ-LOW-BATTERY-" + simulationRunId + "-"
+                            + UUID.randomUUID().toString().substring(0, 8).toUpperCase(),
+                    previous.operations(),
+                    previous.constraints(),
+                    previous.routingContext()
+            );
+            return new LaroPlanRequest(
+                    structured,
+                    null,
+                    lastPlanRequest.optimizationBackend(),
+                    lastPlanRequest.runtimeSnapshot()
+            );
         }
 
         synchronized void complete(LaroPlanResponse value) {
@@ -742,7 +913,7 @@ public class SimulationCommandCycleService {
             }
             String userCommand = cycleUserCommand;
             inFlight = false;
-            return accept(simulatedTimeMs / intervalMs, userCommand);
+            return accept(simulatedTimeMs / intervalMs, userCommand, replanReason);
         }
 
         synchronized LaroPlanRequest planRequest() {
@@ -804,10 +975,11 @@ public class SimulationCommandCycleService {
             interaction.put("stage", failureStage(state));
             interaction.put("reason_code", reasonCode);
             interaction.put("headline", "자동 계획 오류를 확인해 주세요.");
-            interaction.put("prompt", normalizedMessage);
+            interaction.put("prompt", userFacingFailure(reasonCode));
+            interaction.put("technical_detail", normalizedMessage);
             interaction.put(
                     "context_summary",
-                    "오류 이후의 자동 계획은 중지되었습니다. 오류를 확인한 뒤 다시 시도하거나 이번 계획을 종료해 주세요."
+                    "오류 이후 시뮬레이션을 안전하게 일시정지했습니다. 원인을 확인한 뒤 다시 시도하거나 이번 계획을 종료해 주세요."
             );
             interaction.put("evidence_ids", List.of(
                     "cycle_state=" + state.name(),
@@ -826,6 +998,12 @@ public class SimulationCommandCycleService {
             // 검토가 끝나기 전에는 다음 자동 계획 주기가 현재 오류를 추월할 수 없다.
             inFlight = true;
             updatedAt = Instant.now();
+        }
+
+        synchronized boolean requiresHumanReviewHold() {
+            return state == CycleState.REVIEW_REQUIRED
+                    || state == CycleState.REVIEW_PROCESSING
+                    || state == CycleState.HELD;
         }
 
         synchronized boolean isOperationalFailureReview(String interactionId) {
@@ -880,7 +1058,7 @@ public class SimulationCommandCycleService {
             long retryMinute = activeCycleMinute;
             String userCommand = cycleUserCommand;
             inFlight = false;
-            return accept(retryMinute, userCommand);
+            return accept(retryMinute, userCommand, replanReason);
         }
 
         synchronized void requireActive() {
@@ -959,6 +1137,9 @@ public class SimulationCommandCycleService {
             if (normalized.contains("connection") || normalized.contains("connect")) {
                 return "AI_CONNECTION_ERROR";
             }
+            if (normalized.contains("battery_depleted")) {
+                return "BATTERY_DEPLETED";
+            }
             return switch (failedState) {
                 case CHECKING -> "PREFLIGHT_FAILED";
                 case GENERATING -> "COMMAND_GENERATION_FAILED";
@@ -982,6 +1163,25 @@ public class SimulationCommandCycleService {
                     || normalized.contains("502")
                     || normalized.contains("503")
                     || normalized.contains("504");
+        }
+
+        private static String userFacingFailure(String reasonCode) {
+            return switch (reasonCode) {
+                case "BATTERY_DEPLETED" ->
+                        "로봇 배터리가 충전소에 도착하기 전에 0%가 되어 자동 이동을 중지했습니다. 로봇 위치와 충전 가능 여부를 확인해 주세요.";
+                case "AI_GATEWAY_TIMEOUT", "AI_REQUEST_TIMEOUT" ->
+                        "AI 계획 응답이 제한 시간 안에 도착하지 않았습니다. 일시적인 지연일 수 있으니 잠시 후 다시 시도해 주세요.";
+                case "AI_CONNECTION_ERROR" ->
+                        "AI 계획 서버에 연결하지 못했습니다. 서버 상태와 네트워크 연결을 확인한 뒤 다시 시도해 주세요.";
+                case "PREFLIGHT_FAILED" ->
+                        "계획 실행 전 점검을 통과하지 못했습니다. 창고·로봇·시나리오 설정을 확인해 주세요.";
+                case "COMMAND_GENERATION_FAILED" ->
+                        "입출고 명령을 생성하지 못했습니다. 입력 조건을 확인하거나 같은 요청을 다시 시도해 주세요.";
+                case "PLAN_REQUEST_FAILED" ->
+                        "AI가 실행 가능한 계획을 만들지 못했습니다. 판단 사유와 기술 상세를 확인한 뒤 처리 방법을 선택해 주세요.";
+                default ->
+                        "자동 계획 처리 중 오류가 발생했습니다. 기술 상세를 확인한 뒤 처리 방법을 선택해 주세요.";
+            };
         }
     }
 }

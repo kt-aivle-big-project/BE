@@ -46,6 +46,63 @@ public class LaroPlanService {
         return client.preflight(simulationRunId);
     }
 
+    /** Human Review가 열리면 현재 계획을 안전 노드에서 멈춘 뒤 실행 시계도 일시정지한다. */
+    public void holdForHumanReview(
+            Long simulationRunId,
+            long expectedExecutionVersion
+    ) {
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+        SimulationRunStatus status = simulationRunRepository.findById(simulationRunId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND))
+                .getStatus();
+        if (status == SimulationRunStatus.PAUSED) {
+            return;
+        }
+
+        if (playbackService.hasActiveAiPlan(simulationRunId)) {
+            try {
+                if (status == SimulationRunStatus.RUNNING) {
+                    playbackService.beginQuiescing(simulationRunId);
+                    replanStateService.startQuiescing(simulationRunId);
+                    awaitSafeNodes(simulationRunId, expectedExecutionVersion);
+                } else if (status == SimulationRunStatus.QUIESCING) {
+                    awaitSafeNodes(simulationRunId, expectedExecutionVersion);
+                } else if ((status == SimulationRunStatus.REPLANNING
+                        || status == SimulationRunStatus.PENDING_ACTIVATION)
+                        && !playbackService.isReadyForReplanRequest(simulationRunId)) {
+                    awaitSafeNodes(simulationRunId, expectedExecutionVersion);
+                }
+            } finally {
+                // 안전 노드 대기가 시간 초과되어도 Review 중 실행 시계가 계속 흐르면 안 된다.
+                replanStateService.pauseForHumanReview(simulationRunId);
+            }
+            return;
+        }
+        replanStateService.pauseForHumanReview(simulationRunId);
+    }
+
+    /** 검토 답변을 처리할 때만 일시정지 상태를 다시 실행 상태로 연다. */
+    public void resumeForHumanReviewDecision(
+            Long simulationRunId,
+            long expectedExecutionVersion
+    ) {
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+        replanStateService.resumeFromHumanReview(simulationRunId);
+    }
+
+    /** 새 계획을 종료하면 안전 정지 중이던 이전 활성 계획을 다시 진행한다. */
+    public void cancelHumanReviewHold(
+            Long simulationRunId,
+            long expectedExecutionVersion
+    ) {
+        requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+        if (!playbackService.hasActiveAiPlan(simulationRunId)) {
+            return;
+        }
+        replanStateService.resumeFromHumanReview(simulationRunId);
+        playbackService.cancelQuiescing(simulationRunId);
+    }
+
     public LaroHumanReviewResponse respondToHumanReview(
             Long simulationRunId,
             long expectedExecutionVersion,
@@ -193,6 +250,20 @@ public class LaroPlanService {
             long expectedExecutionVersion,
             LaroPlanRequest request
     ) {
+        return replan(
+                simulationRunId,
+                expectedExecutionVersion,
+                request,
+                "NEW_ORDER"
+        );
+    }
+
+    public LaroPlanResponse replan(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            LaroPlanRequest request,
+            String reason
+    ) {
         validateExecutableWarehouse(simulationRunId);
         requireCurrentExecution(simulationRunId, expectedExecutionVersion);
         LaroPlanResponse response = null;
@@ -203,13 +274,23 @@ public class LaroPlanService {
                     expectedExecutionVersion
             );
             SimulationPlaybackService.ActiveAiPlan active = playbackService.activeAiPlan(simulationRunId);
-            response = client.replan(
-                    simulationRunId,
-                    active.planId(),
-                    active.planVersion(),
-                    active.clockMillis(),
-                    request
-            );
+            response = reason == null || reason.isBlank()
+                    || "NEW_ORDER".equalsIgnoreCase(reason)
+                    ? client.replan(
+                            simulationRunId,
+                            active.planId(),
+                            active.planVersion(),
+                            active.clockMillis(),
+                            request
+                    )
+                    : client.replan(
+                            simulationRunId,
+                            active.planId(),
+                            active.planVersion(),
+                            active.clockMillis(),
+                            request,
+                            reason
+                    );
             requireCurrentExecution(simulationRunId, expectedExecutionVersion);
             if (!isReady(response)) {
                 if (hasPendingHumanReview(response)) {
@@ -331,6 +412,10 @@ public class LaroPlanService {
         SimulationRunStatus status = simulationRunRepository.findById(simulationRunId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND))
                 .getStatus();
+        if (status == SimulationRunStatus.RUNNING) {
+            playbackService.cancelQuiescing(simulationRunId);
+            return;
+        }
         if (status != SimulationRunStatus.QUIESCING
                 && status != SimulationRunStatus.REPLANNING
                 && status != SimulationRunStatus.PENDING_ACTIVATION) {

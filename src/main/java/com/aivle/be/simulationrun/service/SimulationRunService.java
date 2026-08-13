@@ -32,6 +32,7 @@ import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
 import com.aivle.be.task.controller.response.TaskResponse;
 import com.aivle.be.task.entity.Task;
+import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.user.repository.UserRepository;
 import org.slf4j.Logger;
@@ -196,26 +197,27 @@ public class SimulationRunService {
     ) {
         SimulationRun run = findOwnedByForUpdate(simulationRunId, requester);
         run.reset();
+        // 초기화 뒤에는 현재 실행 ID를 재사용하지 않는다. 같은 실행 ID에서 새 명령을
+        // 만들면 기존 external operation ID와 충돌할 수 있으므로 다음 시작은 새 실행으로 한다.
+        run.stop(LocalDateTime.now());
         simulationRunStateStore.deleteAll(simulationRunId);
         simulationPlaybackService.clear(simulationRunId);
         simulationCommandCycleService.stop(simulationRunId);
         simulationRunPlanSnapshotStore.deleteAll(simulationRunId);
         inventoryReservationService.releaseActiveForRun(simulationRunId);
 
-        // 초기화는 같은 실행 ID의 작업을 처음 상태로 되돌린 뒤 새 AI 계획을 만든다.
-        //
-        // 예전에는 미완료 작업을 취소했는데, 그러면 다시 시작할 때
-        // 명령 생성기가 새 배치를 뽑아서 실행 ID만 같고 작업 목록은
-        // 완전히 달라졌다. 그래서 취소 대신 모든 작업을 처음 상태로 되돌린다.
-        //
-        // 재고 반영 시각(inventory_applied_at)은 일부러 그대로 둔다.
-        // 이미 랙에서 빠져나간 BOX 를 되돌리는 것은 별개의 문제라,
-        // 여기서 건드리면 재고 수량이 어긋난다.
+        // 초기화는 현재 재고를 그대로 유지하면서 실행 중이던 화면/작업만 정리한다.
+        // 이미 랙에 반영된 입·출고를 PENDING 으로 되돌리면 같은 작업이 재실행되어
+        // 재고가 이중 반영되므로, 미완료 작업은 취소하고 다음 시작 때 새 배치를 만든다.
         List<Task> tasks = taskRepository
                 .findAllBySimulationRun_IdOrderByRequestedAtAsc(simulationRunId);
 
         for (Task task : tasks) {
-            task.resetForReplay();
+            if (task.getStatus() == TaskStatus.PENDING
+                    || task.getStatus() == TaskStatus.ASSIGNED
+                    || task.getStatus() == TaskStatus.IN_PROGRESS) {
+                task.cancel();
+            }
             messagingTemplate.convertAndSend(TASK_TOPIC, new TaskResponse(task));
         }
 

@@ -32,6 +32,11 @@ public record RobotState(
         String serviceKind,
         Double serviceProgress,
         Boolean carryingLoad,
+        String waitingReason,
+        String waitingNodeCode,
+        Long blockingRobotId,
+        Long waitStartedAtMillis,
+        Long estimatedResumeAtMillis,
         LocalDateTime updatedAt
 ) {
     /**
@@ -54,6 +59,7 @@ public record RobotState(
                 null, null, null, null, null,
                 batteryLevel, status, currentTaskId,
                 null, status, null, null, false,
+                null, null, null, null, null,
                 updatedAt
         );
     }

@@ -62,11 +62,34 @@ public class LaroPlanClient {
             long replanAtSimTimeMs,
             LaroPlanRequest request
     ) {
+        return replan(
+                simulationRunId,
+                activePlanId,
+                activePlanVersion,
+                replanAtSimTimeMs,
+                request,
+                "NEW_ORDER"
+        );
+    }
+
+    public LaroPlanResponse replan(
+            Long simulationRunId,
+            String activePlanId,
+            Integer activePlanVersion,
+            long replanAtSimTimeMs,
+            LaroPlanRequest request,
+            String reason
+    ) {
         Map<String, Object> body = toAiRequest(request);
         body.put("active_plan_id", activePlanId);
         put(body, "active_plan_version", activePlanVersion);
         body.put("replan_at_sim_time_ms", replanAtSimTimeMs);
-        body.put("reason", "NEW_ORDER");
+        body.put(
+                "reason",
+                reason == null || reason.isBlank()
+                        ? "NEW_ORDER"
+                        : reason.trim().toUpperCase()
+        );
         body.put("activation_policy", "ALL_ROBOTS_READY");
 
         LaroPlanResponse response = restClient.post()

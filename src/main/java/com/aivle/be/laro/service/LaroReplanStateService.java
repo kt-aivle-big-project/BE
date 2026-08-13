@@ -2,6 +2,7 @@ package com.aivle.be.laro.service;
 
 import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
+import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
@@ -9,6 +10,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
@@ -44,6 +47,26 @@ public class LaroReplanStateService {
     public void restoreRunning(Long simulationRunId) {
         SimulationRun run = find(simulationRunId);
         run.finishReplanning();
+        broadcast(run);
+    }
+
+    @Transactional
+    public void pauseForHumanReview(Long simulationRunId) {
+        SimulationRun run = find(simulationRunId);
+        if (run.getStatus() == SimulationRunStatus.PAUSED) {
+            return;
+        }
+        run.pauseForHumanReview(LocalDateTime.now());
+        broadcast(run);
+    }
+
+    @Transactional
+    public void resumeFromHumanReview(Long simulationRunId) {
+        SimulationRun run = find(simulationRunId);
+        if (run.getStatus() != SimulationRunStatus.PAUSED) {
+            return;
+        }
+        run.resume();
         broadcast(run);
     }
 

@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -22,6 +23,8 @@ final class AiPlaybackContext {
     private final long makespanMillis;
     private final List<RobotTimeline> robots;
     private final Set<Long> taskIds;
+    private final int chargingThreshold;
+    private final Map<Long, Double> chargingPowerByNode;
 
     private volatile long clockMillis;
     private double carryMillis;
@@ -43,6 +46,38 @@ final class AiPlaybackContext {
             Set<Long> taskIds,
             double speed
     ) {
+        this(
+                simulationRunId,
+                warehouseId,
+                warehouseCode,
+                planId,
+                planVersion,
+                simulationId,
+                initialClockMillis,
+                makespanMillis,
+                robots,
+                taskIds,
+                speed,
+                20,
+                Map.of()
+        );
+    }
+
+    AiPlaybackContext(
+            Long simulationRunId,
+            Long warehouseId,
+            String warehouseCode,
+            String planId,
+            Integer planVersion,
+            String simulationId,
+            long initialClockMillis,
+            long makespanMillis,
+            List<RobotTimeline> robots,
+            Set<Long> taskIds,
+            double speed,
+            int chargingThreshold,
+            Map<Long, Double> chargingPowerByNode
+    ) {
         this.simulationRunId = simulationRunId;
         this.warehouseId = warehouseId;
         this.warehouseCode = warehouseCode;
@@ -54,6 +89,8 @@ final class AiPlaybackContext {
         this.robots = List.copyOf(robots);
         this.taskIds = Set.copyOf(taskIds);
         this.speed = speed <= 0 ? 1.0 : speed;
+        this.chargingThreshold = Math.max(0, Math.min(100, chargingThreshold));
+        this.chargingPowerByNode = Map.copyOf(chargingPowerByNode);
     }
 
     long advanceClock(long realMillis) {
@@ -125,6 +162,13 @@ final class AiPlaybackContext {
                 .applyHandover(handoverAtMillis, handoverNodeId, clockMillis);
     }
 
+    double chargingPowerAt(Long nodeId) {
+        if (nodeId == null) {
+            return 0.0;
+        }
+        return Math.max(0.0, chargingPowerByNode.getOrDefault(nodeId, 0.0));
+    }
+
     @Getter
     @Setter
     static final class RobotTimeline {
@@ -133,7 +177,9 @@ final class AiPlaybackContext {
         private volatile int cursor;
         private volatile boolean stepStarted;
         private volatile Long currentNodeId;
-        private int batteryLevel;
+        private double batteryLevel;
+        private final double moveBatteryRate;
+        private final double workBatteryRate;
         private RobotStatus status = RobotStatus.IDLE;
         private Long currentTaskId;
         private boolean carryingLoad;
@@ -141,6 +187,10 @@ final class AiPlaybackContext {
         private volatile Long handoverAtMillis;
         private volatile Long handoverNodeId;
         private volatile boolean held;
+        private boolean lowBatteryReplanRequested;
+        private boolean lowBatteryHold;
+        private long lowBatteryWaitStartedAtMillis;
+        private long lastChargeUpdateAtMillis = -1L;
 
         RobotTimeline(
                 Long robotId,
@@ -148,14 +198,40 @@ final class AiPlaybackContext {
                 Long currentNodeId,
                 int batteryLevel
         ) {
+            this(robotId, steps, currentNodeId, batteryLevel, 1.0, 1.0);
+        }
+
+        RobotTimeline(
+                Long robotId,
+                List<TimedStep> steps,
+                Long currentNodeId,
+                double batteryLevel,
+                Double moveBatteryRate,
+                Double workBatteryRate
+        ) {
             this.robotId = robotId;
             this.steps = List.copyOf(steps);
             this.currentNodeId = currentNodeId;
             this.batteryLevel = Math.max(0, Math.min(100, batteryLevel));
+            this.moveBatteryRate = nonNegative(moveBatteryRate);
+            this.workBatteryRate = nonNegative(workBatteryRate);
         }
 
         TimedStep currentStep() {
             return isFinished() ? null : steps.get(cursor);
+        }
+
+        Long nextMovementTargetNodeId() {
+            for (int index = cursor + 1; index < steps.size(); index++) {
+                TimedStep candidate = steps.get(index);
+                if (candidate.type() == StepType.MOVE) {
+                    return candidate.toNodeId();
+                }
+                if (candidate.type() == StepType.SERVICE) {
+                    return candidate.nodeId();
+                }
+            }
+            return currentNodeId;
         }
 
         void advanceStep() {
@@ -168,11 +244,88 @@ final class AiPlaybackContext {
         }
 
         void consumeMoveBattery() {
-            batteryLevel = Math.max(0, batteryLevel - 1);
+            batteryLevel = Math.max(0, batteryLevel - moveBatteryRate);
         }
 
         void consumeWorkBattery() {
-            batteryLevel = Math.max(0, batteryLevel - 1);
+            batteryLevel = Math.max(0, batteryLevel - workBatteryRate);
+        }
+
+        int getBatteryLevel() {
+            return (int) Math.round(batteryLevel);
+        }
+
+        boolean isFullyCharged() {
+            return batteryLevel >= 100.0;
+        }
+
+        void beginCharging(long stepStartAtMillis) {
+            lastChargeUpdateAtMillis = Math.max(0, stepStartAtMillis);
+            lowBatteryHold = false;
+            held = false;
+        }
+
+        void chargeUntil(long clockMillis, double chargingPowerPerMinute) {
+            if (lastChargeUpdateAtMillis < 0) {
+                lastChargeUpdateAtMillis = Math.max(0, clockMillis);
+                return;
+            }
+            long elapsedMillis = Math.max(0, clockMillis - lastChargeUpdateAtMillis);
+            lastChargeUpdateAtMillis = Math.max(lastChargeUpdateAtMillis, clockMillis);
+            if (elapsedMillis == 0 || chargingPowerPerMinute <= 0) {
+                return;
+            }
+            batteryLevel = Math.min(
+                    100.0,
+                    batteryLevel + chargingPowerPerMinute * elapsedMillis / 60_000.0
+            );
+        }
+
+        void finishCharging() {
+            batteryLevel = Math.min(100.0, batteryLevel);
+            lastChargeUpdateAtMillis = -1L;
+            lowBatteryReplanRequested = false;
+            lowBatteryHold = false;
+        }
+
+        boolean needsLowBatteryReplan(int threshold) {
+            if (stepStarted || lowBatteryReplanRequested || lowBatteryHold || isFinished()) {
+                return false;
+            }
+            TimedStep step = currentStep();
+            boolean chargeStartsHere = step != null
+                    && step.type() == StepType.SERVICE
+                    && "CHARGE".equalsIgnoreCase(step.serviceKind());
+            if (chargeStartsHere) {
+                return false;
+            }
+            if (batteryLevel <= 0) {
+                return true;
+            }
+            return batteryLevel <= threshold && !hasPendingCharge();
+        }
+
+        boolean hasPendingCharge() {
+            for (int index = cursor; index < steps.size(); index++) {
+                TimedStep candidate = steps.get(index);
+                if (candidate.type() == StepType.SERVICE
+                        && "CHARGE".equalsIgnoreCase(candidate.serviceKind())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void holdForLowBattery(long clockMillis) {
+            lowBatteryReplanRequested = true;
+            lowBatteryHold = true;
+            lowBatteryWaitStartedAtMillis = Math.max(0, clockMillis);
+            held = true;
+            status = RobotStatus.WAITING;
+        }
+
+        private static double nonNegative(Double value) {
+            return value == null || value < 0 ? 0.0 : value;
         }
 
         void requestInitialHandover(long clockMillis) {
@@ -208,13 +361,16 @@ final class AiPlaybackContext {
 
         void hold() {
             held = true;
-            status = RobotStatus.IDLE;
+            status = lowBatteryHold ? RobotStatus.WAITING : RobotStatus.IDLE;
         }
 
         void clearHandover() {
             handoverAtMillis = null;
             handoverNodeId = null;
-            held = false;
+            held = lowBatteryHold;
+            if (lowBatteryHold) {
+                status = RobotStatus.WAITING;
+            }
         }
     }
 
@@ -234,7 +390,34 @@ final class AiPlaybackContext {
             Long fromNodeId,
             Long toNodeId,
             Long taskId,
-            String serviceKind
+            String serviceKind,
+            String reason
     ) {
+        TimedStep(
+                String stepId,
+                int sequence,
+                StepType type,
+                long startAtMillis,
+                long endAtMillis,
+                Long nodeId,
+                Long fromNodeId,
+                Long toNodeId,
+                Long taskId,
+                String serviceKind
+        ) {
+            this(
+                    stepId,
+                    sequence,
+                    type,
+                    startAtMillis,
+                    endAtMillis,
+                    nodeId,
+                    fromNodeId,
+                    toNodeId,
+                    taskId,
+                    serviceKind,
+                    null
+            );
+        }
     }
 }
