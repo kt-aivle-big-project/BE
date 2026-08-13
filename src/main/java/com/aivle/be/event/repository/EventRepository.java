@@ -8,8 +8,13 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Collection;
 
 public interface EventRepository extends JpaRepository<Event, Long> {
+
+    List<Event> findAllByResolvedAtIsNullAndEventTypeIn(
+            Collection<com.aivle.be.event.entity.EventType> eventTypes
+    );
 
     @Modifying(flushAutomatically = true)
     @Query("update Event event set event.robot = null where event.robot.id = :robotId")

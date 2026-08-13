@@ -105,10 +105,7 @@ final class AiPlaybackContext {
         }
         for (RobotTimeline robot : robots) {
             synchronized (robot) {
-                if (!robot.isHeld()
-                        && !(robot.isStepStarted()
-                        && robot.currentStep() != null
-                        && robot.currentStep().type() == StepType.SERVICE)) {
+                if (!robot.isHeld()) {
                     return false;
                 }
             }

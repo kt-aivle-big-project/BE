@@ -383,6 +383,10 @@ public class RobotRuntime {
         return (int) Math.round(batteryLevel);
     }
 
+    void forceBatteryLevel(int batteryPercent) {
+        batteryLevel = clampBattery(batteryPercent);
+    }
+
     private void consumeBattery(double amount) {
         batteryLevel = Math.max(0, batteryLevel - amount);
     }

@@ -85,6 +85,23 @@ public class RedisSimulationRunStateStore implements SimulationRunStateStore {
                 redisTemplate.delete(stateKeys);
             }
             redisTemplate.delete(robotIdsKey(simulationRunId));
+
+            Set<String> edgeIds = redisTemplate.opsForSet().members(edgeIdsKey(simulationRunId));
+            if (edgeIds != null) {
+                for (String edgeId : edgeIds) {
+                    redisTemplate.delete(edgeStateKey(simulationRunId, edgeId));
+                    redisTemplate.delete(edgeEventsKey(simulationRunId, edgeId));
+                }
+            }
+            Set<String> eventIds = redisTemplate.opsForSet()
+                    .members(blockingEventIdsKey(simulationRunId));
+            if (eventIds != null) {
+                for (String eventId : eventIds) {
+                    redisTemplate.delete(eventEdgesKey(simulationRunId, eventId));
+                }
+            }
+            redisTemplate.delete(edgeIdsKey(simulationRunId));
+            redisTemplate.delete(blockingEventIdsKey(simulationRunId));
         } catch (DataAccessException exception) {
             throw storeUnavailable(exception);
         }
@@ -112,6 +129,26 @@ public class RedisSimulationRunStateStore implements SimulationRunStateStore {
 
     private String robotIdsKey(Long simulationRunId) {
         return RUN_PREFIX + simulationRunId + ":robots";
+    }
+
+    private String edgeIdsKey(Long runId) {
+        return RUN_PREFIX + runId + ":edges";
+    }
+
+    private String edgeStateKey(Long runId, String edgeId) {
+        return RUN_PREFIX + runId + ":edge:" + edgeId + ":state";
+    }
+
+    private String edgeEventsKey(Long runId, String edgeId) {
+        return RUN_PREFIX + runId + ":edge:" + edgeId + ":blocking-events";
+    }
+
+    private String blockingEventIdsKey(Long runId) {
+        return RUN_PREFIX + runId + ":blocking-events";
+    }
+
+    private String eventEdgesKey(Long runId, String eventId) {
+        return RUN_PREFIX + runId + ":event:" + eventId + ":blocked-edges";
     }
 
     private BusinessException storeUnavailable(DataAccessException exception) {

@@ -53,6 +53,7 @@ import java.util.Optional;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
@@ -1947,6 +1948,42 @@ public class SimulationPlaybackService {
         }
     }
 
+    /** Applies an externally reported battery level to the live playback owner. */
+    public boolean updateRobotBattery(
+            Long simulationRunId,
+            Long robotId,
+            int batteryLevel
+    ) {
+        int normalized = Math.max(0, Math.min(100, batteryLevel));
+        AiPlaybackContext aiContext = aiContexts.get(simulationRunId);
+        if (aiContext != null && robotId != null) {
+            for (AiPlaybackContext.RobotTimeline robot : aiContext.getRobots()) {
+                if (!robotId.equals(robot.getRobotId())) {
+                    continue;
+                }
+                robot.setBatteryLevel(normalized);
+                publishAi(aiContext, robot, robot.currentStep());
+                return true;
+            }
+        }
+
+        PlaybackContext context = contexts.get(simulationRunId);
+        if (context == null || robotId == null) {
+            return false;
+        }
+        synchronized (context) {
+            for (RobotRuntime robot : context.getRobots()) {
+                if (!robotId.equals(robot.getRobotId())) {
+                    continue;
+                }
+                robot.forceBatteryLevel(normalized);
+                publish(context, robot);
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * 재생 중인 시뮬레이션의 배속을 즉시 변경한다.
      *
@@ -2001,6 +2038,61 @@ public class SimulationPlaybackService {
                 context.getWarehouseCode(),
                 context.getSimulationId(),
                 context.getClockMillis()
+        );
+    }
+
+    /** Selects a remaining route node two to five MOVE hops ahead. */
+    public Optional<FutureRouteTarget> randomFutureRouteTarget(Long simulationRunId) {
+        AiPlaybackContext context = aiContexts.get(simulationRunId);
+        if (context == null) {
+            return Optional.empty();
+        }
+        List<FutureRouteTarget> candidates = new ArrayList<>();
+        for (AiPlaybackContext.RobotTimeline robot : context.getRobots()) {
+            if (robot.isFailed() || robot.isFinished()) {
+                continue;
+            }
+            List<AiPlaybackContext.TimedStep> futureMoves = robot.getSteps().stream()
+                    .skip(robot.getCursor())
+                    .filter(step -> step.type() == AiPlaybackContext.StepType.MOVE)
+                    .limit(6)
+                    .toList();
+            int endExclusive = Math.min(5, futureMoves.size());
+            // index 0 is the immediate destination; exclude it.
+            for (int moveIndex = 1; moveIndex < endExclusive; moveIndex++) {
+                AiPlaybackContext.TimedStep step = futureMoves.get(moveIndex);
+                Long taskId = step.taskId() != null
+                        ? step.taskId()
+                        : robot.getCurrentTaskId();
+                boolean blockableRouteNode = step.toNodeId() != null
+                        && warehouseNodeRepository.findByIdAndActiveTrue(step.toNodeId())
+                                .map(WarehouseNode::getNodeType)
+                                .map(type -> type == NodeType.ROUTE
+                                        || type == NodeType.ROUTE_CHARGE_JUNCTION)
+                                .orElse(false);
+                if (blockableRouteNode) {
+                    candidates.add(new FutureRouteTarget(
+                            robot.getRobotId(), taskId, step.toNodeId()));
+                }
+            }
+        }
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(candidates.get(
+                ThreadLocalRandom.current().nextInt(candidates.size())));
+    }
+
+    public boolean isNodeOnRemainingAiRoute(Long simulationRunId, Long nodeId) {
+        AiPlaybackContext context = aiContexts.get(simulationRunId);
+        if (context == null || nodeId == null) {
+            return false;
+        }
+        return context.getRobots().stream().anyMatch(robot ->
+                robot.getSteps().stream()
+                        .skip(robot.getCursor())
+                        .filter(step -> step.type() == AiPlaybackContext.StepType.MOVE)
+                        .anyMatch(step -> nodeId.equals(step.toNodeId()))
         );
     }
 
@@ -2077,6 +2169,8 @@ public class SimulationPlaybackService {
             String simulationId,
             long clockMillis
     ) {}
+
+    public record FutureRouteTarget(Long robotId, Long taskId, Long nodeId) {}
 
     private record PreparedAiPlan(
             AiPlaybackContext context,
