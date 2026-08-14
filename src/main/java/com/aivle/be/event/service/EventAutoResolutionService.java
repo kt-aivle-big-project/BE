@@ -88,7 +88,8 @@ public class EventAutoResolutionService {
     private boolean replacementPlanReady(Event event, SimulationRun run) {
         var status = commandCycleService.status(run.getId());
         return status.state() == CycleState.COMPLETE
-                && "REPLAN".equalsIgnoreCase(status.planningMode())
+                && status.planningMode() != null
+                && status.planningMode().endsWith("REPLAN")
                 && status.updatedAt() != null
                 && status.updatedAt().isAfter(
                         event.getOccurredAt().atZone(ZoneId.systemDefault()).toInstant());

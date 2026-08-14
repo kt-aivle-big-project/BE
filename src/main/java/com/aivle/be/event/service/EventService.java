@@ -240,8 +240,6 @@ public class EventService {
 
         Long simulationRunId = run.getId();
         long executionVersion = run.getExecutionVersion();
-        String userCommand = eventCommand(event);
-
         Runnable trigger = () -> {
             boolean quiescingRequested = false;
             try {
@@ -249,10 +247,10 @@ public class EventService {
                     playbackService.beginQuiescing(simulationRunId);
                     quiescingRequested = true;
                 }
-                commandCycleService.triggerUserCommand(
+                commandCycleService.triggerRuntimeReplan(
                         simulationRunId,
                         executionVersion,
-                        userCommand
+                        replanReason(event.getEventType())
                 );
             } catch (BusinessException exception) {
                 if (quiescingRequested) {
@@ -405,10 +403,14 @@ public class EventService {
                         == com.aivle.be.warehousenode.domain.NodeType.ROUTE_CHARGE_JUNCTION);
     }
 
-    private String eventCommand(Event event) {
-        return "현재 Redis에 반영된 로봇 상태와 런타임 경로 제약을 권위값으로 "
-                + "사용하여 남은 작업을 자동 재계획해 주세요. 별도의 운영자 확인이 "
-                + "필요하지 않으면 즉시 실행 가능한 계획을 생성해 주세요.";
+    private String replanReason(EventType eventType) {
+        return switch (eventType) {
+            case PATH_BLOCKED -> "EDGE_BLOCKED";
+            case LOW_BATTERY -> "LOW_BATTERY";
+            case TASK_FAILED -> "ROBOT_FAULT";
+            case COLLISION_RISK -> "POLICY_CHANGE";
+            case REPLAN_TRIGGERED -> "NEW_ORDER";
+        };
     }
 
     private Event findEventOrThrow(Long eventId) {

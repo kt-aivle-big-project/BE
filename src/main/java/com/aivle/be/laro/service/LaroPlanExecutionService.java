@@ -167,13 +167,24 @@ public class LaroPlanExecutionService {
 
         Map<String, Long> aiTaskToBeTask = new HashMap<>();
         for (LaroPlanRequest.StructuredOperation operation : requestedOperations.values()) {
-            Task task = findOrCreateTask(
-                    simulationRunId,
-                    run,
-                    operation,
-                    logicalOperations.get(operation.operationId()),
-                    plan
-            );
+            Task task;
+            try {
+                task = findOrCreateTask(
+                        simulationRunId,
+                        run,
+                        operation,
+                        logicalOperations.get(operation.operationId()),
+                        plan
+                );
+            } catch (BusinessException exception) {
+                throw new IllegalStateException(
+                        "LARO_PLAN_OPERATION_MAPPING_FAILED:operationId="
+                                + operation.operationId()
+                                + ":operationType=" + operation.operationType()
+                                + ":cause=" + exception.getErrorCode().name(),
+                        exception
+                );
+            }
             if (task == null) {
                 continue;
             }
@@ -314,6 +325,14 @@ public class LaroPlanExecutionService {
             Integer rackLevel
     ) {
         if (task.getTaskType() != TaskType.INBOUND) {
+            return;
+        }
+        // A runtime replan may change the route but must not silently change
+        // the physical putaway destination already bound to an existing task.
+        // The original rack and level remain the business authority while the
+        // AI recalculates only the executable path around runtime constraints.
+        if (task.getEndNode() != null
+                && task.getEndNode().getNodeType() == NodeType.RACK_STORAGE) {
             return;
         }
         WarehouseNode rackNode = resolveEndNode(

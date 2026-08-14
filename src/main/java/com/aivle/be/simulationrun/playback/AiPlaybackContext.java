@@ -302,15 +302,21 @@ final class AiPlaybackContext {
             if (batteryLevel <= 0) {
                 return true;
             }
-            return batteryLevel <= threshold && !hasPendingCharge();
+            return batteryLevel <= threshold && !canReachPendingCharge();
         }
 
-        boolean hasPendingCharge() {
+        boolean canReachPendingCharge() {
+            double requiredBattery = 0.0;
             for (int index = cursor; index < steps.size(); index++) {
                 TimedStep candidate = steps.get(index);
                 if (candidate.type() == StepType.SERVICE
                         && "CHARGE".equalsIgnoreCase(candidate.serviceKind())) {
-                    return true;
+                    return batteryLevel > requiredBattery;
+                }
+                if (candidate.type() == StepType.MOVE) {
+                    requiredBattery += moveBatteryRate;
+                } else if (candidate.type() == StepType.SERVICE) {
+                    requiredBattery += workBatteryRate;
                 }
             }
             return false;

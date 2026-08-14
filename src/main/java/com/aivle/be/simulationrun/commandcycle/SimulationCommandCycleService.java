@@ -177,6 +177,32 @@ public class SimulationCommandCycleService {
         return runtime.snapshot();
     }
 
+    /** Runtime incident replan that reuses the active operation set. */
+    public SimulationCommandCycleStatusResponse triggerRuntimeReplan(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            String reason
+    ) {
+        SimulationRun run = findRun(simulationRunId);
+        if (run.getStatus() != SimulationRunStatus.RUNNING) {
+            throw new BusinessException(ErrorCode.SIMULATION_RUN_NOT_RUNNING);
+        }
+        if (run.getExecutionVersion() != expectedExecutionVersion) {
+            throw new StaleSimulationExecutionException(
+                    simulationRunId, expectedExecutionVersion, run.getExecutionVersion());
+        }
+        CycleRuntime runtime = runtimes.get(simulationRunId);
+        if (runtime == null) {
+            throw new BusinessException(ErrorCode.LARO_PLAN_NOT_EXECUTABLE);
+        }
+        Long cycleMinute = runtime.acceptRuntimeReplan(reason);
+        if (cycleMinute == null) {
+            throw new BusinessException(ErrorCode.REOPTIMIZATION_ALREADY_IN_PROGRESS);
+        }
+        dispatchIfAccepted(runtime, cycleMinute);
+        return runtime.snapshot();
+    }
+
     public SimulationCommandCycleStatusResponse configure(
             Long simulationRunId,
             FulfillmentCommandGenerateRequest request
@@ -442,8 +468,8 @@ public class SimulationCommandCycleService {
             runtime.requireActive();
 
             runtime.begin(CycleState.GENERATING, null);
-            boolean lowBatteryCycle = "LOW_BATTERY".equals(runtime.replanReason());
-            FulfillmentCommandGenerateResponse generated = lowBatteryCycle
+            boolean existingWorkReplan = !"NEW_ORDER".equals(runtime.replanReason());
+            FulfillmentCommandGenerateResponse generated = existingWorkReplan
                     ? null
                     : commandGenerationService.generate(
                             simulationRunId,
@@ -452,7 +478,7 @@ public class SimulationCommandCycleService {
             if (generated != null) {
                 runtime.generated(generated);
             }
-            LaroPlanRequest planRequest = lowBatteryCycle
+            LaroPlanRequest planRequest = existingWorkReplan
                     ? runtime.lowBatteryPlanRequest()
                     : withUserCommand(
                             generated.planRequest(),
@@ -462,19 +488,18 @@ public class SimulationCommandCycleService {
 
             runtime.requireActive();
             boolean replan = playbackService.hasActiveAiPlan(simulationRunId);
-            boolean lowBatteryReplan = replan
-                    && lowBatteryCycle;
-            String planningMode = lowBatteryReplan
-                    ? "LOW_BATTERY_REPLAN"
+            boolean runtimeReplan = replan && existingWorkReplan;
+            String planningMode = runtimeReplan
+                    ? runtime.replanReason() + "_REPLAN"
                     : replan ? "REPLAN" : "INITIAL_PLAN";
             runtime.begin(replan ? CycleState.REPLANNING : CycleState.PLANNING, planningMode);
 
-            LaroPlanResponse response = lowBatteryReplan
+            LaroPlanResponse response = runtimeReplan
                     ? laroPlanService.replan(
                             simulationRunId,
                             runtime.executionVersion(),
                             planRequest,
-                            "LOW_BATTERY"
+                            runtime.replanReason()
                     )
                     : replan ? laroPlanService.replan(
                             simulationRunId,
@@ -710,6 +735,15 @@ public class SimulationCommandCycleService {
             long minute = simulatedTimeMs / intervalMs;
             lastTriggeredMinute = Math.max(lastTriggeredMinute, minute);
             return accept(minute, null, "LOW_BATTERY");
+        }
+
+        synchronized Long acceptRuntimeReplan(String reason) {
+            if (!active || inFlight || lastPlanRequest == null) {
+                return null;
+            }
+            long minute = simulatedTimeMs / intervalMs;
+            lastTriggeredMinute = Math.max(lastTriggeredMinute, minute);
+            return accept(minute, null, reason);
         }
 
         private Long accept(
