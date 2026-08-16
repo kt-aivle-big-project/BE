@@ -295,19 +295,28 @@ final class AiPlaybackContext {
             if (stepStarted || lowBatteryReplanRequested || lowBatteryHold || isFinished()) {
                 return false;
             }
-            TimedStep step = currentStep();
-            boolean chargeStartsHere = step != null
-                    && step.type() == StepType.SERVICE
-                    && "CHARGE".equalsIgnoreCase(step.serviceKind());
-            if (chargeStartsHere) {
-                return false;
-            }
             if (batteryLevel <= 0) {
                 return true;
             }
-            // 경로 뒤쪽에 충전 작업이 있더라도 그곳까지 안전하게 도달한다는 보장은 없다.
-            // 현재 단계가 바로 CHARGE인 경우만 제외하고, 기준 이하라면 안전 노드에서 재계획한다.
-            return batteryLevel <= threshold;
+            if (batteryLevel > threshold) {
+                return false;
+            }
+            // 재계획으로 이미 MOVE/WAIT -> CHARGE 직접 복귀 경로를 받은 로봇은
+            // 같은 저배터리 조건으로 다시 멈추지 않고 충전소까지 이동해야 한다.
+            // 반대로 CHARGE 전에 PICKUP/DROP 같은 SERVICE가 남아 있으면
+            // 해당 업무를 계속 수행하지 않도록 다시 안전 재계획 대상으로 둔다.
+            return !isDirectChargeRecoveryRoute();
+        }
+
+        private boolean isDirectChargeRecoveryRoute() {
+            for (int index = cursor; index < steps.size(); index++) {
+                TimedStep candidate = steps.get(index);
+                if (candidate.type() != StepType.SERVICE) {
+                    continue;
+                }
+                return "CHARGE".equalsIgnoreCase(candidate.serviceKind());
+            }
+            return false;
         }
 
         void holdForLowBattery(long clockMillis) {

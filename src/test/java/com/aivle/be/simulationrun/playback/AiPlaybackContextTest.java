@@ -130,7 +130,7 @@ class AiPlaybackContextTest {
     }
 
     @Test
-    void lowBatteryRequestsReplanWhenChargeIsLaterButNotWhenChargingStartsNow() {
+    void lowBatteryAllowsDirectChargeRecoveryButReplansWhenBusinessWorkRemains() {
         AiPlaybackContext.RobotTimeline withoutCharge = new AiPlaybackContext.RobotTimeline(
                 10001L,
                 List.of(new AiPlaybackContext.TimedStep(
@@ -140,7 +140,7 @@ class AiPlaybackContextTest {
                 10L,
                 20
         );
-        AiPlaybackContext.RobotTimeline chargeLater = new AiPlaybackContext.RobotTimeline(
+        AiPlaybackContext.RobotTimeline directChargeRecovery = new AiPlaybackContext.RobotTimeline(
                 10002L,
                 List.of(
                         new AiPlaybackContext.TimedStep(
@@ -155,19 +155,59 @@ class AiPlaybackContextTest {
                 10L,
                 20
         );
-        AiPlaybackContext.RobotTimeline chargingNow = new AiPlaybackContext.RobotTimeline(
+        AiPlaybackContext.RobotTimeline businessBeforeCharge = new AiPlaybackContext.RobotTimeline(
                 10003L,
+                List.of(
+                        new AiPlaybackContext.TimedStep(
+                                "MOVE-3", 1, AiPlaybackContext.StepType.MOVE,
+                                0, 1_000, null, 10L, 11L, null, null
+                        ),
+                        new AiPlaybackContext.TimedStep(
+                                "PICKUP-3", 2, AiPlaybackContext.StepType.SERVICE,
+                                1_000, 6_000, 11L, null, null, 301L, "PICKUP"
+                        ),
+                        new AiPlaybackContext.TimedStep(
+                                "MOVE-4", 3, AiPlaybackContext.StepType.MOVE,
+                                6_000, 7_000, null, 11L, 12L, null, null
+                        ),
+                        new AiPlaybackContext.TimedStep(
+                                "CHARGE-3", 4, AiPlaybackContext.StepType.SERVICE,
+                                7_000, 67_000, 12L, null, null, null, "CHARGE"
+                        )
+                ),
+                10L,
+                20
+        );
+        AiPlaybackContext.RobotTimeline chargingNow = new AiPlaybackContext.RobotTimeline(
+                10004L,
                 List.of(new AiPlaybackContext.TimedStep(
-                        "CHARGE-3", 1, AiPlaybackContext.StepType.SERVICE,
+                        "CHARGE-4", 1, AiPlaybackContext.StepType.SERVICE,
                         0, 60_000, 12L, null, null, null, "CHARGE"
                 )),
                 12L,
                 20
         );
+        AiPlaybackContext.RobotTimeline depletedOnRecoveryRoute = new AiPlaybackContext.RobotTimeline(
+                10005L,
+                List.of(
+                        new AiPlaybackContext.TimedStep(
+                                "MOVE-5", 1, AiPlaybackContext.StepType.MOVE,
+                                0, 1_000, null, 10L, 12L, null, null
+                        ),
+                        new AiPlaybackContext.TimedStep(
+                                "CHARGE-5", 2, AiPlaybackContext.StepType.SERVICE,
+                                1_000, 61_000, 12L, null, null, null, "CHARGE"
+                        )
+                ),
+                10L,
+                0
+        );
 
         assertTrue(withoutCharge.needsLowBatteryReplan(20));
-        assertTrue(chargeLater.needsLowBatteryReplan(20));
+        assertFalse(directChargeRecovery.needsLowBatteryReplan(20));
+        assertTrue(businessBeforeCharge.needsLowBatteryReplan(20));
         assertFalse(chargingNow.needsLowBatteryReplan(20));
+        assertTrue(depletedOnRecoveryRoute.needsLowBatteryReplan(20));
 
         withoutCharge.holdForLowBattery(3_000);
         assertTrue(withoutCharge.isHeld());

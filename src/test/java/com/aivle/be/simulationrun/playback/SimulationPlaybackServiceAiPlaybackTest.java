@@ -87,7 +87,7 @@ class SimulationPlaybackServiceAiPlaybackTest {
     }
 
     @Test
-    void injectedLowBatteryCanTargetRobotWithChargeLaterInPlan() {
+    void injectedLowBatteryDoesNotQueueAnotherReplanWhenRobotAlreadyReturnsToCharge() {
         Fixture fixture = fixture();
         AiPlaybackContext context = movingThenChargingContext(1L, 101L, 10L, 20L);
         AiPlaybackContext.RobotTimeline robot = context.getRobots().get(0);
@@ -101,9 +101,31 @@ class SimulationPlaybackServiceAiPlaybackTest {
 
         assertThat(result.robotId()).isEqualTo(101L);
         fixture.service().tick(100L);
-        assertThat(fixture.service().pendingLowBatteryReplanRequests())
-                .singleElement()
-                .satisfies(request -> assertThat(request.robotId()).isEqualTo(101L));
+        assertThat(fixture.service().pendingLowBatteryReplanRequests()).isEmpty();
+        assertThat(robot.getStatus()).isEqualTo(RobotStatus.MOVING);
+    }
+
+    @Test
+    void lowBatteryRecoveryRouteMovesToChargerAndIncreasesBattery() {
+        Fixture fixture = fixture();
+        AiPlaybackContext context = lowBatteryRecoveryContext(1L, 101L, 10L, 20L);
+        AiPlaybackContext.RobotTimeline robot = context.getRobots().get(0);
+        installContext(fixture.service(), context);
+        cacheNodeCodes(fixture.service(), Map.of(10L, "C01", 20L, "CH01"));
+
+        fixture.service().tick(100L);
+        assertThat(robot.getStatus()).isEqualTo(RobotStatus.MOVING);
+        assertThat(fixture.service().pendingLowBatteryReplanRequests()).isEmpty();
+
+        fixture.service().tick(900L);
+        assertThat(robot.getStatus()).isEqualTo(RobotStatus.CHARGING);
+        assertThat(robot.getCurrentNodeId()).isEqualTo(20L);
+        assertThat(robot.getBatteryLevel()).isEqualTo(19);
+
+        fixture.service().tick(1_000L);
+        assertThat(robot.getStatus()).isEqualTo(RobotStatus.CHARGING);
+        assertThat(robot.getBatteryLevel()).isEqualTo(20);
+        assertThat(fixture.service().pendingLowBatteryReplanRequests()).isEmpty();
     }
 
     @Test
@@ -244,7 +266,6 @@ class SimulationPlaybackServiceAiPlaybackTest {
                 null,
                 null,
                 null,
-                null,
                 "CHARGE"
         );
         AiPlaybackContext.RobotTimeline robot = new AiPlaybackContext.RobotTimeline(
@@ -265,6 +286,59 @@ class SimulationPlaybackServiceAiPlaybackTest {
                 List.of(robot),
                 Set.of(),
                 1.0
+        );
+    }
+
+    private AiPlaybackContext lowBatteryRecoveryContext(
+            Long runId,
+            Long robotId,
+            Long fromNodeId,
+            Long chargingNodeId
+    ) {
+        AiPlaybackContext.TimedStep move = new AiPlaybackContext.TimedStep(
+                "MOVE-TO-CHARGE-" + robotId,
+                0,
+                AiPlaybackContext.StepType.MOVE,
+                0L,
+                1_000L,
+                null,
+                fromNodeId,
+                chargingNodeId,
+                null,
+                null
+        );
+        AiPlaybackContext.TimedStep charge = new AiPlaybackContext.TimedStep(
+                "CHARGE-" + robotId,
+                1,
+                AiPlaybackContext.StepType.SERVICE,
+                1_000L,
+                61_000L,
+                chargingNodeId,
+                null,
+                null,
+                null,
+                "CHARGE"
+        );
+        AiPlaybackContext.RobotTimeline robot = new AiPlaybackContext.RobotTimeline(
+                robotId,
+                List.of(move, charge),
+                fromNodeId,
+                20
+        );
+        return new AiPlaybackContext(
+                runId,
+                2L,
+                "WH-002",
+                "PLAN-LOW-BATTERY-" + runId,
+                2,
+                "BE-RUN-" + runId,
+                0L,
+                61_000L,
+                List.of(robot),
+                Set.of(),
+                1.0,
+                20,
+                Map.of(chargingNodeId, 60.0)
         );
     }
 
