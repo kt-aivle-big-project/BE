@@ -70,6 +70,23 @@ class SimulationPlaybackServiceAiPlaybackTest {
     }
 
     @Test
+    void injectedLowBatterySupportsZeroPercentChargingThreshold() {
+        Fixture fixture = fixture();
+        AiPlaybackContext context = movingContext(1L, 101L, 10L, 20L);
+        AiPlaybackContext.RobotTimeline robot = context.getRobots().get(0);
+        robot.setCurrentTaskId(301L);
+        robot.setStatus(RobotStatus.MOVING);
+        installContext(fixture.service(), context);
+        cacheNodeCodes(fixture.service(), Map.of(10L, "C01", 20L, "RJ01"));
+
+        SimulationPlaybackService.LowBatteryInjection result =
+                fixture.service().injectRandomActiveRobotLowBattery(1L, 0);
+
+        assertThat(result.batteryLevel()).isZero();
+        assertThat(robot.getBatteryLevel()).isZero();
+    }
+
+    @Test
     void ordinaryMovePublishesNullWaitingTimes() {
         Fixture fixture = fixture();
         installContext(fixture.service(), movingContext(1L, 101L, 10L, 20L));

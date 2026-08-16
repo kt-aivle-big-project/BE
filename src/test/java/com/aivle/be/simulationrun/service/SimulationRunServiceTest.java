@@ -243,6 +243,7 @@ class SimulationRunServiceTest {
     void lowBatteryEventMutatesOwnedRunningPlaybackContext() {
         SimulationRun run = org.mockito.Mockito.mock(SimulationRun.class);
         when(run.getStatus()).thenReturn(SimulationRunStatus.RUNNING);
+        when(run.getChargingThreshold()).thenReturn(15);
         when(run.isOwnedByGuest(GUEST_A)).thenReturn(true);
         when(simulationRunRepository.findById(10L)).thenReturn(Optional.of(run));
         SimulationPlaybackService.LowBatteryInjection injection =
@@ -250,13 +251,13 @@ class SimulationRunServiceTest {
                         10L,
                         101L,
                         84,
-                        20,
-                        20,
+                        15,
+                        15,
                         301L,
                         com.aivle.be.robotstate.domain.RobotStatus.MOVING,
                         12_000L
                 );
-        when(simulationPlaybackService.injectRandomActiveRobotLowBattery(10L, 20))
+        when(simulationPlaybackService.injectRandomActiveRobotLowBattery(10L, 15))
                 .thenReturn(injection);
 
         var response = simulationRunService.injectLowBatteryEvent(
@@ -266,8 +267,8 @@ class SimulationRunServiceTest {
 
         assertThat(response.robotId()).isEqualTo(101L);
         assertThat(response.previousBatteryLevel()).isEqualTo(84);
-        assertThat(response.batteryLevel()).isEqualTo(20);
-        verify(simulationPlaybackService).injectRandomActiveRobotLowBattery(10L, 20);
+        assertThat(response.batteryLevel()).isEqualTo(15);
+        verify(simulationPlaybackService).injectRandomActiveRobotLowBattery(10L, 15);
     }
 
     @Test

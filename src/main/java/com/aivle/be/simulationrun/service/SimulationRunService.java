@@ -458,7 +458,7 @@ public class SimulationRunService {
     }
 
     /**
-     * 작업 중인 AI 로봇 한 대의 playback 배터리를 20%로 낮춘다.
+     * 작업 중인 AI 로봇 한 대의 playback 배터리를 현재 실행의 충전 기준까지 낮춘다.
      *
      * Redis만 수정하면 다음 playback tick이 이전 값을 다시 저장하므로,
      * 반드시 playback의 권위 상태를 먼저 변경하고 그 상태를 발행한다.
@@ -472,10 +472,14 @@ public class SimulationRunService {
             throw new BusinessException(ErrorCode.SIMULATION_RUN_NOT_RUNNING);
         }
 
+        int chargingThreshold = run.getChargingThreshold() == null
+                ? 20
+                : run.getChargingThreshold();
+
         return SimulationRunLowBatteryEventResponse.from(
                 simulationPlaybackService.injectRandomActiveRobotLowBattery(
                         simulationRunId,
-                        20
+                        chargingThreshold
                 )
         );
     }

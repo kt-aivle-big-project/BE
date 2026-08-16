@@ -2149,7 +2149,7 @@ public class SimulationPlaybackService {
             throw new BusinessException(ErrorCode.LOW_BATTERY_EVENT_NOT_AVAILABLE);
         }
 
-        int batteryLevel = Math.max(1, Math.min(100, requestedBatteryLevel));
+        int batteryLevel = Math.max(0, Math.min(100, requestedBatteryLevel));
         List<AiPlaybackContext.RobotTimeline> candidates = new ArrayList<>(
                 context.getRobots().stream()
                         .filter(robot -> isLowBatteryInjectionCandidate(robot, batteryLevel))
