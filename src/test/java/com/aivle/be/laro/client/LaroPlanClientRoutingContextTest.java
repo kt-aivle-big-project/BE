@@ -1,6 +1,7 @@
 package com.aivle.be.laro.client;
 
 import com.aivle.be.laro.dto.LaroPlanRequest;
+import com.aivle.be.laro.dto.LaroLowBatteryContext;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
@@ -37,5 +38,31 @@ class LaroPlanClientRoutingContextTest {
                 .containsEntry("unfinished_operation_count", 4)
                 .containsEntry("eligible_robot_count", 3)
                 .containsEntry("source", "TEST");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void serializesLowBatterySafeStopStateWithAiSnakeCaseContract() throws Exception {
+        LaroLowBatteryContext context = new LaroLowBatteryContext(
+                225L, 20, 20, 103L, "A03", 2792L, false, 12_500L
+        );
+        Method method = LaroPlanClient.class.getDeclaredMethod(
+                "toAiLowBatteryContext", LaroLowBatteryContext.class
+        );
+        method.setAccessible(true);
+
+        Map<String, Object> body = (Map<String, Object>) method.invoke(null, context);
+
+        assertThat(body)
+                .containsEntry("status", "LOW_BATTERY")
+                .containsEntry("robot_id", "R225")
+                .containsEntry("robot_numeric_id", 225L)
+                .containsEntry("battery_pct", 20)
+                .containsEntry("charging_threshold_pct", 20)
+                .containsEntry("current_node", "A03")
+                .containsEntry("current_node_numeric_id", 103L)
+                .containsEntry("current_task_id", 2792L)
+                .containsEntry("carrying_load", false)
+                .containsEntry("stopped_at_sim_time_ms", 12_500L);
     }
 }

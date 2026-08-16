@@ -10,6 +10,7 @@ import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
 import com.aivle.be.laro.dto.LaroHumanReviewRequest;
+import com.aivle.be.laro.dto.LaroLowBatteryContext;
 import com.aivle.be.laro.service.LaroPlanService;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
@@ -190,7 +191,9 @@ class SimulationCommandCycleServiceTest {
         when(playbackService.hasActiveAiPlan(1L)).thenReturn(false, true);
         when(laroPlanService.plan(eq(1L), eq(2L), any()))
                 .thenReturn(mock(LaroPlanResponse.class));
-        when(laroPlanService.replan(eq(1L), eq(2L), any(), eq("LOW_BATTERY")))
+        when(laroPlanService.replan(
+                eq(1L), eq(2L), any(), eq("LOW_BATTERY"), any()
+        ))
                 .thenReturn(mock(LaroPlanResponse.class));
         doAnswer(invocation -> {
             invocation.<Runnable>getArgument(0).run();
@@ -200,14 +203,22 @@ class SimulationCommandCycleServiceTest {
         service.start(1L);
         when(playbackService.pendingLowBatteryReplanRequests()).thenReturn(List.of(
                 new SimulationPlaybackService.LowBatteryReplanRequest(
-                        1L, 55L, 20, 20
+                        1L, 55L, 20, 20, 10L, "C01", 2792L, false, 1_250L
                 )
         ));
 
         service.tick();
 
         verify(playbackService).acknowledgeLowBatteryReplanRequest(1L, 55L);
-        verify(laroPlanService).replan(eq(1L), eq(2L), any(), eq("LOW_BATTERY"));
+        ArgumentCaptor<LaroLowBatteryContext> contextCaptor =
+                ArgumentCaptor.forClass(LaroLowBatteryContext.class);
+        verify(laroPlanService).replan(
+                eq(1L), eq(2L), any(), eq("LOW_BATTERY"), contextCaptor.capture()
+        );
+        assertEquals(55L, contextCaptor.getValue().robotId());
+        assertEquals("C01", contextCaptor.getValue().currentNodeCode());
+        assertEquals(2792L, contextCaptor.getValue().currentTaskId());
+        assertEquals(1_250L, contextCaptor.getValue().stoppedAtSimTimeMs());
         verify(commandGenerationService, times(1)).generate(eq(1L), any());
         assertEquals(
                 "LOW_BATTERY_REPLAN",

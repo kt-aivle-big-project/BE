@@ -60,6 +60,12 @@ class SimulationPlaybackServiceAiPlaybackTest {
                     assertThat(request.simulationRunId()).isEqualTo(1L);
                     assertThat(request.robotId()).isEqualTo(101L);
                     assertThat(request.batteryLevel()).isEqualTo(20);
+                    assertThat(request.chargingThreshold()).isEqualTo(20);
+                    assertThat(request.currentNodeId()).isEqualTo(10L);
+                    assertThat(request.currentNodeCode()).isEqualTo("C01");
+                    assertThat(request.currentTaskId()).isEqualTo(301L);
+                    assertThat(request.carryingLoad()).isFalse();
+                    assertThat(request.stoppedAtSimTimeMs()).isEqualTo(100L);
                 });
         assertThat(robot.isLowBatteryHold()).isTrue();
 

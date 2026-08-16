@@ -10,6 +10,7 @@ import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
 import com.aivle.be.laro.dto.LaroHumanReviewRequest;
 import com.aivle.be.laro.dto.LaroHumanReviewResponse;
+import com.aivle.be.laro.dto.LaroLowBatteryContext;
 import com.aivle.be.laro.service.LaroPlanService;
 import com.aivle.be.laro.service.StaleSimulationExecutionException;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
@@ -383,7 +384,7 @@ public class SimulationCommandCycleService {
                             true
                     )
             );
-            Long cycleMinute = runtime.acceptLowBatteryReplan();
+            Long cycleMinute = runtime.acceptLowBatteryReplan(request);
             if (cycleMinute == null) {
                 continue;
             }
@@ -400,11 +401,15 @@ public class SimulationCommandCycleService {
                 continue;
             }
             log.info(
-                    "[command-cycle] runId={}, robotId={}, battery={}%, threshold={}%: LOW_BATTERY Rule replan accepted",
+                    "[command-cycle] runId={}, robotId={}, battery={}%, threshold={}%, node={}, taskId={}, carryingLoad={}, stoppedAt={}ms: LOW_BATTERY Rule replan accepted",
                     request.simulationRunId(),
                     request.robotId(),
                     request.batteryLevel(),
-                    request.chargingThreshold()
+                    request.chargingThreshold(),
+                    request.currentNodeCode(),
+                    request.currentTaskId(),
+                    request.carryingLoad(),
+                    request.stoppedAtSimTimeMs()
             );
             dispatchIfAccepted(runtime, cycleMinute);
         }
@@ -474,7 +479,8 @@ public class SimulationCommandCycleService {
                             simulationRunId,
                             runtime.executionVersion(),
                             planRequest,
-                            "LOW_BATTERY"
+                            "LOW_BATTERY",
+                            runtime.lowBatteryContext()
                     )
                     : replan ? laroPlanService.replan(
                             simulationRunId,
@@ -602,6 +608,7 @@ public class SimulationCommandCycleService {
         private FulfillmentCommandGenerateRequest activeGenerationRequest;
         private String cycleUserCommand;
         private String replanReason = "NEW_ORDER";
+        private LaroLowBatteryContext lowBatteryContext;
         private FulfillmentCommandGenerateResponse generated;
         private LaroPlanRequest activePlanRequest;
         private LaroPlanRequest lastPlanRequest;
@@ -655,6 +662,10 @@ public class SimulationCommandCycleService {
             return replanReason;
         }
 
+        synchronized LaroLowBatteryContext lowBatteryContext() {
+            return lowBatteryContext;
+        }
+
         synchronized void configure(FulfillmentCommandGenerateRequest request) {
             generationRequest = request == null
                     ? FulfillmentCommandGenerateRequest.automatic()
@@ -703,13 +714,26 @@ public class SimulationCommandCycleService {
             return accept(minute, userCommand, "NEW_ORDER");
         }
 
-        synchronized Long acceptLowBatteryReplan() {
+        synchronized Long acceptLowBatteryReplan(
+                SimulationPlaybackService.LowBatteryReplanRequest request
+        ) {
             if (!active || inFlight) {
                 return null;
             }
             long minute = simulatedTimeMs / intervalMs;
             lastTriggeredMinute = Math.max(lastTriggeredMinute, minute);
-            return accept(minute, null, "LOW_BATTERY");
+            Long accepted = accept(minute, null, "LOW_BATTERY");
+            lowBatteryContext = new LaroLowBatteryContext(
+                    request.robotId(),
+                    request.batteryLevel(),
+                    request.chargingThreshold(),
+                    request.currentNodeId(),
+                    request.currentNodeCode(),
+                    request.currentTaskId(),
+                    request.carryingLoad(),
+                    request.stoppedAtSimTimeMs()
+            );
+            return accepted;
         }
 
         private Long accept(
@@ -725,6 +749,7 @@ public class SimulationCommandCycleService {
             replanReason = nextReplanReason == null || nextReplanReason.isBlank()
                     ? "NEW_ORDER"
                     : nextReplanReason;
+            lowBatteryContext = null;
             generated = null;
             activePlanRequest = null;
             planResponse = null;

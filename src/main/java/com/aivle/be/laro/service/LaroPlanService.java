@@ -8,6 +8,7 @@ import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
 import com.aivle.be.laro.dto.LaroHumanReviewRequest;
 import com.aivle.be.laro.dto.LaroHumanReviewResponse;
+import com.aivle.be.laro.dto.LaroLowBatteryContext;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
@@ -264,6 +265,22 @@ public class LaroPlanService {
             LaroPlanRequest request,
             String reason
     ) {
+        return replan(
+                simulationRunId,
+                expectedExecutionVersion,
+                request,
+                reason,
+                null
+        );
+    }
+
+    public LaroPlanResponse replan(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            LaroPlanRequest request,
+            String reason,
+            LaroLowBatteryContext lowBatteryContext
+    ) {
         validateExecutableWarehouse(simulationRunId);
         requireCurrentExecution(simulationRunId, expectedExecutionVersion);
         LaroPlanResponse response = null;
@@ -274,23 +291,35 @@ public class LaroPlanService {
                     expectedExecutionVersion
             );
             SimulationPlaybackService.ActiveAiPlan active = playbackService.activeAiPlan(simulationRunId);
-            response = reason == null || reason.isBlank()
-                    || "NEW_ORDER".equalsIgnoreCase(reason)
-                    ? client.replan(
-                            simulationRunId,
-                            active.planId(),
-                            active.planVersion(),
-                            active.clockMillis(),
-                            request
-                    )
-                    : client.replan(
-                            simulationRunId,
-                            active.planId(),
-                            active.planVersion(),
-                            active.clockMillis(),
-                            request,
-                            reason
-                    );
+            if (lowBatteryContext != null) {
+                response = client.replan(
+                        simulationRunId,
+                        active.planId(),
+                        active.planVersion(),
+                        active.clockMillis(),
+                        request,
+                        reason,
+                        lowBatteryContext
+                );
+            } else if (reason == null || reason.isBlank()
+                    || "NEW_ORDER".equalsIgnoreCase(reason)) {
+                response = client.replan(
+                        simulationRunId,
+                        active.planId(),
+                        active.planVersion(),
+                        active.clockMillis(),
+                        request
+                );
+            } else {
+                response = client.replan(
+                        simulationRunId,
+                        active.planId(),
+                        active.planVersion(),
+                        active.clockMillis(),
+                        request,
+                        reason
+                );
+            }
             requireCurrentExecution(simulationRunId, expectedExecutionVersion);
             if (!isReady(response)) {
                 if (hasPendingHumanReview(response)) {

@@ -743,7 +743,12 @@ public class SimulationPlaybackService {
                                 context.getSimulationRunId(),
                                 robot.getRobotId(),
                                 robot.getBatteryLevel(),
-                                context.getChargingThreshold()
+                                context.getChargingThreshold(),
+                                robot.getCurrentNodeId(),
+                                nodeCodeCache.get(robot.getCurrentNodeId()),
+                                robot.getCurrentTaskId(),
+                                robot.isCarryingLoad(),
+                                context.getClockMillis()
                         )
                 );
                 publishAi(context, robot, null);
@@ -2250,7 +2255,12 @@ public class SimulationPlaybackService {
             Long simulationRunId,
             Long robotId,
             int batteryLevel,
-            int chargingThreshold
+            int chargingThreshold,
+            Long currentNodeId,
+            String currentNodeCode,
+            Long currentTaskId,
+            boolean carryingLoad,
+            long stoppedAtSimTimeMs
     ) {}
 
     public record LowBatteryInjection(

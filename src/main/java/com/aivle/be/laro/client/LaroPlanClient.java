@@ -5,6 +5,7 @@ import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
 import com.aivle.be.laro.dto.LaroHumanReviewRequest;
 import com.aivle.be.laro.dto.LaroHumanReviewResponse;
+import com.aivle.be.laro.dto.LaroLowBatteryContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -80,6 +81,26 @@ public class LaroPlanClient {
             LaroPlanRequest request,
             String reason
     ) {
+        return replan(
+                simulationRunId,
+                activePlanId,
+                activePlanVersion,
+                replanAtSimTimeMs,
+                request,
+                reason,
+                null
+        );
+    }
+
+    public LaroPlanResponse replan(
+            Long simulationRunId,
+            String activePlanId,
+            Integer activePlanVersion,
+            long replanAtSimTimeMs,
+            LaroPlanRequest request,
+            String reason,
+            LaroLowBatteryContext lowBatteryContext
+    ) {
         Map<String, Object> body = toAiRequest(request);
         body.put("active_plan_id", activePlanId);
         put(body, "active_plan_version", activePlanVersion);
@@ -91,6 +112,12 @@ public class LaroPlanClient {
                         : reason.trim().toUpperCase()
         );
         body.put("activation_policy", "ALL_ROBOTS_READY");
+        if (lowBatteryContext != null) {
+            body.put(
+                    "low_battery_context",
+                    toAiLowBatteryContext(lowBatteryContext)
+            );
+        }
 
         LaroPlanResponse response = restClient.post()
                 .uri("/api/v1/simulation-runs/{id}/missions/replan", simulationRunId)
@@ -206,6 +233,23 @@ public class LaroPlanClient {
         put(operation, "drop_service_time_ms", value.dropServiceTimeMs());
         put(operation, "attributes", value.attributes());
         return operation;
+    }
+
+    private static Map<String, Object> toAiLowBatteryContext(
+            LaroLowBatteryContext value
+    ) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("status", "LOW_BATTERY");
+        context.put("robot_id", "R" + value.robotId());
+        put(context, "robot_numeric_id", value.robotId());
+        context.put("battery_pct", value.batteryLevel());
+        context.put("charging_threshold_pct", value.chargingThreshold());
+        put(context, "current_node", value.currentNodeCode());
+        put(context, "current_node_numeric_id", value.currentNodeId());
+        put(context, "current_task_id", value.currentTaskId());
+        context.put("carrying_load", value.carryingLoad());
+        context.put("stopped_at_sim_time_ms", value.stoppedAtSimTimeMs());
+        return context;
     }
 
     private static void put(Map<String, Object> target, String key, Object value) {
