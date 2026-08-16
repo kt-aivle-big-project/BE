@@ -35,6 +35,41 @@ import static org.mockito.Mockito.when;
 class SimulationPlaybackServiceAiPlaybackTest {
 
     @Test
+    void injectedLowBatteryUpdatesPlaybackSourceAndQueuesReplanAtSafeBoundary() {
+        Fixture fixture = fixture();
+        AiPlaybackContext context = movingContext(1L, 101L, 10L, 20L);
+        AiPlaybackContext.RobotTimeline robot = context.getRobots().get(0);
+        robot.setCurrentTaskId(301L);
+        robot.setStatus(RobotStatus.MOVING);
+        installContext(fixture.service(), context);
+        cacheNodeCodes(fixture.service(), Map.of(10L, "C01", 20L, "RJ01"));
+
+        SimulationPlaybackService.LowBatteryInjection result =
+                fixture.service().injectRandomActiveRobotLowBattery(1L, 20);
+
+        assertThat(result.robotId()).isEqualTo(101L);
+        assertThat(result.previousBatteryLevel()).isEqualTo(100);
+        assertThat(result.batteryLevel()).isEqualTo(20);
+        assertThat(robot.getBatteryLevel()).isEqualTo(20);
+
+        fixture.service().tick(100L);
+
+        assertThat(fixture.service().pendingLowBatteryReplanRequests())
+                .singleElement()
+                .satisfies(request -> {
+                    assertThat(request.simulationRunId()).isEqualTo(1L);
+                    assertThat(request.robotId()).isEqualTo(101L);
+                    assertThat(request.batteryLevel()).isEqualTo(20);
+                });
+        assertThat(robot.isLowBatteryHold()).isTrue();
+
+        ArgumentCaptor<RobotState> stateCaptor = ArgumentCaptor.forClass(RobotState.class);
+        verify(fixture.stateStore(), times(2)).save(eq(1L), stateCaptor.capture());
+        assertThat(stateCaptor.getAllValues())
+                .allSatisfy(state -> assertThat(state.batteryLevel()).isEqualTo(20));
+    }
+
+    @Test
     void ordinaryMovePublishesNullWaitingTimes() {
         Fixture fixture = fixture();
         installContext(fixture.service(), movingContext(1L, 101L, 10L, 20L));

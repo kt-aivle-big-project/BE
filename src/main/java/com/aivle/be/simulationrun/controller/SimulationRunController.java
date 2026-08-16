@@ -7,6 +7,7 @@ import com.aivle.be.simulationrun.controller.request.SimulationSpeedUpdateReques
 import com.aivle.be.simulationrun.controller.response.SimulationRunParticipantsResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunRobotStatesResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunHistoryResponse;
+import com.aivle.be.simulationrun.controller.response.SimulationRunLowBatteryEventResponse;
 import com.aivle.be.simulationrun.controller.response.SimulationRunResponse;
 import com.aivle.be.simulationrun.service.SimulationRunService;
 import com.aivle.be.task.controller.response.TaskResponse;
@@ -131,6 +132,20 @@ public class SimulationRunController {
     ) {
         return ResponseEntity.ok(
                 simulationRunService.reset(simulationRunId, requester(authentication))
+        );
+    }
+
+    @Operation(summary = "작업 중 AI 로봇 한 대에 배터리 부족 이벤트 주입")
+    @PostMapping("/{simulationRunId}/events/low-battery")
+    public ResponseEntity<SimulationRunLowBatteryEventResponse> injectLowBatteryEvent(
+            @PathVariable Long simulationRunId,
+            Authentication authentication
+    ) {
+        return ResponseEntity.ok(
+                simulationRunService.injectLowBatteryEvent(
+                        simulationRunId,
+                        requester(authentication)
+                )
         );
     }
 

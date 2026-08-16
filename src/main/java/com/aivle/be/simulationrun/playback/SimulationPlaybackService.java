@@ -51,6 +51,7 @@ import java.util.Optional;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
@@ -111,6 +112,10 @@ public class SimulationPlaybackService {
     // Keep the request pending until the command cycle explicitly accepts it.
     private final Map<Long, LowBatteryReplanRequest> lowBatteryReplanRequests =
             new ConcurrentHashMap<>();
+
+    // UI 이벤트 연타로 한 실행에서 여러 로봇의 배터리가 동시에 바뀌지 않게 한다.
+    // 새 계획이 설치·활성화되거나 실행이 정리되면 해제한다.
+    private final Set<Long> lowBatteryInjectionRunIds = ConcurrentHashMap.newKeySet();
 
     // A broken playback run must not abort every other run on the shared scheduler.
     // Freeze it after the first failure to prevent partial in-memory progress and log storms.
@@ -263,6 +268,7 @@ public class SimulationPlaybackService {
         assignPlannedTasks(prepared.assignedRobotByTask());
         contexts.remove(simulationRunId);
         pendingAiPlans.remove(simulationRunId);
+        lowBatteryInjectionRunIds.remove(simulationRunId);
         suspendedAiRunIds.remove(simulationRunId);
         aiContexts.put(simulationRunId, prepared.context());
         logPreparedPlan("installed", prepared);
@@ -812,6 +818,7 @@ public class SimulationPlaybackService {
         assignPlannedTasks(pending.assignedRobotByTask());
         pendingAiPlans.remove(oldContext.getSimulationRunId());
         lowBatteryReplanRequests.remove(oldContext.getSimulationRunId());
+        lowBatteryInjectionRunIds.remove(oldContext.getSimulationRunId());
         aiContexts.put(oldContext.getSimulationRunId(), next);
         run.finishReplanning();
         markPlanActivated(next.getSimulationRunId(), next.getPlanId());
@@ -2022,6 +2029,7 @@ public class SimulationPlaybackService {
         aiContexts.remove(simulationRunId);
         pendingAiPlans.remove(simulationRunId);
         lowBatteryReplanRequests.remove(simulationRunId);
+        lowBatteryInjectionRunIds.remove(simulationRunId);
         suspendedAiRunIds.remove(simulationRunId);
     }
 
@@ -2122,6 +2130,91 @@ public class SimulationPlaybackService {
         return aiContexts.containsKey(simulationRunId);
     }
 
+    /**
+     * 작업 중인 AI 로봇 한 대의 in-memory 배터리를 낮춘 뒤 Redis/WebSocket에 발행한다.
+     *
+     * 현재 MOVE/SERVICE를 강제로 중단하지 않는다. 기존 playback 감지기는
+     * step 경계에서 LOW_BATTERY 요청을 만들고 command cycle이 안전 재계획을 수행한다.
+     */
+    public LowBatteryInjection injectRandomActiveRobotLowBattery(
+            Long simulationRunId,
+            int requestedBatteryLevel
+    ) {
+        AiPlaybackContext context = aiContexts.get(simulationRunId);
+        if (context == null
+                || context.isQuiescing()
+                || pendingAiPlans.containsKey(simulationRunId)
+                || lowBatteryReplanRequests.containsKey(simulationRunId)
+                || !lowBatteryInjectionRunIds.add(simulationRunId)) {
+            throw new BusinessException(ErrorCode.LOW_BATTERY_EVENT_NOT_AVAILABLE);
+        }
+
+        int batteryLevel = Math.max(1, Math.min(100, requestedBatteryLevel));
+        List<AiPlaybackContext.RobotTimeline> candidates = new ArrayList<>(
+                context.getRobots().stream()
+                        .filter(robot -> isLowBatteryInjectionCandidate(robot, batteryLevel))
+                        .toList()
+        );
+        while (!candidates.isEmpty()) {
+            int index = ThreadLocalRandom.current().nextInt(candidates.size());
+            AiPlaybackContext.RobotTimeline robot = candidates.remove(index);
+            synchronized (robot) {
+                if (!isLowBatteryInjectionCandidate(robot, batteryLevel)) {
+                    continue;
+                }
+                int previousBatteryLevel = robot.getBatteryLevel();
+                robot.setBatteryLevel(batteryLevel);
+                try {
+                    publishAi(
+                            context,
+                            robot,
+                            robot.isStepStarted() ? robot.currentStep() : null
+                    );
+                } catch (RuntimeException exception) {
+                    robot.setBatteryLevel(previousBatteryLevel);
+                    lowBatteryInjectionRunIds.remove(simulationRunId);
+                    throw exception;
+                }
+                log.info(
+                        "[AI playback] low-battery event injected: runId={}, robotId={}, battery={} -> {}%, threshold={}%, taskId={}",
+                        simulationRunId,
+                        robot.getRobotId(),
+                        previousBatteryLevel,
+                        batteryLevel,
+                        context.getChargingThreshold(),
+                        robot.getCurrentTaskId()
+                );
+                return new LowBatteryInjection(
+                        simulationRunId,
+                        robot.getRobotId(),
+                        previousBatteryLevel,
+                        robot.getBatteryLevel(),
+                        context.getChargingThreshold(),
+                        robot.getCurrentTaskId(),
+                        robot.getStatus(),
+                        context.getClockMillis()
+                );
+            }
+        }
+
+        lowBatteryInjectionRunIds.remove(simulationRunId);
+        throw new BusinessException(ErrorCode.LOW_BATTERY_EVENT_NOT_AVAILABLE);
+    }
+
+    private boolean isLowBatteryInjectionCandidate(
+            AiPlaybackContext.RobotTimeline robot,
+            int targetBatteryLevel
+    ) {
+        return !robot.isFailed()
+                && !robot.isFinished()
+                && !robot.isHeld()
+                && !robot.isLowBatteryHold()
+                && !robot.isLowBatteryReplanRequested()
+                && !robot.hasPendingCharge()
+                && robot.getCurrentTaskId() != null
+                && robot.getBatteryLevel() > targetBatteryLevel;
+    }
+
     public List<LowBatteryReplanRequest> pendingLowBatteryReplanRequests() {
         return List.copyOf(lowBatteryReplanRequests.values());
     }
@@ -2158,6 +2251,17 @@ public class SimulationPlaybackService {
             Long robotId,
             int batteryLevel,
             int chargingThreshold
+    ) {}
+
+    public record LowBatteryInjection(
+            Long simulationRunId,
+            Long robotId,
+            int previousBatteryLevel,
+            int batteryLevel,
+            int chargingThreshold,
+            Long currentTaskId,
+            RobotStatus robotStatus,
+            long simulationClockMillis
     ) {}
 
     public void beginQuiescing(Long simulationRunId) {

@@ -19,6 +19,11 @@ public enum ErrorCode {
     SIMULATION_RUN_ALREADY_ACTIVE(HttpStatus.CONFLICT, "SIMULATION_RUN_004", "해당 창고에서 이미 실행 중인 시뮬레이션이 있습니다."),
     SIMULATION_RUN_NOT_RUNNING(HttpStatus.CONFLICT, "SIMULATION_RUN_005", "실행 중인 시뮬레이션에서만 로봇 상태를 갱신할 수 있습니다."),
     ROBOT_NOT_IN_SIMULATION_RUN(HttpStatus.CONFLICT, "SIMULATION_RUN_006", "해당 시뮬레이션에 참여하지 않은 로봇입니다."),
+    LOW_BATTERY_EVENT_NOT_AVAILABLE(
+            HttpStatus.CONFLICT,
+            "SIMULATION_RUN_041",
+            "배터리 부족 이벤트를 적용할 작업 중 AI 로봇이 없거나 이미 이벤트가 처리 중입니다."
+    ),
 
     ROBOT_STATE_STORE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "ROBOT_STATE_007", "로봇 상태 저장소에 연결할 수 없습니다."),
     ROBOT_STATE_DATA_CORRUPTED(HttpStatus.INTERNAL_SERVER_ERROR, "ROBOT_STATE_008", "저장된 로봇 상태 데이터가 올바르지 않습니다."),

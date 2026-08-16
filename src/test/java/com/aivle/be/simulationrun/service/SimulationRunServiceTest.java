@@ -240,6 +240,37 @@ class SimulationRunServiceTest {
     }
 
     @Test
+    void lowBatteryEventMutatesOwnedRunningPlaybackContext() {
+        SimulationRun run = org.mockito.Mockito.mock(SimulationRun.class);
+        when(run.getStatus()).thenReturn(SimulationRunStatus.RUNNING);
+        when(run.isOwnedByGuest(GUEST_A)).thenReturn(true);
+        when(simulationRunRepository.findById(10L)).thenReturn(Optional.of(run));
+        SimulationPlaybackService.LowBatteryInjection injection =
+                new SimulationPlaybackService.LowBatteryInjection(
+                        10L,
+                        101L,
+                        84,
+                        20,
+                        20,
+                        301L,
+                        com.aivle.be.robotstate.domain.RobotStatus.MOVING,
+                        12_000L
+                );
+        when(simulationPlaybackService.injectRandomActiveRobotLowBattery(10L, 20))
+                .thenReturn(injection);
+
+        var response = simulationRunService.injectLowBatteryEvent(
+                10L,
+                AuthenticatedRequester.guest(GUEST_A)
+        );
+
+        assertThat(response.robotId()).isEqualTo(101L);
+        assertThat(response.previousBatteryLevel()).isEqualTo(84);
+        assertThat(response.batteryLevel()).isEqualTo(20);
+        verify(simulationPlaybackService).injectRandomActiveRobotLowBattery(10L, 20);
+    }
+
+    @Test
     void ownershipMismatchReturnsForbidden() {
         SimulationRun guestRun = guestRun(10L, GUEST_A);
         when(simulationRunRepository.findById(10L))
