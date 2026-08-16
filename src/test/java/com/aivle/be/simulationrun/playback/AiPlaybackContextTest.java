@@ -130,7 +130,7 @@ class AiPlaybackContextTest {
     }
 
     @Test
-    void lowBatteryRequestsReplanOnlyWhenNoChargeLegIsAlreadyPlanned() {
+    void lowBatteryRequestsReplanWhenChargeIsLaterButNotWhenChargingStartsNow() {
         AiPlaybackContext.RobotTimeline withoutCharge = new AiPlaybackContext.RobotTimeline(
                 10001L,
                 List.of(new AiPlaybackContext.TimedStep(
@@ -140,10 +140,25 @@ class AiPlaybackContextTest {
                 10L,
                 20
         );
-        AiPlaybackContext.RobotTimeline withCharge = new AiPlaybackContext.RobotTimeline(
+        AiPlaybackContext.RobotTimeline chargeLater = new AiPlaybackContext.RobotTimeline(
                 10002L,
+                List.of(
+                        new AiPlaybackContext.TimedStep(
+                                "MOVE-2", 1, AiPlaybackContext.StepType.MOVE,
+                                0, 1_000, null, 10L, 12L, null, null
+                        ),
+                        new AiPlaybackContext.TimedStep(
+                                "CHARGE-2", 2, AiPlaybackContext.StepType.SERVICE,
+                                1_000, 61_000, 12L, null, null, null, "CHARGE"
+                        )
+                ),
+                10L,
+                20
+        );
+        AiPlaybackContext.RobotTimeline chargingNow = new AiPlaybackContext.RobotTimeline(
+                10003L,
                 List.of(new AiPlaybackContext.TimedStep(
-                        "CHARGE-1", 1, AiPlaybackContext.StepType.SERVICE,
+                        "CHARGE-3", 1, AiPlaybackContext.StepType.SERVICE,
                         0, 60_000, 12L, null, null, null, "CHARGE"
                 )),
                 12L,
@@ -151,7 +166,8 @@ class AiPlaybackContextTest {
         );
 
         assertTrue(withoutCharge.needsLowBatteryReplan(20));
-        assertFalse(withCharge.needsLowBatteryReplan(20));
+        assertTrue(chargeLater.needsLowBatteryReplan(20));
+        assertFalse(chargingNow.needsLowBatteryReplan(20));
 
         withoutCharge.holdForLowBattery(3_000);
         assertTrue(withoutCharge.isHeld());

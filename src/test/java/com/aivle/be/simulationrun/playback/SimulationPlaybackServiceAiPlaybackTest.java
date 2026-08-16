@@ -87,6 +87,26 @@ class SimulationPlaybackServiceAiPlaybackTest {
     }
 
     @Test
+    void injectedLowBatteryCanTargetRobotWithChargeLaterInPlan() {
+        Fixture fixture = fixture();
+        AiPlaybackContext context = movingThenChargingContext(1L, 101L, 10L, 20L);
+        AiPlaybackContext.RobotTimeline robot = context.getRobots().get(0);
+        robot.setCurrentTaskId(301L);
+        robot.setStatus(RobotStatus.MOVING);
+        installContext(fixture.service(), context);
+        cacheNodeCodes(fixture.service(), Map.of(10L, "C01", 20L, "RJ01"));
+
+        SimulationPlaybackService.LowBatteryInjection result =
+                fixture.service().injectRandomActiveRobotLowBattery(1L, 20);
+
+        assertThat(result.robotId()).isEqualTo(101L);
+        fixture.service().tick(100L);
+        assertThat(fixture.service().pendingLowBatteryReplanRequests())
+                .singleElement()
+                .satisfies(request -> assertThat(request.robotId()).isEqualTo(101L));
+    }
+
+    @Test
     void ordinaryMovePublishesNullWaitingTimes() {
         Fixture fixture = fixture();
         installContext(fixture.service(), movingContext(1L, 101L, 10L, 20L));
@@ -189,6 +209,59 @@ class SimulationPlaybackServiceAiPlaybackTest {
                 "BE-RUN-" + runId,
                 0L,
                 1_000L,
+                List.of(robot),
+                Set.of(),
+                1.0
+        );
+    }
+
+    private AiPlaybackContext movingThenChargingContext(
+            Long runId,
+            Long robotId,
+            Long fromNodeId,
+            Long toNodeId
+    ) {
+        AiPlaybackContext.TimedStep move = new AiPlaybackContext.TimedStep(
+                "MOVE-" + robotId,
+                0,
+                AiPlaybackContext.StepType.MOVE,
+                0L,
+                1_000L,
+                null,
+                fromNodeId,
+                toNodeId,
+                301L,
+                null,
+                null
+        );
+        AiPlaybackContext.TimedStep charge = new AiPlaybackContext.TimedStep(
+                "CHARGE-" + robotId,
+                1,
+                AiPlaybackContext.StepType.SERVICE,
+                1_000L,
+                61_000L,
+                toNodeId,
+                null,
+                null,
+                null,
+                null,
+                "CHARGE"
+        );
+        AiPlaybackContext.RobotTimeline robot = new AiPlaybackContext.RobotTimeline(
+                robotId,
+                List.of(move, charge),
+                fromNodeId,
+                100
+        );
+        return new AiPlaybackContext(
+                runId,
+                2L,
+                "WH-002",
+                "PLAN-" + runId,
+                1,
+                "BE-RUN-" + runId,
+                0L,
+                61_000L,
                 List.of(robot),
                 Set.of(),
                 1.0

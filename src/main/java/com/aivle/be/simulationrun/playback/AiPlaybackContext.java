@@ -305,18 +305,9 @@ final class AiPlaybackContext {
             if (batteryLevel <= 0) {
                 return true;
             }
-            return batteryLevel <= threshold && !hasPendingCharge();
-        }
-
-        boolean hasPendingCharge() {
-            for (int index = cursor; index < steps.size(); index++) {
-                TimedStep candidate = steps.get(index);
-                if (candidate.type() == StepType.SERVICE
-                        && "CHARGE".equalsIgnoreCase(candidate.serviceKind())) {
-                    return true;
-                }
-            }
-            return false;
+            // 경로 뒤쪽에 충전 작업이 있더라도 그곳까지 안전하게 도달한다는 보장은 없다.
+            // 현재 단계가 바로 CHARGE인 경우만 제외하고, 기준 이하라면 안전 노드에서 재계획한다.
+            return batteryLevel <= threshold;
         }
 
         void holdForLowBattery(long clockMillis) {

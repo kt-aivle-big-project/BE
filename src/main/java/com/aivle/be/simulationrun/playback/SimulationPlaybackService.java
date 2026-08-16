@@ -2210,7 +2210,7 @@ public class SimulationPlaybackService {
                 && !robot.isHeld()
                 && !robot.isLowBatteryHold()
                 && !robot.isLowBatteryReplanRequested()
-                && !robot.hasPendingCharge()
+                && !isChargeService(robot.currentStep())
                 && robot.getCurrentTaskId() != null
                 && robot.getBatteryLevel() > targetBatteryLevel;
     }
