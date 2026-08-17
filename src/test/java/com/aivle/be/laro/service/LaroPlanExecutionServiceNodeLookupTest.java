@@ -1,7 +1,11 @@
 package com.aivle.be.laro.service;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPlanRequest;
+import com.aivle.be.task.entity.Task;
+import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.task.repository.TaskRepository;
@@ -16,6 +20,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -143,6 +149,70 @@ class LaroPlanExecutionServiceNodeLookupTest {
         );
 
         assertThat(resolved).isEqualTo(3);
+    }
+
+    @Test
+    void inboundPhysicalContractFailureContainsAllConflictingValues() {
+        WarehouseNode rackNode = mock(WarehouseNode.class);
+        when(rackNode.getId()).thenReturn(401L);
+        when(rackNode.getNodeCode()).thenReturn("K4_1");
+        when(rackNode.getNodeType()).thenReturn(NodeType.RACK_STORAGE);
+        when(warehouseNodeRepository
+                .findByWarehouse_IdAndNodeCodeAndActiveTrue(1L, "K4_1"))
+                .thenReturn(Optional.of(rackNode));
+
+        Task task = mock(Task.class);
+        when(task.getId()).thenReturn(3178L);
+        when(task.getTaskType()).thenReturn(com.aivle.be.task.entity.TaskType.INBOUND);
+        when(task.getStatus()).thenReturn(TaskStatus.IN_PROGRESS);
+        when(task.isInventoryApplied()).thenReturn(false);
+        when(task.getEndNode()).thenReturn(rackNode);
+        when(task.getTargetRackLevel()).thenReturn(2);
+        doThrow(new BusinessException(ErrorCode.INVALID_INPUT))
+                .when(task).planInboundDestination(rackNode, 3);
+
+        LaroPlanResponse.LogicalOperation logical = logicalOperation("K4_1", 3);
+        LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
+                "PLAN-2",
+                2,
+                "PLAN-1",
+                "WH-1",
+                "BE-RUN-1",
+                "READY",
+                "REPLAN",
+                "map-v1",
+                100,
+                0L,
+                0L,
+                1000L,
+                1000L,
+                java.util.List.of(),
+                java.util.List.of(),
+                java.util.List.of(logical),
+                java.util.List.of(),
+                "PLAN-1"
+        );
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(
+                service,
+                "applyPhysicalStorageContract",
+                task,
+                1L,
+                operation(LaroPlanRequest.OperationType.INBOUND, null),
+                logical,
+                plan,
+                3
+        ))
+                .isInstanceOf(LaroPlanMappingException.class)
+                .hasMessageContaining("reason=INBOUND_PHYSICAL_CONTRACT_REJECTED")
+                .hasMessageContaining("taskId=3178")
+                .hasMessageContaining("taskStatus=IN_PROGRESS")
+                .hasMessageContaining("inventoryApplied=false")
+                .hasMessageContaining("existingRackCode=K4_1")
+                .hasMessageContaining("existingRackLevel=2")
+                .hasMessageContaining("requestedRackCode=K4_1")
+                .hasMessageContaining("requestedRackLevel=3")
+                .hasMessageContaining("causeType=BusinessException");
     }
 
     private LaroPlanRequest.StructuredOperation operation(

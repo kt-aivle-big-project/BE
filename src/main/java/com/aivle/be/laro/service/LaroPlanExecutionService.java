@@ -329,7 +329,41 @@ public class LaroPlanExecutionService {
         }
         WarehouseNode rackNode = resolveEndNode(
                 warehouseId, operation, logicalOperation, plan);
-        task.planInboundDestination(rackNode, rackLevel);
+        try {
+            task.planInboundDestination(rackNode, rackLevel);
+        } catch (LaroPlanMappingException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw mappingFailure(
+                    "INBOUND_PHYSICAL_CONTRACT_REJECTED",
+                    exception,
+                    "simulationRunId", task.getSimulationRun() == null
+                            ? null : task.getSimulationRun().getId(),
+                    "warehouseId", warehouseId,
+                    "planId", plan == null ? null : plan.planId(),
+                    "planVersion", plan == null ? null : plan.planVersion(),
+                    "basePlanId", plan == null ? null : plan.basePlanId(),
+                    "operationId", operation == null ? null : operation.operationId(),
+                    "operationType", operation == null ? null : operation.operationType(),
+                    "taskId", task.getId(),
+                    "taskStatus", task.getStatus(),
+                    "inventoryApplied", task.isInventoryApplied(),
+                    "existingRackId", task.getEndNode() == null
+                            ? null : task.getEndNode().getId(),
+                    "existingRackCode", task.getEndNode() == null
+                            ? null : task.getEndNode().getNodeCode(),
+                    "existingRackLevel", task.getTargetRackLevel(),
+                    "requestedRackId", rackNode == null ? null : rackNode.getId(),
+                    "requestedRackCode", rackNode == null ? null : rackNode.getNodeCode(),
+                    "requestedRackLevel", rackLevel,
+                    "logicalRackId", logicalOperation == null
+                            ? null : logicalOperation.rackId(),
+                    "logicalRackLevel", logicalOperation == null
+                            ? null : logicalOperation.rackLevel(),
+                    "causeType", exception.getClass().getSimpleName(),
+                    "causeMessage", exception.getMessage()
+            );
+        }
     }
 
     private Integer plannedRackLevel(
@@ -481,7 +515,19 @@ public class LaroPlanExecutionService {
     }
 
     private LaroPlanMappingException mappingFailure(String reason, Object... context) {
-        LaroPlanMappingException exception = new LaroPlanMappingException(reason, context);
+        return mappingFailure(reason, null, context);
+    }
+
+    private LaroPlanMappingException mappingFailure(
+            String reason,
+            Throwable cause,
+            Object... context
+    ) {
+        LaroPlanMappingException exception = new LaroPlanMappingException(
+                reason,
+                cause,
+                context
+        );
         log.warn("[LARO plan mapping] {}", exception.getMessage());
         return exception;
     }

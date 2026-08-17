@@ -14,7 +14,15 @@ public final class LaroPlanMappingException extends BusinessException {
     private final String diagnosticMessage;
 
     public LaroPlanMappingException(String reason, Object... context) {
-        super(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        this(reason, null, context);
+    }
+
+    public LaroPlanMappingException(
+            String reason,
+            Throwable cause,
+            Object... context
+    ) {
+        super(ErrorCode.LARO_PLAN_MAPPING_FAILED, cause);
         StringJoiner values = new StringJoiner(", ");
         for (int index = 0; index + 1 < context.length; index += 2) {
             values.add(String.valueOf(context[index]) + "=" + String.valueOf(context[index + 1]));

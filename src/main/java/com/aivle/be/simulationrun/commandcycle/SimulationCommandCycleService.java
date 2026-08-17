@@ -434,6 +434,7 @@ public class SimulationCommandCycleService {
 
     private void executeLocked(CycleRuntime runtime, long cycleMinute) {
         Long simulationRunId = runtime.simulationRunId();
+        LaroPlanResponse response = null;
         try {
             runtime.begin(CycleState.CHECKING, null);
             LaroPreflightResponse preflight = laroPlanService.preflight(simulationRunId);
@@ -474,7 +475,7 @@ public class SimulationCommandCycleService {
                     : replan ? "REPLAN" : "INITIAL_PLAN";
             runtime.begin(replan ? CycleState.REPLANNING : CycleState.PLANNING, planningMode);
 
-            LaroPlanResponse response = lowBatteryReplan
+            response = lowBatteryReplan
                     ? laroPlanService.replan(
                             simulationRunId,
                             runtime.executionVersion(),
@@ -510,15 +511,91 @@ public class SimulationCommandCycleService {
                             : generated.frontView().requestId()
             );
         } catch (RuntimeException exception) {
+            Map<String, Object> failureDiagnostic = failureDiagnostic(
+                    runtime,
+                    cycleMinute,
+                    response,
+                    exception
+            );
             runtime.failForHumanReview(exception.getMessage());
             holdForHumanReviewQuietly(runtime);
             log.warn(
-                    "[command-cycle] runId={}, minute={} failed: {}",
-                    simulationRunId,
-                    cycleMinute,
-                    exception.getMessage()
+                    "[command-cycle] failure diagnostic {}",
+                    failureDiagnostic,
+                    exception
             );
         }
+    }
+
+    private Map<String, Object> failureDiagnostic(
+            CycleRuntime runtime,
+            long cycleMinute,
+            LaroPlanResponse response,
+            RuntimeException exception
+    ) {
+        SimulationCommandCycleStatusResponse snapshot = runtime.snapshot();
+        LaroPlanRequest request = runtime.activePlanRequestOrNull();
+        LaroLowBatteryContext battery = runtime.lowBatteryContext();
+        LaroPlanResponse.Result result = response == null ? null : response.result();
+        LaroPlanResponse.SimulationPlan plan = result == null ? null : result.plan();
+        Throwable root = rootCause(exception);
+        SimulationPlaybackService.ActiveAiPlan activePlan = null;
+        try {
+            activePlan = playbackService.activeAiPlan(runtime.simulationRunId());
+        } catch (RuntimeException ignored) {
+            // The absence of an active plan is itself captured as null below.
+        }
+
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("simulationRunId", runtime.simulationRunId());
+        values.put("executionVersion", runtime.executionVersion());
+        values.put("cycleMinute", cycleMinute);
+        values.put("failedState", snapshot.state());
+        values.put("planningMode", snapshot.planningMode());
+        values.put("simulatedTimeMs", snapshot.simulatedTimeMs());
+        values.put("replanReason", runtime.replanReason());
+        values.put("lowBatteryContext", battery);
+        values.put("requestId", request == null || request.structuredInput() == null
+                ? null : request.structuredInput().requestId());
+        values.put("requestOperationCount", request == null
+                || request.structuredInput() == null
+                || request.structuredInput().operations() == null
+                ? 0 : request.structuredInput().operations().size());
+        values.put("activePlanId", activePlan == null ? null : activePlan.planId());
+        values.put("activePlanVersion", activePlan == null
+                ? null : activePlan.planVersion());
+        values.put("activePlanClockMs", activePlan == null
+                ? null : activePlan.clockMillis());
+        values.put("responseRequestId", response == null ? null : response.requestId());
+        values.put("resultStatus", result == null ? null : result.status());
+        values.put("finalRoute", result == null ? null : result.finalRoute());
+        values.put("effectivePlanningMode", result == null
+                ? null : result.effectivePlanningMode());
+        values.put("planId", plan == null ? null : plan.planId());
+        values.put("planVersion", plan == null ? null : plan.planVersion());
+        values.put("basePlanId", plan == null ? null : plan.basePlanId());
+        values.put("planStatus", plan == null ? null : plan.status());
+        values.put("planKind", plan == null ? null : plan.planKind());
+        values.put("planRobotCount", plan == null || plan.robots() == null
+                ? 0 : plan.robots().size());
+        values.put("logicalOperationCount", plan == null
+                || plan.logicalOperations() == null
+                ? 0 : plan.logicalOperations().size());
+        values.put("handoverPoints", plan == null || plan.handoverPoints() == null
+                ? List.of() : plan.handoverPoints());
+        values.put("exceptionType", exception.getClass().getName());
+        values.put("exceptionMessage", exception.getMessage());
+        values.put("rootCauseType", root.getClass().getName());
+        values.put("rootCauseMessage", root.getMessage());
+        return values;
+    }
+
+    private Throwable rootCause(Throwable exception) {
+        Throwable current = exception;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private void holdForHumanReviewQuietly(CycleRuntime runtime) {
@@ -945,6 +1022,10 @@ public class SimulationCommandCycleService {
             if (activePlanRequest == null) {
                 throw new IllegalStateException("Human review has no originating plan request");
             }
+            return activePlanRequest;
+        }
+
+        synchronized LaroPlanRequest activePlanRequestOrNull() {
             return activePlanRequest;
         }
 

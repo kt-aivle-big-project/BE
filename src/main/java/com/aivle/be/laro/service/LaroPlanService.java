@@ -12,11 +12,19 @@ import com.aivle.be.laro.dto.LaroLowBatteryContext;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 @Service
 public class LaroPlanService {
+    private static final Logger log = LoggerFactory.getLogger(LaroPlanService.class);
+
     private final LaroPlanClient client;
     private final LaroPlanExecutionService executionService;
     private final LaroReplanStateService replanStateService;
@@ -320,6 +328,15 @@ public class LaroPlanService {
                         reason
                 );
             }
+            logReplanResponse(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    reason,
+                    lowBatteryContext,
+                    request,
+                    active,
+                    response
+            );
             requireCurrentExecution(simulationRunId, expectedExecutionVersion);
             if (!isReady(response)) {
                 if (hasPendingHumanReview(response)) {
@@ -388,6 +405,108 @@ public class LaroPlanService {
         return response != null && response.result() != null
                 && response.result().plan() != null
                 && "READY".equalsIgnoreCase(response.result().plan().status());
+    }
+
+    /**
+     * AI가 정상 응답한 뒤 BE 반영에서 실패하더라도 입력과 결과를 한 줄로 대조할 수 있게 한다.
+     */
+    private void logReplanResponse(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            String reason,
+            LaroLowBatteryContext lowBatteryContext,
+            LaroPlanRequest request,
+            SimulationPlaybackService.ActiveAiPlan active,
+            LaroPlanResponse response
+    ) {
+        LaroPlanResponse.Result result = response == null ? null : response.result();
+        LaroPlanResponse.SimulationPlan plan = result == null ? null : result.plan();
+        List<LaroPlanResponse.RobotPlan> robots = plan == null || plan.robots() == null
+                ? List.of() : plan.robots();
+        int stepCount = robots.stream()
+                .map(LaroPlanResponse.RobotPlan::steps)
+                .filter(steps -> steps != null)
+                .mapToInt(List::size)
+                .sum();
+        String affectedRobotCode = lowBatteryContext == null
+                ? null : "R" + lowBatteryContext.robotId();
+        LaroPlanResponse.RobotPlan affectedRobotPlan = affectedRobotCode == null
+                ? null
+                : robots.stream()
+                        .filter(robot -> affectedRobotCode.equals(robot.robotId()))
+                        .findFirst()
+                        .orElse(null);
+
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("simulationRunId", simulationRunId);
+        values.put("executionVersion", expectedExecutionVersion);
+        values.put("reason", reason);
+        values.put("requestId", request == null || request.structuredInput() == null
+                ? null : request.structuredInput().requestId());
+        values.put("requestOperationCount", request == null
+                || request.structuredInput() == null
+                || request.structuredInput().operations() == null
+                ? 0 : request.structuredInput().operations().size());
+        values.put("activePlanId", active == null ? null : active.planId());
+        values.put("activePlanVersion", active == null ? null : active.planVersion());
+        values.put("replanAtSimTimeMs", active == null ? null : active.clockMillis());
+        values.put("lowBatteryContext", lowBatteryContext);
+        values.put("responseRequestId", response == null ? null : response.requestId());
+        values.put("responseSimulationRunId", response == null
+                ? null : response.simulationRunId());
+        values.put("responseWarehouseNumericId", response == null
+                ? null : response.warehouseNumericId());
+        values.put("resultStatus", result == null ? null : result.status());
+        values.put("requestMode", result == null ? null : result.requestMode());
+        values.put("finalRoute", result == null ? null : result.finalRoute());
+        values.put("effectivePlanningMode", result == null
+                ? null : result.effectivePlanningMode());
+        values.put("routerLlmExecuted", result == null
+                ? null : result.routerLlmExecuted());
+        values.put("planId", plan == null ? null : plan.planId());
+        values.put("planVersion", plan == null ? null : plan.planVersion());
+        values.put("basePlanId", plan == null ? null : plan.basePlanId());
+        values.put("planStatus", plan == null ? null : plan.status());
+        values.put("planKind", plan == null ? null : plan.planKind());
+        values.put("effectiveFromSimTimeMs", plan == null
+                ? null : plan.effectiveFromSimTimeMs());
+        values.put("makespanMs", plan == null ? null : plan.makespanMs());
+        values.put("absoluteFinishAtMs", plan == null
+                ? null : plan.absoluteFinishAtMs());
+        values.put("robotCount", robots.size());
+        values.put("stepCount", stepCount);
+        values.put("logicalOperationCount", plan == null
+                || plan.logicalOperations() == null
+                ? 0 : plan.logicalOperations().size());
+        values.put("handoverPoints", plan == null
+                || plan.handoverPoints() == null
+                ? List.of() : plan.handoverPoints());
+        values.put("stationReservations", plan == null
+                || plan.stationReservations() == null
+                ? List.of() : plan.stationReservations());
+        values.put("affectedRobotPlan", summarizeAffectedRobot(affectedRobotPlan));
+        values.put("workflowErrors", result == null || result.errors() == null
+                ? List.of() : result.errors());
+        log.info("[LARO replan diagnostic] {}", values);
+    }
+
+    private Map<String, Object> summarizeAffectedRobot(
+            LaroPlanResponse.RobotPlan robot
+    ) {
+        if (robot == null) {
+            return Map.of();
+        }
+        List<LaroPlanResponse.PlanStep> steps = robot.steps() == null
+                ? List.of() : robot.steps();
+        int fromIndex = Math.max(0, steps.size() - 8);
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("robotId", robot.robotId());
+        values.put("initialNode", robot.initialNode());
+        values.put("availableAtMs", robot.availableAtMs());
+        values.put("finishAtMs", robot.finishAtMs());
+        values.put("stepCount", steps.size());
+        values.put("terminalSteps", steps.subList(fromIndex, steps.size()));
+        return values;
     }
 
     private boolean hasPendingHumanReview(LaroPlanResponse response) {
