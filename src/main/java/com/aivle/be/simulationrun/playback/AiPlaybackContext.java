@@ -192,6 +192,7 @@ final class AiPlaybackContext {
         private volatile boolean held;
         private boolean lowBatteryReplanRequested;
         private boolean lowBatteryHold;
+        private boolean lowBatteryAlert;
         private long lowBatteryWaitStartedAtMillis;
         private long lastChargeUpdateAtMillis = -1L;
 
@@ -289,6 +290,19 @@ final class AiPlaybackContext {
             lastChargeUpdateAtMillis = -1L;
             lowBatteryReplanRequested = false;
             lowBatteryHold = false;
+            lowBatteryAlert = false;
+        }
+
+        void markLowBatteryAlert() {
+            lowBatteryAlert = true;
+        }
+
+        void clearLowBatteryAlert() {
+            lowBatteryAlert = false;
+        }
+
+        boolean hasLowBatteryAlert() {
+            return lowBatteryAlert;
         }
 
         boolean needsLowBatteryReplan(int threshold) {
@@ -314,7 +328,10 @@ final class AiPlaybackContext {
                     && batteryLevel > 0
                     && batteryLevel <= threshold
                     && step != null
-                    && step.type() == StepType.MOVE
+                    // A MAPF conflict may insert WAIT between MOVE steps.  It
+                    // is still the same direct recovery trip and must remain
+                    // visible as charging-station return, not ordinary idle.
+                    && (step.type() == StepType.MOVE || step.type() == StepType.WAIT)
                     && isDirectChargeRecoveryRoute();
         }
 
@@ -332,6 +349,7 @@ final class AiPlaybackContext {
         void holdForLowBattery(long clockMillis) {
             lowBatteryReplanRequested = true;
             lowBatteryHold = true;
+            lowBatteryAlert = true;
             lowBatteryWaitStartedAtMillis = Math.max(0, clockMillis);
             held = true;
             status = RobotStatus.WAITING;

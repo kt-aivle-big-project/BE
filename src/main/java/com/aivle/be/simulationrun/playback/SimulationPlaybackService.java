@@ -1340,11 +1340,13 @@ public class SimulationPlaybackService {
         );
         boolean waiting = lowBatteryWaiting || activeStep != null
                 && activeStep.type() == AiPlaybackContext.StepType.WAIT;
-        RobotStatus activity = waiting
-                ? RobotStatus.WAITING
+        RobotStatus activity = lowBatteryWaiting || robot.hasLowBatteryAlert()
+                ? RobotStatus.LOW_BATTERY
                 : returningToCharge
                         ? RobotStatus.RETURNING_TO_CHARGE
-                        : visualActivity(robot, activeStep, taskType);
+                        : waiting
+                                ? RobotStatus.WAITING
+                                : visualActivity(robot, activeStep, taskType);
         Long waitingNodeId = lowBatteryWaiting
                 ? currentNodeId
                 : waiting ? robot.nextMovementTargetNodeId() : null;
@@ -2417,6 +2419,7 @@ public class SimulationPlaybackService {
                 }
                 int previousBatteryLevel = robot.getBatteryLevel();
                 robot.setBatteryLevel(batteryLevel);
+                robot.markLowBatteryAlert();
                 try {
                     publishAi(
                             context,
@@ -2425,6 +2428,7 @@ public class SimulationPlaybackService {
                     );
                 } catch (RuntimeException exception) {
                     robot.setBatteryLevel(previousBatteryLevel);
+                    robot.clearLowBatteryAlert();
                     lowBatteryInjectionRunIds.remove(simulationRunId);
                     throw exception;
                 }

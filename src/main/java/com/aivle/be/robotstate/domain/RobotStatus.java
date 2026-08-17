@@ -19,6 +19,9 @@ public enum RobotStatus {
     // 이동 중
     MOVING,
 
+    // 배터리 부족 감지 후 안전 노드 인계/재계획 대기
+    LOW_BATTERY,
+
     // 배터리 부족으로 충전소로 복귀 중
     RETURNING_TO_CHARGE,
 
