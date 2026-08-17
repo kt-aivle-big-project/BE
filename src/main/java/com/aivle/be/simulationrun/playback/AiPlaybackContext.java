@@ -308,6 +308,16 @@ final class AiPlaybackContext {
             return !isDirectChargeRecoveryRoute();
         }
 
+        boolean isReturningToCharge(int threshold) {
+            TimedStep step = currentStep();
+            return !lowBatteryHold
+                    && batteryLevel > 0
+                    && batteryLevel <= threshold
+                    && step != null
+                    && step.type() == StepType.MOVE
+                    && isDirectChargeRecoveryRoute();
+        }
+
         private boolean isDirectChargeRecoveryRoute() {
             for (int index = cursor; index < steps.size(); index++) {
                 TimedStep candidate = steps.get(index);

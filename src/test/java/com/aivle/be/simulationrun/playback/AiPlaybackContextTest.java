@@ -209,6 +209,12 @@ class AiPlaybackContextTest {
         assertFalse(chargingNow.needsLowBatteryReplan(20));
         assertTrue(depletedOnRecoveryRoute.needsLowBatteryReplan(20));
 
+        assertFalse(withoutCharge.isReturningToCharge(20));
+        assertTrue(directChargeRecovery.isReturningToCharge(20));
+        assertFalse(businessBeforeCharge.isReturningToCharge(20));
+        assertFalse(chargingNow.isReturningToCharge(20));
+        assertFalse(depletedOnRecoveryRoute.isReturningToCharge(20));
+
         withoutCharge.holdForLowBattery(3_000);
         assertTrue(withoutCharge.isHeld());
         assertEquals(3_000, withoutCharge.getLowBatteryWaitStartedAtMillis());

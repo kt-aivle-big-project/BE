@@ -123,6 +123,12 @@ class SimulationPlaybackServiceAiPlaybackTest {
         assertThat(robot.getStatus()).isEqualTo(RobotStatus.MOVING);
         assertThat(fixture.service().pendingLowBatteryReplanRequests()).isEmpty();
 
+        ArgumentCaptor<RobotState> returningStateCaptor =
+                ArgumentCaptor.forClass(RobotState.class);
+        verify(fixture.stateStore()).save(eq(1L), returningStateCaptor.capture());
+        assertThat(returningStateCaptor.getValue().activity())
+                .isEqualTo(RobotStatus.RETURNING_TO_CHARGE);
+
         fixture.service().tick(900L);
         assertThat(robot.getStatus()).isEqualTo(RobotStatus.CHARGING);
         assertThat(robot.getCurrentNodeId()).isEqualTo(20L);

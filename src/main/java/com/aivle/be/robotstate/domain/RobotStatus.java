@@ -19,6 +19,9 @@ public enum RobotStatus {
     // 이동 중
     MOVING,
 
+    // 배터리 부족으로 충전소로 복귀 중
+    RETURNING_TO_CHARGE,
+
     // 작업 수행 중 (세부 유형 미지정)
     WORKING,
 

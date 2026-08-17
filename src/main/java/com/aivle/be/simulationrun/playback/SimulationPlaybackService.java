@@ -1335,11 +1335,16 @@ public class SimulationPlaybackService {
             );
         }
         boolean lowBatteryWaiting = robot.isLowBatteryHold();
+        boolean returningToCharge = robot.isReturningToCharge(
+                context.getChargingThreshold()
+        );
         boolean waiting = lowBatteryWaiting || activeStep != null
                 && activeStep.type() == AiPlaybackContext.StepType.WAIT;
         RobotStatus activity = waiting
                 ? RobotStatus.WAITING
-                : visualActivity(robot, activeStep, taskType);
+                : returningToCharge
+                        ? RobotStatus.RETURNING_TO_CHARGE
+                        : visualActivity(robot, activeStep, taskType);
         Long waitingNodeId = lowBatteryWaiting
                 ? currentNodeId
                 : waiting ? robot.nextMovementTargetNodeId() : null;
