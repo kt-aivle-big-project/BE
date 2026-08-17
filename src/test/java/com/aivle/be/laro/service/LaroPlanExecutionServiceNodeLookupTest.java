@@ -169,7 +169,7 @@ class LaroPlanExecutionServiceNodeLookupTest {
         when(task.getEndNode()).thenReturn(rackNode);
         when(task.getTargetRackLevel()).thenReturn(2);
         doThrow(new BusinessException(ErrorCode.INVALID_INPUT))
-                .when(task).planInboundDestination(rackNode, 3);
+                .when(task).replanInboundDestination(rackNode, 3);
 
         LaroPlanResponse.LogicalOperation logical = logicalOperation("K4_1", 3);
         LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
@@ -213,6 +213,39 @@ class LaroPlanExecutionServiceNodeLookupTest {
                 .hasMessageContaining("requestedRackCode=K4_1")
                 .hasMessageContaining("requestedRackLevel=3")
                 .hasMessageContaining("causeType=BusinessException");
+    }
+
+    @Test
+    void replanUsesReplaceableInboundDestinationContract() {
+        WarehouseNode rackNode = mock(WarehouseNode.class);
+        when(rackNode.getNodeType()).thenReturn(NodeType.RACK_STORAGE);
+        when(warehouseNodeRepository
+                .findByWarehouse_IdAndNodeCodeAndActiveTrue(1L, "K4_1"))
+                .thenReturn(Optional.of(rackNode));
+
+        Task task = mock(Task.class);
+        when(task.getTaskType()).thenReturn(com.aivle.be.task.entity.TaskType.INBOUND);
+        LaroPlanResponse.LogicalOperation logical = logicalOperation("K4_1", 3);
+        LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
+                "PLAN-2", 2, "PLAN-1", "WH-1", "BE-RUN-1", "READY",
+                "REPLAN", "map-v1", 100, 0L, 0L, 1000L, 1000L,
+                java.util.List.of(), java.util.List.of(), java.util.List.of(logical),
+                java.util.List.of(), "PLAN-1"
+        );
+
+        ReflectionTestUtils.invokeMethod(
+                service,
+                "applyPhysicalStorageContract",
+                task,
+                1L,
+                operation(LaroPlanRequest.OperationType.INBOUND, null),
+                logical,
+                plan,
+                3
+        );
+
+        verify(task).replanInboundDestination(rackNode, 3);
+        verify(task, never()).planInboundDestination(rackNode, 3);
     }
 
     private LaroPlanRequest.StructuredOperation operation(

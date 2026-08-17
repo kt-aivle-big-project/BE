@@ -330,7 +330,11 @@ public class LaroPlanExecutionService {
         WarehouseNode rackNode = resolveEndNode(
                 warehouseId, operation, logicalOperation, plan);
         try {
-            task.planInboundDestination(rackNode, rackLevel);
+            if (plan != null && "REPLAN".equals(plan.planKind())) {
+                task.replanInboundDestination(rackNode, rackLevel);
+            } else {
+                task.planInboundDestination(rackNode, rackLevel);
+            }
         } catch (LaroPlanMappingException exception) {
             throw exception;
         } catch (RuntimeException exception) {

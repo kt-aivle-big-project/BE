@@ -185,9 +185,7 @@ public class Task {
         if (targetRackLevel == null) {
             return;
         }
-        if (taskType != TaskType.INBOUND || targetRackLevel < 1 || targetRackLevel > 3) {
-            throw new BusinessException(ErrorCode.INVALID_INPUT);
-        }
+        validateInboundRackLevel(targetRackLevel);
         if (this.targetRackLevel != null && !this.targetRackLevel.equals(targetRackLevel)) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
@@ -200,6 +198,37 @@ public class Task {
      * stored as the business destination of an inbound Task.
      */
     public void planInboundDestination(WarehouseNode rackNode, Integer rackLevel) {
+        validateInboundRackNode(rackNode);
+        if (isInventoryApplied()) {
+            if (!rackNode.getId().equals(endNode.getId())) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+            reserveTargetRackLevel(rackLevel);
+            return;
+        }
+        this.endNode = rackNode;
+        reserveTargetRackLevel(rackLevel);
+    }
+
+    /**
+     * Replaces an inbound putaway destination while a rolling-horizon replan is
+     * still free to move the physical work. Once execution or inventory
+     * mutation starts, the original rack contract remains immutable.
+     */
+    public void replanInboundDestination(WarehouseNode rackNode, Integer rackLevel) {
+        validateInboundRackNode(rackNode);
+        if (isInventoryApplied()
+                || (status != TaskStatus.PENDING && status != TaskStatus.ASSIGNED)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        if (rackLevel != null) {
+            validateInboundRackLevel(rackLevel);
+        }
+        this.endNode = rackNode;
+        this.targetRackLevel = rackLevel;
+    }
+
+    private void validateInboundRackNode(WarehouseNode rackNode) {
         if (taskType != TaskType.INBOUND
                 || rackNode == null
                 || rackNode.getNodeType() != NodeType.RACK_STORAGE) {
@@ -210,15 +239,12 @@ public class Task {
                 || !warehouse.getId().equals(rackNode.getWarehouse().getId())) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
-        if (isInventoryApplied()) {
-            if (!rackNode.getId().equals(endNode.getId())) {
-                throw new BusinessException(ErrorCode.INVALID_INPUT);
-            }
-            reserveTargetRackLevel(rackLevel);
-            return;
+    }
+
+    private void validateInboundRackLevel(Integer rackLevel) {
+        if (taskType != TaskType.INBOUND || rackLevel < 1 || rackLevel > 3) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
-        this.endNode = rackNode;
-        reserveTargetRackLevel(rackLevel);
     }
 
     /**

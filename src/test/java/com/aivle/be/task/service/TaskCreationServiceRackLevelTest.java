@@ -1,12 +1,16 @@
 package com.aivle.be.task.service;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.robot.entity.Robot;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.task.entity.Task;
+import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.entity.TaskType;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.warehouse.entity.Warehouse;
 import com.aivle.be.warehouse.repository.WarehouseRepository;
 import com.aivle.be.warehouseitem.repository.WarehouseItemRepository;
+import com.aivle.be.warehousenode.domain.NodeType;
 import com.aivle.be.warehousenode.entity.WarehouseNode;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -62,6 +67,58 @@ class TaskCreationServiceRackLevelTest {
         assertThat(task.getTargetRackLevel()).isEqualTo(3);
     }
 
+    @Test
+    void assignedInboundMayMoveToAnotherRackLevelBeforeInventoryMutation() {
+        Warehouse warehouse = warehouse(1L);
+        WarehouseNode originalRack = rack(101L, warehouse);
+        WarehouseNode replannedRack = rack(102L, warehouse);
+        Task task = new Task(
+                warehouse, mock(WarehouseNode.class), originalRack,
+                TaskType.INBOUND, null
+        );
+        task.reserveTargetRackLevel(2);
+        task.assignRobot(mock(Robot.class));
+
+        task.replanInboundDestination(replannedRack, 1);
+
+        assertThat(task.getEndNode()).isSameAs(replannedRack);
+        assertThat(task.getTargetRackLevel()).isEqualTo(1);
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.ASSIGNED);
+    }
+
+    @Test
+    void inboundDestinationRemainsImmutableAfterExecutionStarts() {
+        Warehouse warehouse = warehouse(1L);
+        WarehouseNode originalRack = rack(101L, warehouse);
+        Task task = new Task(
+                warehouse, mock(WarehouseNode.class), originalRack,
+                TaskType.INBOUND, null
+        );
+        task.reserveTargetRackLevel(2);
+        task.assignRobot(mock(Robot.class));
+        task.start();
+
+        assertThatThrownBy(() -> task.replanInboundDestination(originalRack, 1))
+                .isInstanceOf(BusinessException.class);
+        assertThat(task.getTargetRackLevel()).isEqualTo(2);
+    }
+
+    @Test
+    void inboundDestinationRemainsImmutableAfterInventoryMutation() {
+        Warehouse warehouse = warehouse(1L);
+        WarehouseNode originalRack = rack(101L, warehouse);
+        Task task = new Task(
+                warehouse, mock(WarehouseNode.class), originalRack,
+                TaskType.INBOUND, null
+        );
+        task.reserveTargetRackLevel(2);
+        task.markInventoryApplied();
+
+        assertThatThrownBy(() -> task.replanInboundDestination(originalRack, 1))
+                .isInstanceOf(BusinessException.class);
+        assertThat(task.getTargetRackLevel()).isEqualTo(2);
+    }
+
     private TaskCreateCommand command(TaskType type, Integer targetRackLevel) {
         return new TaskCreateCommand(
                 1L,
@@ -76,5 +133,19 @@ class TaskCreationServiceRackLevelTest {
                 type == TaskType.INBOUND ? "IN-001" : "ORD-001",
                 targetRackLevel
         );
+    }
+
+    private Warehouse warehouse(Long id) {
+        Warehouse warehouse = mock(Warehouse.class);
+        when(warehouse.getId()).thenReturn(id);
+        return warehouse;
+    }
+
+    private WarehouseNode rack(Long id, Warehouse warehouse) {
+        WarehouseNode rack = mock(WarehouseNode.class);
+        when(rack.getId()).thenReturn(id);
+        when(rack.getNodeType()).thenReturn(NodeType.RACK_STORAGE);
+        when(rack.getWarehouse()).thenReturn(warehouse);
+        return rack;
     }
 }
