@@ -81,6 +81,10 @@ public class SimulationPlaybackService {
     // simulator so that movement and work consumption remain visible to users.
     static final double SIMULATION_BATTERY_RATE_MULTIPLIER = 10.0;
 
+    // Redis projection publication and playback ticks can briefly cross at the
+    // replan barrier. Retry a bounded number of times before freezing the run.
+    private static final int MAX_PLAN_ACTIVATION_ATTEMPTS = 3;
+
     // 계획 대상 작업 상태
     private static final List<TaskStatus> PLANNABLE_STATUSES =
             List.of(TaskStatus.PENDING, TaskStatus.ASSIGNED);
@@ -306,7 +310,9 @@ public class SimulationPlaybackService {
         }
         pendingAiPlans.put(simulationRunId, new PendingAiPlan(
                 prepared.context(),
-                prepared.assignedRobotByTask()
+                prepared.assignedRobotByTask(),
+                prepared.registeredNodeByRobot(),
+                0
         ));
         logPreparedPlan("staged", prepared);
     }
@@ -352,11 +358,15 @@ public class SimulationPlaybackService {
         List<AiPlaybackContext.RobotTimeline> timelines = new ArrayList<>();
         Map<Long, Robot> assignedRobotByTask = new HashMap<>();
         Map<String, Long> robotIdsByAiCode = new HashMap<>();
+        Map<Long, Long> registeredNodeByRobot = new HashMap<>();
 
         for (LaroPlanResponse.RobotPlan robotPlan : plan.robots()) {
             Robot robot = resolvePlanRobot(robotPlan.robotId(), participants, usedRobotIds);
             usedRobotIds.add(robot.getId());
             robotIdsByAiCode.put(robotPlan.robotId(), robot.getId());
+            if (robot.getNodeId() != null) {
+                registeredNodeByRobot.put(robot.getId(), robot.getNodeId());
+            }
             List<AiPlaybackContext.TimedStep> steps = convertSteps(
                     robotPlan, nodesByCode, adjacency, aiTaskToBeTask);
             if (steps.isEmpty()) {
@@ -414,7 +424,8 @@ public class SimulationPlaybackService {
                 context,
                 Map.copyOf(assignedRobotByTask),
                 Map.copyOf(robotIdsByAiCode),
-                Map.copyOf(nodeIdsByCode)
+                Map.copyOf(nodeIdsByCode),
+                Map.copyOf(registeredNodeByRobot)
         );
     }
 
@@ -675,7 +686,8 @@ public class SimulationPlaybackService {
                     try {
                         activatePendingPlan(run, context, pending);
                     } catch (RuntimeException exception) {
-                        recoverFromActivationFailure(run, context, pending, exception);
+                        retryOrRecoverFromActivationFailure(
+                                run, context, pending, exception);
                     }
                     continue;
                 }
@@ -818,7 +830,7 @@ public class SimulationPlaybackService {
         if (oldContext.getClockMillis() < next.getClockMillis()) {
             return;
         }
-        validateActivationState(oldContext.getSimulationRunId(), next);
+        validateActivationState(oldContext.getSimulationRunId(), oldContext, pending);
         finalizeSupersededTasks(oldContext, next);
         assignPlannedTasks(pending.assignedRobotByTask());
         pendingAiPlans.remove(oldContext.getSimulationRunId());
@@ -834,17 +846,110 @@ public class SimulationPlaybackService {
                 oldContext.getSimulationRunId(), oldContext.getPlanId(), next.getPlanId(), next.getClockMillis());
     }
 
-    private void validateActivationState(Long simulationRunId, AiPlaybackContext next) {
+    private void validateActivationState(
+            Long simulationRunId,
+            AiPlaybackContext oldContext,
+            PendingAiPlan pending
+    ) {
         Map<Long, RobotState> actualByRobot = simulationRunStateStore.findAll(simulationRunId)
                 .stream()
                 .collect(Collectors.toMap(RobotState::robotId, value -> value));
-        for (AiPlaybackContext.RobotTimeline robot : next.getRobots()) {
-            RobotState actual = actualByRobot.get(robot.getRobotId());
-            if (actual == null || actual.nextNodeId() != null
-                    || !Objects.equals(robot.getCurrentNodeId(), actual.currentNodeId())) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        ActivationStateMismatch mismatch = findActivationStateMismatch(
+                oldContext,
+                pending.context(),
+                actualByRobot,
+                pending.registeredNodeByRobot()
+        );
+        if (mismatch != null) {
+            log.warn(
+                    "[AI playback] activation state mismatch: runId={}, oldPlanId={}, "
+                            + "newPlanId={}, robotId={}, reason={}, expectedNodeId={}, "
+                            + "runtimeNodeId={}, publishedNodeId={}, publishedNextNodeId={}, "
+                            + "runtimeHeld={}, attempt={}/{}",
+                    simulationRunId,
+                    oldContext.getPlanId(),
+                    pending.context().getPlanId(),
+                    mismatch.robotId(),
+                    mismatch.reason(),
+                    mismatch.expectedNodeId(),
+                    mismatch.runtimeNodeId(),
+                    mismatch.publishedNodeId(),
+                    mismatch.publishedNextNodeId(),
+                    mismatch.runtimeHeld(),
+                    pending.activationAttempts() + 1,
+                    MAX_PLAN_ACTIVATION_ATTEMPTS
+            );
+            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        }
+    }
+
+    /**
+     * The in-memory playback context owns the position of robots that belonged
+     * to the previous plan. Redis is a UI projection and can still contain the
+     * final MOVE for one publication cycle, so it must not reject a valid safe
+     * handover. A robot newly introduced by the replan has no old timeline; for
+     * it, use the published stationary state or its registered start node.
+     */
+    static ActivationStateMismatch findActivationStateMismatch(
+            AiPlaybackContext oldContext,
+            AiPlaybackContext nextContext,
+            Map<Long, RobotState> actualByRobot,
+            Map<Long, Long> registeredNodeByRobot
+    ) {
+        Map<Long, AiPlaybackContext.RobotTimeline> oldByRobot = oldContext.getRobots()
+                .stream()
+                .collect(Collectors.toMap(
+                        AiPlaybackContext.RobotTimeline::getRobotId,
+                        value -> value
+                ));
+        for (AiPlaybackContext.RobotTimeline nextRobot : nextContext.getRobots()) {
+            Long robotId = nextRobot.getRobotId();
+            Long expectedNodeId = nextRobot.getCurrentNodeId();
+            AiPlaybackContext.RobotTimeline runtime = oldByRobot.get(robotId);
+            RobotState published = actualByRobot.get(robotId);
+
+            if (runtime != null) {
+                if (!runtime.isHeld()) {
+                    return ActivationStateMismatch.of(
+                            robotId, "ACTIVE_ROBOT_NOT_HELD", expectedNodeId,
+                            runtime, published);
+                }
+                if (!Objects.equals(expectedNodeId, runtime.getCurrentNodeId())) {
+                    return ActivationStateMismatch.of(
+                            robotId, "HANDOVER_NODE_MISMATCH", expectedNodeId,
+                            runtime, published);
+                }
+                continue;
+            }
+
+            if (published != null) {
+                if (published.nextNodeId() != null) {
+                    return ActivationStateMismatch.of(
+                            robotId, "NEW_ROBOT_STILL_MOVING", expectedNodeId,
+                            null, published);
+                }
+                if (!Objects.equals(expectedNodeId, published.currentNodeId())) {
+                    return ActivationStateMismatch.of(
+                            robotId, "NEW_ROBOT_NODE_MISMATCH", expectedNodeId,
+                            null, published);
+                }
+                continue;
+            }
+
+            Long registeredNodeId = registeredNodeByRobot.get(robotId);
+            if (!Objects.equals(expectedNodeId, registeredNodeId)) {
+                return new ActivationStateMismatch(
+                        robotId,
+                        "NEW_ROBOT_STATE_MISSING",
+                        expectedNodeId,
+                        registeredNodeId,
+                        null,
+                        null,
+                        false
+                );
             }
         }
+        return null;
     }
 
     private void finalizeSupersededTasks(
@@ -897,6 +1002,31 @@ public class SimulationPlaybackService {
         }
     }
 
+    private void retryOrRecoverFromActivationFailure(
+            SimulationRun run,
+            AiPlaybackContext oldContext,
+            PendingAiPlan pending,
+            RuntimeException exception
+    ) {
+        int attempts = pending.activationAttempts() + 1;
+        if (attempts < MAX_PLAN_ACTIVATION_ATTEMPTS) {
+            PendingAiPlan retry = pending.withActivationAttempts(attempts);
+            if (pendingAiPlans.replace(oldContext.getSimulationRunId(), pending, retry)) {
+                log.warn(
+                        "[AI playback] replan activation retry scheduled: "
+                                + "runId={}, planId={}, attempt={}/{}, reason={}",
+                        oldContext.getSimulationRunId(),
+                        pending.context().getPlanId(),
+                        attempts,
+                        MAX_PLAN_ACTIVATION_ATTEMPTS,
+                        exception.getMessage()
+                );
+                return;
+            }
+        }
+        recoverFromActivationFailure(run, oldContext, pending, exception);
+    }
+
     private void recoverFromActivationFailure(
             SimulationRun run,
             AiPlaybackContext oldContext,
@@ -904,11 +1034,11 @@ public class SimulationPlaybackService {
             RuntimeException exception
     ) {
         pendingAiPlans.remove(oldContext.getSimulationRunId());
-        oldContext.cancelQuiesce();
+        suspendedAiRunIds.add(oldContext.getSimulationRunId());
         if (run.getStatus() == SimulationRunStatus.PENDING_ACTIVATION
                 || run.getStatus() == SimulationRunStatus.REPLANNING
                 || run.getStatus() == SimulationRunStatus.QUIESCING) {
-            run.finishReplanning();
+            run.pauseForHumanReview(LocalDateTime.now());
             messagingTemplate.convertAndSend(RUN_TOPIC, SimulationRunResponse.from(run));
         }
         try {
@@ -924,8 +1054,13 @@ public class SimulationPlaybackService {
         }
         inventoryReservationService.releaseActiveForPlan(
                 oldContext.getSimulationRunId(), pending.context().getPlanId());
-        log.error("[AI playback] pending plan discarded; old plan resumed: runId={}, planId={}",
-                oldContext.getSimulationRunId(), pending.context().getPlanId(), exception);
+        log.error("[AI playback] pending plan discarded; run paused with old plan held: "
+                        + "runId={}, oldPlanId={}, failedPlanId={}, attempts={}",
+                oldContext.getSimulationRunId(),
+                oldContext.getPlanId(),
+                pending.context().getPlanId(),
+                pending.activationAttempts() + 1,
+                exception);
     }
 
     private void startAiStep(
@@ -2352,13 +2487,49 @@ public class SimulationPlaybackService {
             AiPlaybackContext context,
             Map<Long, Robot> assignedRobotByTask,
             Map<String, Long> robotIdsByAiCode,
-            Map<String, Long> nodeIdsByCode
+            Map<String, Long> nodeIdsByCode,
+            Map<Long, Long> registeredNodeByRobot
     ) {}
 
-    private record PendingAiPlan(
+    record PendingAiPlan(
             AiPlaybackContext context,
-            Map<Long, Robot> assignedRobotByTask
-    ) {}
+            Map<Long, Robot> assignedRobotByTask,
+            Map<Long, Long> registeredNodeByRobot,
+            int activationAttempts
+    ) {
+        PendingAiPlan withActivationAttempts(int attempts) {
+            return new PendingAiPlan(
+                    context, assignedRobotByTask, registeredNodeByRobot, attempts);
+        }
+    }
+
+    record ActivationStateMismatch(
+            Long robotId,
+            String reason,
+            Long expectedNodeId,
+            Long runtimeNodeId,
+            Long publishedNodeId,
+            Long publishedNextNodeId,
+            boolean runtimeHeld
+    ) {
+        static ActivationStateMismatch of(
+                Long robotId,
+                String reason,
+                Long expectedNodeId,
+                AiPlaybackContext.RobotTimeline runtime,
+                RobotState published
+        ) {
+            return new ActivationStateMismatch(
+                    robotId,
+                    reason,
+                    expectedNodeId,
+                    runtime == null ? null : runtime.getCurrentNodeId(),
+                    published == null ? null : published.currentNodeId(),
+                    published == null ? null : published.nextNodeId(),
+                    runtime != null && runtime.isHeld()
+            );
+        }
+    }
 
     /**
      * 랙 노드마다 "앞에 설 수 있는 통로 노드"를 찾아둔다.
