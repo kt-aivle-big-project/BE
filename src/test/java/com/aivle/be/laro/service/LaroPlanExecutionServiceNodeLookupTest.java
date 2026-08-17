@@ -25,6 +25,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class LaroPlanExecutionServiceNodeLookupTest {
@@ -246,6 +247,41 @@ class LaroPlanExecutionServiceNodeLookupTest {
 
         verify(task).replanInboundDestination(rackNode, 3);
         verify(task, never()).planInboundDestination(rackNode, 3);
+    }
+
+    @Test
+    void replanPreservesExistingInboundDestinationWhenReducedPlanOmitsIt() {
+        WarehouseNode persistedRack = mock(WarehouseNode.class);
+        when(persistedRack.getNodeType()).thenReturn(NodeType.RACK_STORAGE);
+
+        Task task = mock(Task.class);
+        when(task.getTaskType()).thenReturn(com.aivle.be.task.entity.TaskType.INBOUND);
+        when(task.getEndNode()).thenReturn(persistedRack);
+        when(task.getTargetRackLevel()).thenReturn(3);
+
+        LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
+                "PLAN-2", 2, "PLAN-1", "WH-1", "BE-RUN-1", "READY",
+                "REPLAN", "map-v1", 100, 0L, 37_435L, 1000L, 38_435L,
+                java.util.List.of(), java.util.List.of(), java.util.List.of(),
+                java.util.List.of(), "PLAN-1"
+        );
+
+        ReflectionTestUtils.invokeMethod(
+                service,
+                "applyPhysicalStorageContract",
+                task,
+                1L,
+                operation(LaroPlanRequest.OperationType.INBOUND, null),
+                null,
+                plan,
+                null
+        );
+
+        verify(task, never()).replanInboundDestination(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
+        );
+        verifyNoInteractions(warehouseNodeRepository);
     }
 
     private LaroPlanRequest.StructuredOperation operation(

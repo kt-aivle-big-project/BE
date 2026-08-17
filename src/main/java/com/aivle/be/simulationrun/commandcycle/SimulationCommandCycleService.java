@@ -922,7 +922,34 @@ public class SimulationCommandCycleService {
                 failForHumanReview(code + ": " + message);
                 return;
             }
+            if (value != null && value.result() != null
+                    && "human_review".equalsIgnoreCase(value.result().status())) {
+                planResponse = value;
+                Map<String, Object> summary = value.result().frontendSummary();
+                String detail = firstNonBlankSummary(summary);
+                failForHumanReview(
+                        "HUMAN_REVIEW_REQUIRED: " + (
+                                detail == null
+                                        ? "AI 계획이 실행 가능한 경로를 만들지 못해 운영자 검토가 필요합니다."
+                                        : detail
+                        )
+                );
+                return;
+            }
             complete(value);
+        }
+
+        private static String firstNonBlankSummary(Map<String, Object> summary) {
+            if (summary == null || summary.isEmpty()) {
+                return null;
+            }
+            for (String key : List.of("summary_text", "headline", "next_action")) {
+                Object value = summary.get(key);
+                if (value != null && !value.toString().isBlank()) {
+                    return value.toString().trim();
+                }
+            }
+            return null;
         }
 
         synchronized void beginHumanReview(

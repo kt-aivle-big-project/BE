@@ -327,6 +327,19 @@ public class LaroPlanExecutionService {
         if (task.getTaskType() != TaskType.INBOUND) {
             return;
         }
+        if (logicalOperation == null
+                && plan != null
+                && "REPLAN".equals(plan.planKind())
+                && task.getEndNode() != null
+                && task.getEndNode().getNodeType() == NodeType.RACK_STORAGE
+                && task.getTargetRackLevel() != null) {
+            // A reduced replan omits operations that are already completed or
+            // committed to the old plan until handover. Their physical rack
+            // was persisted when the original plan was installed. Only
+            // operations present in logical_operations receive a new physical
+            // contract; remapping omitted history would discard valid data.
+            return;
+        }
         WarehouseNode rackNode = resolveEndNode(
                 warehouseId, operation, logicalOperation, plan);
         try {

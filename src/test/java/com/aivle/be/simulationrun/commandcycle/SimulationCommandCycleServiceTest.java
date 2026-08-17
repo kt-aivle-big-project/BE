@@ -314,4 +314,68 @@ class SimulationCommandCycleServiceTest {
         verify(commandGenerationService, times(2)).generate(eq(1L), any());
         verify(laroPlanService, times(2)).plan(eq(1L), eq(2L), any());
     }
+
+    @Test
+    void humanReviewStatusWithoutInteractionCannotCompleteSilently() {
+        when(simulationRunRepository.findById(1L)).thenReturn(Optional.of(run));
+        when(run.getGenerationIntervalSeconds()).thenReturn(300);
+        when(run.getExecutionVersion()).thenReturn(2L);
+        when(run.getStatus()).thenReturn(SimulationRunStatus.RUNNING);
+        when(laroPlanService.preflight(1L)).thenReturn(new LaroPreflightResponse(
+                "READY", true, 1L, "WH-1", 1L,
+                Map.of(), Map.of(), "redis", List.of()
+        ));
+
+        LaroPlanRequest.StructuredOperation operation = mock(
+                LaroPlanRequest.StructuredOperation.class
+        );
+        LaroPlanRequest planRequest = new LaroPlanRequest(
+                new LaroPlanRequest.StructuredInput(
+                        "REQ-MAPF-REVIEW", List.of(operation), Map.of(), null
+                ),
+                null,
+                null,
+                null
+        );
+        FulfillmentCommandGenerateResponse.FrontView frontView = mock(
+                FulfillmentCommandGenerateResponse.FrontView.class
+        );
+        when(frontView.requestId()).thenReturn("REQ-MAPF-REVIEW");
+        when(commandGenerationService.generate(eq(1L), any()))
+                .thenReturn(new FulfillmentCommandGenerateResponse(planRequest, frontView));
+        when(playbackService.hasActiveAiPlan(1L)).thenReturn(false);
+
+        LaroPlanResponse response = mock(LaroPlanResponse.class);
+        LaroPlanResponse.Result result = mock(LaroPlanResponse.Result.class);
+        when(response.result()).thenReturn(result);
+        when(result.status()).thenReturn("human_review");
+        when(result.pendingHumanInteraction()).thenReturn(null);
+        when(result.errors()).thenReturn(List.of());
+        when(result.frontendSummary()).thenReturn(Map.of(
+                "summary_text",
+                "배터리 부족 로봇 R271의 충전소 복귀 경로가 충돌했습니다."
+        ));
+        when(laroPlanService.plan(eq(1L), eq(2L), any())).thenReturn(response);
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(0).run();
+            return null;
+        }).when(taskExecutor).execute(any(Runnable.class));
+
+        SimulationCommandCycleStatusResponse status = service.triggerNow(1L);
+
+        assertEquals(
+                SimulationCommandCycleStatusResponse.CycleState.REVIEW_REQUIRED,
+                status.state()
+        );
+        assertNotNull(status.pendingHumanInteraction());
+        assertEquals(
+                "PLAN_REQUEST_FAILED",
+                status.pendingHumanInteraction().get("reason_code")
+        );
+        assertEquals(
+                "HUMAN_REVIEW_REQUIRED: 배터리 부족 로봇 R271의 충전소 복귀 경로가 충돌했습니다.",
+                status.pendingHumanInteraction().get("technical_detail")
+        );
+        verify(laroPlanService).holdForHumanReview(1L, 2L);
+    }
 }
