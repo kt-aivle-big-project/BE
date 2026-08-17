@@ -126,9 +126,8 @@ public class SimulationRunService {
         SimulationRun run = SimulationRun.createRolling(warehouse, LocalDateTime.now());
 
         // 화면에서 고른 시나리오의 설정(충전 기준·자동 재계획·장애물·배속)을 실행에 옮긴다.
-        // 시나리오를 안 골랐으면 예전처럼 요청 배속만 쓴다.
-        Scenario scenario = findScenarioForWarehouse(
-                request.scenarioId(), warehouse.getId());
+        // 시나리오와 창고는 독립적으로 선택하며, 시나리오를 안 골랐으면 요청 배속만 쓴다.
+        Scenario scenario = findScenario(request.scenarioId());
 
         run.applyScenario(scenario, request.simulationSpeed());
 
@@ -147,22 +146,16 @@ public class SimulationRunService {
     /**
      * 실행에 쓸 시나리오를 찾는다.
      *
-     * <p>고르지 않았으면 null 이다. 다른 창고의 시나리오는 설비·노드가 달라
-     * 그대로 쓸 수 없으므로 거부한다.
+     * <p>시나리오와 창고는 독립적으로 선택하므로 scenarioId로만 조회한다.
+     * 고르지 않았으면 null 이다.
      */
-    private Scenario findScenarioForWarehouse(Long scenarioId, Long warehouseId) {
+    private Scenario findScenario(Long scenarioId) {
         if (scenarioId == null) {
             return null;
         }
 
-        Scenario scenario = scenarioRepository.findById(scenarioId)
+        return scenarioRepository.findById(scenarioId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SCENARIO_NOT_FOUND));
-
-        if (!scenario.getWarehouse().getId().equals(warehouseId)) {
-            throw new BusinessException(ErrorCode.SCENARIO_WAREHOUSE_MISMATCH);
-        }
-
-        return scenario;
     }
 
     /**
@@ -181,8 +174,8 @@ public class SimulationRunService {
         List<SimulationRun> runs = requester.isUser()
                 ? simulationRunRepository.findAllByUser_IdOrderByIdDesc(requester.userId())
                 : simulationRunRepository.findAllByGuestSessionIdOrderByIdDesc(
-                        requester.guestSessionId()
-                );
+                requester.guestSessionId()
+        );
         return runs.stream()
                 .map(this::toHistoryResponse)
                 .toList();
@@ -236,16 +229,16 @@ public class SimulationRunService {
 
         boolean alreadyActive = requester.isGuest()
                 ? simulationRunRepository.existsByGuestSessionIdAndStatusInAndIdNot(
-                        requester.guestSessionId(),
+                requester.guestSessionId(),
+                ACTIVE_STATUSES,
+                simulationRunId
+        )
+                : simulationRunRepository
+                .existsByWarehouse_IdAndGuestSessionIdIsNullAndStatusInAndIdNot(
+                        warehouseId,
                         ACTIVE_STATUSES,
                         simulationRunId
-                )
-                : simulationRunRepository
-                        .existsByWarehouse_IdAndGuestSessionIdIsNullAndStatusInAndIdNot(
-                                warehouseId,
-                                ACTIVE_STATUSES,
-                                simulationRunId
-                        );
+                );
         if (alreadyActive) {
             throw new BusinessException(ErrorCode.SIMULATION_RUN_ALREADY_ACTIVE);
         }
