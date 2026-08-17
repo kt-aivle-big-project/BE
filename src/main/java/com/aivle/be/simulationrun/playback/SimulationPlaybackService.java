@@ -6,6 +6,7 @@ import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.service.LaroInventoryReservationService;
+import com.aivle.be.laro.service.LaroPlanMappingException;
 import com.aivle.be.laro.service.LaroTaskId;
 import com.aivle.be.optimization.entity.ReoptimizationPlanStage;
 import com.aivle.be.optimization.staging.ReoptimizationActivationPlan;
@@ -287,7 +288,13 @@ public class SimulationPlaybackService {
         AiPlaybackContext active = aiContexts.get(simulationRunId);
         if (active == null || plan.basePlanId() == null
                 || !plan.basePlanId().equals(active.getPlanId())) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "BASE_PLAN_ID_MISMATCH",
+                    "simulationRunId", simulationRunId,
+                    "planId", plan.planId(),
+                    "basePlanId", plan.basePlanId(),
+                    "activePlanId", active == null ? null : active.getPlanId()
+            );
         }
         PreparedAiPlan prepared = prepareAiPlan(simulationRunId, plan, aiTaskToBeTask);
         Map<String, Long> robotIds = prepared.robotIdsByAiCode();
@@ -303,7 +310,16 @@ public class SimulationPlaybackService {
                 }
                 Long nodeId = prepared.nodeIdsByCode().get(point.nodeId());
                 if (robotId == null || nodeId == null || point.handoverAtMs() == null) {
-                    throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                    throw mappingFailure(
+                            "HANDOVER_POINT_UNRESOLVED",
+                            "simulationRunId", simulationRunId,
+                            "planId", plan.planId(),
+                            "handoverRobotId", point.robotId(),
+                            "handoverNodeId", point.nodeId(),
+                            "handoverAtMs", point.handoverAtMs(),
+                            "resolvedRobotId", robotId,
+                            "resolvedNodeId", nodeId
+                    );
                 }
                 active.applyHandover(robotId, point.handoverAtMs(), nodeId);
             }
@@ -339,7 +355,14 @@ public class SimulationPlaybackService {
                 .toList();
         if (participants.isEmpty() || plan.robots() == null
                 || plan.robots().size() > participants.size()) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "PLAN_ROBOT_COUNT_INVALID",
+                    "simulationRunId", simulationRunId,
+                    "planId", plan.planId(),
+                    "participantCount", participants.size(),
+                    "planRobotCount", plan.robots() == null ? null : plan.robots().size(),
+                    "participantRobotIds", participants.stream().map(Robot::getId).toList()
+            );
         }
 
         Map<String, WarehouseNode> nodesByCode = warehouseNodeRepository
@@ -368,7 +391,13 @@ public class SimulationPlaybackService {
                 registeredNodeByRobot.put(robot.getId(), robot.getNodeId());
             }
             List<AiPlaybackContext.TimedStep> steps = convertSteps(
-                    robotPlan, nodesByCode, adjacency, aiTaskToBeTask);
+                    simulationRunId,
+                    plan.planId(),
+                    robotPlan,
+                    nodesByCode,
+                    adjacency,
+                    aiTaskToBeTask
+            );
             if (steps.isEmpty()) {
                 continue;
             }
@@ -441,6 +470,8 @@ public class SimulationPlaybackService {
     }
 
     private List<AiPlaybackContext.TimedStep> convertSteps(
+            Long simulationRunId,
+            String planId,
             LaroPlanResponse.RobotPlan robotPlan,
             Map<String, WarehouseNode> nodesByCode,
             Map<Long, Set<Long>> adjacency,
@@ -461,21 +492,60 @@ public class SimulationPlaybackService {
         for (LaroPlanResponse.PlanStep step : ordered) {
             if (step.stepType() == null || step.startAtMs() == null || step.endAtMs() == null
                     || step.endAtMs() < step.startAtMs() || step.startAtMs() < previousEnd) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                throw mappingFailure(
+                        "STEP_TIMELINE_INVALID",
+                        "simulationRunId", simulationRunId,
+                        "planId", planId,
+                        "robotId", robotPlan.robotId(),
+                        "stepId", step.stepId(),
+                        "stepType", step.stepType(),
+                        "startAtMs", step.startAtMs(),
+                        "endAtMs", step.endAtMs(),
+                        "previousEndAtMs", previousEnd
+                );
             }
             AiPlaybackContext.StepType type;
             try {
                 type = AiPlaybackContext.StepType.valueOf(step.stepType().toUpperCase(Locale.ROOT));
             } catch (IllegalArgumentException exception) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                throw mappingFailure(
+                        "STEP_TYPE_UNSUPPORTED",
+                        "simulationRunId", simulationRunId,
+                        "planId", planId,
+                        "robotId", robotPlan.robotId(),
+                        "stepId", step.stepId(),
+                        "stepType", step.stepType()
+                );
             }
 
-            Long nodeId = nodeId(nodesByCode, step.nodeId(), type != AiPlaybackContext.StepType.MOVE);
-            Long fromNodeId = nodeId(nodesByCode, step.fromNode(), type == AiPlaybackContext.StepType.MOVE);
-            Long toNodeId = nodeId(nodesByCode, step.toNode(), type == AiPlaybackContext.StepType.MOVE);
+            Long nodeId = stepNodeId(
+                    simulationRunId, planId, robotPlan.robotId(), step,
+                    nodesByCode, step.nodeId(), "nodeId",
+                    type != AiPlaybackContext.StepType.MOVE
+            );
+            Long fromNodeId = stepNodeId(
+                    simulationRunId, planId, robotPlan.robotId(), step,
+                    nodesByCode, step.fromNode(), "fromNode",
+                    type == AiPlaybackContext.StepType.MOVE
+            );
+            Long toNodeId = stepNodeId(
+                    simulationRunId, planId, robotPlan.robotId(), step,
+                    nodesByCode, step.toNode(), "toNode",
+                    type == AiPlaybackContext.StepType.MOVE
+            );
             if (type == AiPlaybackContext.StepType.MOVE
                     && !adjacency.getOrDefault(fromNodeId, Set.of()).contains(toNodeId)) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                throw mappingFailure(
+                        "MOVE_EDGE_NOT_TRAVERSABLE",
+                        "simulationRunId", simulationRunId,
+                        "planId", planId,
+                        "robotId", robotPlan.robotId(),
+                        "stepId", step.stepId(),
+                        "fromNode", step.fromNode(),
+                        "fromNodeId", fromNodeId,
+                        "toNode", step.toNode(),
+                        "toNodeId", toNodeId
+                );
             }
 
             Long beTaskId = null;
@@ -535,20 +605,42 @@ public class SimulationPlaybackService {
         return null;
     }
 
-    private Long nodeId(
+    private Long stepNodeId(
+            Long simulationRunId,
+            String planId,
+            String robotId,
+            LaroPlanResponse.PlanStep step,
             Map<String, WarehouseNode> nodesByCode,
             String nodeCode,
+            String field,
             boolean required
     ) {
         if (nodeCode == null) {
             if (required) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                throw mappingFailure(
+                        "STEP_NODE_MISSING",
+                        "simulationRunId", simulationRunId,
+                        "planId", planId,
+                        "robotId", robotId,
+                        "stepId", step.stepId(),
+                        "stepType", step.stepType(),
+                        "field", field
+                );
             }
             return null;
         }
         WarehouseNode node = nodesByCode.get(nodeCode);
         if (node == null && required) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "STEP_NODE_UNKNOWN",
+                    "simulationRunId", simulationRunId,
+                    "planId", planId,
+                    "robotId", robotId,
+                    "stepId", step.stepId(),
+                    "stepType", step.stepType(),
+                    "field", field,
+                    "nodeCode", nodeCode
+            );
         }
         return node == null ? null : node.getId();
     }
@@ -569,13 +661,29 @@ public class SimulationPlaybackService {
     ) {
         Long numeric = canonicalRobotDatabaseId(planRobotId);
         if (numeric == null) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw new LaroPlanMappingException(
+                    "ROBOT_ID_INVALID",
+                    "planRobotId", planRobotId,
+                    "participantRobotIds", participants.stream().map(Robot::getId).toList()
+            );
         }
         return participants.stream()
                 .filter(robot -> numeric.equals(robot.getId()))
                 .filter(robot -> !usedRobotIds.contains(robot.getId()))
                 .findFirst()
-                .orElseThrow(() -> new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED));
+                .orElseThrow(() -> new LaroPlanMappingException(
+                        "ROBOT_NOT_PARTICIPATING_OR_DUPLICATED",
+                        "planRobotId", planRobotId,
+                        "resolvedRobotId", numeric,
+                        "participantRobotIds", participants.stream().map(Robot::getId).toList(),
+                        "usedRobotIds", usedRobotIds
+                ));
+    }
+
+    private LaroPlanMappingException mappingFailure(String reason, Object... context) {
+        LaroPlanMappingException exception = new LaroPlanMappingException(reason, context);
+        log.warn("[AI playback] {}", exception.getMessage());
+        return exception;
     }
 
     static Long canonicalRobotDatabaseId(String value) {

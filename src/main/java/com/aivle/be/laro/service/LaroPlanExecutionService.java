@@ -147,11 +147,22 @@ public class LaroPlanExecutionService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND));
         if (response.simulationRunId() != null
                 && !simulationRunId.equals(response.simulationRunId())) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "SIMULATION_RUN_ID_MISMATCH",
+                    "simulationRunId", simulationRunId,
+                    "responseSimulationRunId", response.simulationRunId(),
+                    "planId", plan.planId()
+            );
         }
         if (response.warehouseNumericId() != null
                 && !run.getWarehouse().getId().equals(response.warehouseNumericId())) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "WAREHOUSE_ID_MISMATCH",
+                    "simulationRunId", simulationRunId,
+                    "warehouseId", run.getWarehouse().getId(),
+                    "responseWarehouseId", response.warehouseNumericId(),
+                    "planId", plan.planId()
+            );
         }
 
         Map<String, LaroPlanRequest.StructuredOperation> requestedOperations = new LinkedHashMap<>();
@@ -366,13 +377,25 @@ public class LaroPlanExecutionService {
             if (rackNode != null) {
                 return rackNode;
             }
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw operationMappingFailure(
+                    "OUTBOUND_SOURCE_NODE_UNRESOLVED",
+                    warehouseId,
+                    operation,
+                    logicalOperation,
+                    plan
+            );
         }
         WarehouseNode serviceNode = resolveServiceNode(warehouseId, logicalOperation, plan, Set.of("PICKUP"), false);
         if (serviceNode != null) {
             return serviceNode;
         }
-        throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        throw operationMappingFailure(
+                "INBOUND_SOURCE_NODE_UNRESOLVED",
+                warehouseId,
+                operation,
+                logicalOperation,
+                plan
+        );
     }
 
     private WarehouseNode resolveEndNode(
@@ -391,7 +414,13 @@ public class LaroPlanExecutionService {
             if (directRack != null && directRack.getNodeType() == NodeType.RACK_STORAGE) {
                 return directRack;
             }
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw operationMappingFailure(
+                    "INBOUND_DESTINATION_RACK_UNRESOLVED",
+                    warehouseId,
+                    operation,
+                    logicalOperation,
+                    plan
+            );
         }
         WarehouseNode direct = resolveNode(warehouseId, operation.destinationNodeId(), operation.destinationNodeCode());
         if (direct != null) {
@@ -419,7 +448,42 @@ public class LaroPlanExecutionService {
         if (serviceNode != null) {
             return serviceNode;
         }
-        throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        throw operationMappingFailure(
+                "OUTBOUND_DESTINATION_NODE_UNRESOLVED",
+                warehouseId,
+                operation,
+                logicalOperation,
+                plan
+        );
+    }
+
+    private LaroPlanMappingException operationMappingFailure(
+            String reason,
+            Long warehouseId,
+            LaroPlanRequest.StructuredOperation operation,
+            LaroPlanResponse.LogicalOperation logicalOperation,
+            LaroPlanResponse.SimulationPlan plan
+    ) {
+        return mappingFailure(
+                reason,
+                "warehouseId", warehouseId,
+                "planId", plan == null ? null : plan.planId(),
+                "operationId", operation == null ? null : operation.operationId(),
+                "operationType", operation == null ? null : operation.operationType(),
+                "sourceNodeId", operation == null ? null : operation.sourceNodeId(),
+                "sourceNodeCode", operation == null ? null : operation.sourceNodeCode(),
+                "destinationNodeId", operation == null ? null : operation.destinationNodeId(),
+                "destinationNodeCode", operation == null ? null : operation.destinationNodeCode(),
+                "logicalRackId", logicalOperation == null ? null : logicalOperation.rackId(),
+                "logicalDestinationId", logicalOperation == null
+                        ? null : logicalOperation.logicalDestinationId()
+        );
+    }
+
+    private LaroPlanMappingException mappingFailure(String reason, Object... context) {
+        LaroPlanMappingException exception = new LaroPlanMappingException(reason, context);
+        log.warn("[LARO plan mapping] {}", exception.getMessage());
+        return exception;
     }
 
     private WarehouseNode resolveRackNode(

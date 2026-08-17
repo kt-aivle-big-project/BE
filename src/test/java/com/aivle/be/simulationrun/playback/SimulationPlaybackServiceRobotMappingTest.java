@@ -33,10 +33,16 @@ class SimulationPlaybackServiceRobotMappingTest {
         Robot second = robot(10002L);
         List<Robot> participants = List.of(first, second);
 
-        assertMappingFailure("R99999", participants, Set.of());
-        assertMappingFailure("ROBOT10001", participants, Set.of());
-        assertMappingFailure("R010001", participants, Set.of());
-        assertMappingFailure("R10001", participants, Set.of(10001L));
+        assertMappingFailure(
+                "R99999", participants, Set.of(),
+                "ROBOT_NOT_PARTICIPATING_OR_DUPLICATED"
+        );
+        assertMappingFailure("ROBOT10001", participants, Set.of(), "ROBOT_ID_INVALID");
+        assertMappingFailure("R010001", participants, Set.of(), "ROBOT_ID_INVALID");
+        assertMappingFailure(
+                "R10001", participants, Set.of(10001L),
+                "ROBOT_NOT_PARTICIPATING_OR_DUPLICATED"
+        );
     }
 
     @Test
@@ -52,7 +58,8 @@ class SimulationPlaybackServiceRobotMappingTest {
     private static void assertMappingFailure(
             String robotId,
             List<Robot> participants,
-            Set<Long> usedRobotIds
+            Set<Long> usedRobotIds,
+            String reason
     ) {
         assertThatThrownBy(() -> SimulationPlaybackService.resolvePlanRobot(
                 robotId,
@@ -60,6 +67,8 @@ class SimulationPlaybackServiceRobotMappingTest {
                 usedRobotIds
         ))
                 .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("reason=" + reason)
+                .hasMessageContaining("planRobotId=" + robotId)
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.LARO_PLAN_MAPPING_FAILED);
     }
