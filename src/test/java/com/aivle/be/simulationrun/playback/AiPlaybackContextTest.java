@@ -221,6 +221,52 @@ class AiPlaybackContextTest {
     }
 
     @Test
+    void replanActivationKeepsClockMonotonicAndCarriesCurrentBatteryState() {
+        AiPlaybackContext.RobotTimeline previousRobot = new AiPlaybackContext.RobotTimeline(
+                10001L,
+                List.of(),
+                11L,
+                73.0,
+                0.5,
+                1.5
+        );
+        previousRobot.setCarryingLoad(true);
+        AiPlaybackContext previous = new AiPlaybackContext(
+                1L, 1L, "WH-001", "PLAN-OLD", 1, "BE-RUN-1",
+                5_000, 5_000, List.of(previousRobot), Set.of(20L), 1.0
+        );
+        AiPlaybackContext.TimedStep move = new AiPlaybackContext.TimedStep(
+                "MOVE-NEW", 1, AiPlaybackContext.StepType.MOVE,
+                1_000, 2_000, null, 11L, 12L, 20L, null,
+                "replanned"
+        );
+        AiPlaybackContext.RobotTimeline plannedRobot = new AiPlaybackContext.RobotTimeline(
+                10001L,
+                List.of(move),
+                11L,
+                20.0,
+                0.5,
+                1.5
+        );
+        AiPlaybackContext pending = new AiPlaybackContext(
+                1L, 1L, "WH-001", "PLAN-NEW", 2, "BE-RUN-1",
+                1_000, 2_000, List.of(plannedRobot), Set.of(20L), 1.0
+        );
+
+        AiPlaybackContext activated = pending.rebaseForActivation(
+                previous.getClockMillis(), previous);
+        AiPlaybackContext.RobotTimeline activatedRobot = activated.getRobots().get(0);
+        AiPlaybackContext.TimedStep activatedMove = activatedRobot.getSteps().get(0);
+
+        assertEquals(5_000, activated.getClockMillis());
+        assertEquals(6_000, activated.getMakespanMillis());
+        assertEquals(5_000, activatedMove.startAtMillis());
+        assertEquals(6_000, activatedMove.endAtMillis());
+        assertEquals(73, activatedRobot.getBatteryLevel());
+        assertTrue(activatedRobot.isCarryingLoad());
+    }
+
+    @Test
     void quiescingWaitsForCurrentMoveButAllowsCurrentServiceToFinish() {
         AiPlaybackContext.RobotTimeline moving = new AiPlaybackContext.RobotTimeline(
                 10001L,

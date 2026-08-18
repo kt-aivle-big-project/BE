@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -170,6 +171,78 @@ final class AiPlaybackContext {
             return 0.0;
         }
         return Math.max(0.0, chargingPowerByNode.getOrDefault(nodeId, 0.0));
+    }
+
+    /**
+     * A replan is produced from the clock and battery snapshot captured when
+     * the request was sent.  The previous plan can continue until every robot
+     * reaches its safe handover node, so activating that snapshot verbatim
+     * would rewind both simulation time and battery state.  Move the complete
+     * replacement timeline to the real activation clock and carry over the
+     * physical state that changed while the replan was being calculated.
+     */
+    AiPlaybackContext rebaseForActivation(
+            long activationClockMillis,
+            AiPlaybackContext previous
+    ) {
+        long rebasedClock = Math.max(clockMillis, activationClockMillis);
+        long offsetMillis = rebasedClock - clockMillis;
+        Map<Long, RobotTimeline> previousByRobot = new HashMap<>();
+        for (RobotTimeline robot : previous.robots) {
+            previousByRobot.put(robot.robotId, robot);
+        }
+
+        List<RobotTimeline> rebasedRobots = robots.stream()
+                .map(robot -> {
+                    List<TimedStep> shiftedSteps = robot.steps.stream()
+                            .map(step -> new TimedStep(
+                                    step.stepId(),
+                                    step.sequence(),
+                                    step.type(),
+                                    step.startAtMillis() + offsetMillis,
+                                    step.endAtMillis() + offsetMillis,
+                                    step.nodeId(),
+                                    step.fromNodeId(),
+                                    step.toNodeId(),
+                                    step.taskId(),
+                                    step.serviceKind(),
+                                    step.reason()
+                            ))
+                            .toList();
+                    RobotTimeline prior = previousByRobot.get(robot.robotId);
+                    double activationBattery = prior == null
+                            ? robot.batteryLevel
+                            : prior.batteryLevel;
+                    RobotTimeline shifted = new RobotTimeline(
+                            robot.robotId,
+                            shiftedSteps,
+                            robot.currentNodeId,
+                            activationBattery,
+                            robot.moveBatteryRate,
+                            robot.workBatteryRate
+                    );
+                    if (prior != null) {
+                        shifted.carryingLoad = prior.carryingLoad;
+                    }
+                    return shifted;
+                })
+                .toList();
+
+        return new AiPlaybackContext(
+                simulationRunId,
+                warehouseId,
+                warehouseCode,
+                planId,
+                planVersion,
+                simulationId,
+                rebasedClock,
+                makespanMillis + offsetMillis,
+                rebasedRobots,
+                taskIds,
+                speed,
+                chargingThreshold,
+                chargingPowerByNode
+        );
     }
 
     @Getter

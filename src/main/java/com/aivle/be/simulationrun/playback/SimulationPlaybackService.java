@@ -903,7 +903,9 @@ public class SimulationPlaybackService {
                 publishAi(context, robot, step);
                 return;
             }
-            completeAiStep(robot, step);
+            if (!completeAiStep(context, robot, step)) {
+                return;
+            }
             robot.advanceStep();
         }
         if (context.isQuiescing() && robot.shouldHold(context.getClockMillis())) {
@@ -939,19 +941,22 @@ public class SimulationPlaybackService {
             return;
         }
         validateActivationState(oldContext.getSimulationRunId(), oldContext, pending);
-        finalizeSupersededTasks(oldContext, next);
+        AiPlaybackContext activated = next.rebaseForActivation(
+                oldContext.getClockMillis(), oldContext);
+        finalizeSupersededTasks(oldContext, activated);
         assignPlannedTasks(pending.assignedRobotByTask());
         pendingAiPlans.remove(oldContext.getSimulationRunId());
         lowBatteryReplanRequests.remove(oldContext.getSimulationRunId());
         lowBatteryInjectionRunIds.remove(oldContext.getSimulationRunId());
-        aiContexts.put(oldContext.getSimulationRunId(), next);
+        aiContexts.put(oldContext.getSimulationRunId(), activated);
         run.finishReplanning();
-        markPlanActivated(next.getSimulationRunId(), next.getPlanId());
+        markPlanActivated(activated.getSimulationRunId(), activated.getPlanId());
         inventoryReservationService.releaseSupersededPlan(
-                next.getSimulationRunId(), next.getPlanId());
+                activated.getSimulationRunId(), activated.getPlanId());
         messagingTemplate.convertAndSend(RUN_TOPIC, SimulationRunResponse.from(run));
         log.info("[AI playback] activated replan runId={}, oldPlanId={}, newPlanId={}, simTimeMs={}",
-                oldContext.getSimulationRunId(), oldContext.getPlanId(), next.getPlanId(), next.getClockMillis());
+                oldContext.getSimulationRunId(), oldContext.getPlanId(),
+                activated.getPlanId(), activated.getClockMillis());
     }
 
     private void validateActivationState(
@@ -1200,7 +1205,8 @@ public class SimulationPlaybackService {
         }
     }
 
-    private void completeAiStep(
+    private boolean completeAiStep(
+            AiPlaybackContext context,
             AiPlaybackContext.RobotTimeline robot,
             AiPlaybackContext.TimedStep step
     ) {
@@ -1217,9 +1223,22 @@ public class SimulationPlaybackService {
                 try {
                     taskService.applyInventoryAtServiceCompletion(step.taskId(), kind);
                 } catch (RuntimeException exception) {
-                    log.warn("[AI playback] rack inventory update failed: taskId={}, serviceKind={}, reason={}",
-                            step.taskId(), kind, exception.getMessage());
-                    throw exception;
+                    log.error(
+                            "[AI playback] task isolated after rack inventory update failure: "
+                                    + "runId={}, planId={}, robotId={}, taskId={}, serviceKind={}, reason={}",
+                            context.getSimulationRunId(),
+                            context.getPlanId(),
+                            robot.getRobotId(),
+                            step.taskId(),
+                            kind,
+                            exception.getMessage(),
+                            exception
+                    );
+                    robot.setFailed(true);
+                    robot.setStatus(RobotStatus.ERROR);
+                    publishAi(context, robot, null);
+                    failAiRobotTasks(context, robot.getRobotId());
+                    return false;
                 }
             }
             if (isChargeService(step)) {
@@ -1230,6 +1249,7 @@ public class SimulationPlaybackService {
                     kind
             ));
         }
+        return true;
     }
 
     private boolean isChargeService(AiPlaybackContext.TimedStep step) {
@@ -1340,13 +1360,18 @@ public class SimulationPlaybackService {
         );
         boolean waiting = lowBatteryWaiting || activeStep != null
                 && activeStep.type() == AiPlaybackContext.StepType.WAIT;
-        RobotStatus activity = lowBatteryWaiting || robot.hasLowBatteryAlert()
-                ? RobotStatus.LOW_BATTERY
-                : returningToCharge
-                        ? RobotStatus.RETURNING_TO_CHARGE
-                        : waiting
-                                ? RobotStatus.WAITING
-                                : visualActivity(robot, activeStep, taskType);
+        RobotStatus visualActivity = visualActivity(robot, activeStep, taskType);
+        RobotStatus activity = visualActivity == RobotStatus.CHARGING
+                ? RobotStatus.CHARGING
+                : lowBatteryWaiting
+                        ? RobotStatus.LOW_BATTERY
+                        : returningToCharge
+                                ? RobotStatus.RETURNING_TO_CHARGE
+                                : robot.hasLowBatteryAlert()
+                                        ? RobotStatus.LOW_BATTERY
+                                        : waiting
+                                                ? RobotStatus.WAITING
+                                                : visualActivity;
         Long waitingNodeId = lowBatteryWaiting
                 ? currentNodeId
                 : waiting ? robot.nextMovementTargetNodeId() : null;

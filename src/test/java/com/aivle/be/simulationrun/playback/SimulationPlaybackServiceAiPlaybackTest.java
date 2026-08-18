@@ -1,6 +1,8 @@
 package com.aivle.be.simulationrun.playback;
 
 import com.aivle.be.chargingstation.repository.ChargingStationRepository;
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.laro.service.LaroInventoryReservationService;
 import com.aivle.be.robot.repository.RobotRepository;
 import com.aivle.be.robotstate.domain.RobotState;
@@ -116,6 +118,7 @@ class SimulationPlaybackServiceAiPlaybackTest {
         Fixture fixture = fixture();
         AiPlaybackContext context = lowBatteryRecoveryContext(1L, 101L, 10L, 20L);
         AiPlaybackContext.RobotTimeline robot = context.getRobots().get(0);
+        robot.markLowBatteryAlert();
         installContext(fixture.service(), context);
         cacheNodeCodes(fixture.service(), Map.of(10L, "C01", 20L, "CH01"));
 
@@ -133,6 +136,12 @@ class SimulationPlaybackServiceAiPlaybackTest {
         assertThat(robot.getStatus()).isEqualTo(RobotStatus.CHARGING);
         assertThat(robot.getCurrentNodeId()).isEqualTo(20L);
         assertThat(robot.getBatteryLevel()).isEqualTo(19);
+
+        ArgumentCaptor<RobotState> chargingStateCaptor =
+                ArgumentCaptor.forClass(RobotState.class);
+        verify(fixture.stateStore(), times(2)).save(eq(1L), chargingStateCaptor.capture());
+        assertThat(chargingStateCaptor.getAllValues().get(1).activity())
+                .isEqualTo(RobotStatus.CHARGING);
 
         fixture.service().tick(1_000L);
         assertThat(robot.getStatus()).isEqualTo(RobotStatus.CHARGING);
@@ -182,6 +191,37 @@ class SimulationPlaybackServiceAiPlaybackTest {
         assertThat(suspendedRunIds(fixture.service())).containsExactly(1L);
     }
 
+    @Test
+    void occupiedInboundDropFailsOnlyAffectedRobotAndOtherPlaybackContinues() {
+        Fixture fixture = fixture();
+        AiPlaybackContext context = inboundDropContext(1L, 101L, 20L, 3325L);
+        installContext(fixture.service(), context);
+        cacheNodeCodes(fixture.service(), Map.of(20L, "R2_2"));
+        when(fixture.taskService().applyInventoryAtServiceCompletion(3325L, "DROP"))
+                .thenThrow(new BusinessException(ErrorCode.INVALID_INPUT));
+
+        fixture.service().tick(1_000L);
+
+        assertThat(suspendedRunIds(fixture.service())).isEmpty();
+        AiPlaybackContext.RobotTimeline failedRobot = context.getRobots().stream()
+                .filter(robot -> robot.getRobotId().equals(101L))
+                .findFirst()
+                .orElseThrow();
+        AiPlaybackContext.RobotTimeline otherRobot = context.getRobots().stream()
+                .filter(robot -> robot.getRobotId().equals(102L))
+                .findFirst()
+                .orElseThrow();
+        assertThat(failedRobot.isFailed()).isTrue();
+        assertThat(failedRobot.getStatus()).isEqualTo(RobotStatus.ERROR);
+        assertThat(otherRobot.getStatus()).isEqualTo(RobotStatus.MOVING);
+
+        fixture.service().tick(59_000L);
+
+        assertThat(otherRobot.getCurrentNodeId()).isEqualTo(21L);
+        verify(fixture.taskService(), times(1))
+                .applyInventoryAtServiceCompletion(3325L, "DROP");
+    }
+
     private Fixture fixture() {
         SimulationRunRepository runRepository = mock(SimulationRunRepository.class);
         SimulationRunStateStore stateStore = mock(SimulationRunStateStore.class);
@@ -192,6 +232,7 @@ class SimulationPlaybackServiceAiPlaybackTest {
         when(runRepository.findById(2L)).thenReturn(Optional.of(run));
         when(taskRepository.findById(-1L)).thenReturn(Optional.empty());
 
+        TaskService taskService = mock(TaskService.class);
         SimulationPlaybackService service = new SimulationPlaybackService(
                 runRepository,
                 mock(SimulationRunRobotRepository.class),
@@ -200,13 +241,70 @@ class SimulationPlaybackServiceAiPlaybackTest {
                 mock(RobotRepository.class),
                 mock(ChargingStationRepository.class),
                 mock(WarehouseNodeRepository.class),
-                mock(TaskService.class),
+                taskService,
                 mock(WarehousePathFinder.class),
                 mock(SimpMessagingTemplate.class),
                 mock(JdbcTemplate.class),
                 mock(LaroInventoryReservationService.class)
         );
-        return new Fixture(service, stateStore);
+        return new Fixture(service, stateStore, taskService);
+    }
+
+    private AiPlaybackContext inboundDropContext(
+            Long runId,
+            Long robotId,
+            Long rackNodeId,
+            Long taskId
+    ) {
+        AiPlaybackContext.TimedStep drop = new AiPlaybackContext.TimedStep(
+                "DROP-" + taskId,
+                0,
+                AiPlaybackContext.StepType.SERVICE,
+                0L,
+                1_000L,
+                rackNodeId,
+                null,
+                null,
+                taskId,
+                "DROP"
+        );
+        AiPlaybackContext.RobotTimeline robot = new AiPlaybackContext.RobotTimeline(
+                robotId,
+                List.of(drop),
+                rackNodeId,
+                100
+        );
+        AiPlaybackContext.TimedStep otherMove = new AiPlaybackContext.TimedStep(
+                "MOVE-OTHER-" + robotId,
+                0,
+                AiPlaybackContext.StepType.MOVE,
+                0L,
+                60_000L,
+                null,
+                rackNodeId,
+                rackNodeId + 1,
+                taskId + 1,
+                null
+        );
+        AiPlaybackContext.RobotTimeline otherRobot = new AiPlaybackContext.RobotTimeline(
+                robotId + 1,
+                List.of(otherMove),
+                rackNodeId,
+                100
+        );
+        return new AiPlaybackContext(
+                runId,
+                2L,
+                "WH-002",
+                "PLAN-INBOUND-DROP-" + runId,
+                2,
+                "BE-RUN-" + runId,
+                0L,
+                60_000L,
+                List.of(otherRobot, robot),
+                Set.of(),
+                1.0
+        );
     }
 
     private AiPlaybackContext movingContext(
@@ -375,7 +473,8 @@ class SimulationPlaybackServiceAiPlaybackTest {
 
     private record Fixture(
             SimulationPlaybackService service,
-            SimulationRunStateStore stateStore
+            SimulationRunStateStore stateStore,
+            TaskService taskService
     ) {
     }
 }

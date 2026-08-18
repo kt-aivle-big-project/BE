@@ -6,6 +6,8 @@ import com.aivle.be.fulfillmentcommand.domain.CommandExpressionMode;
 import com.aivle.be.fulfillmentcommand.domain.CommandPolicyProfile;
 import com.aivle.be.fulfillmentcommand.domain.FulfillmentCommandMode;
 import com.aivle.be.fulfillmentcommand.service.FulfillmentCommandGenerationService;
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPreflightResponse;
@@ -31,9 +33,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
@@ -54,6 +58,8 @@ class SimulationCommandCycleServiceTest {
     private TaskExecutor taskExecutor;
     @Mock
     private SimulationRunPlanSnapshotStore planSnapshotStore;
+    @Mock
+    private SimulationReplanPlanRequestFactory replanPlanRequestFactory;
     @Mock
     private SimulationRun run;
 
@@ -76,6 +82,50 @@ class SimulationCommandCycleServiceTest {
         assertEquals(SimulationCommandCycleStatusResponse.CycleState.IDLE, status.state());
         assertEquals(0L, status.simulatedTimeMs());
         assertEquals(0L, status.nextGenerationAtMs());
+    }
+
+    @Test
+    void latePlanFailureAfterStopIsDiscardedWithoutHumanReview() {
+        when(simulationRunRepository.findById(1L)).thenReturn(Optional.of(run));
+        when(run.getGenerationIntervalSeconds()).thenReturn(300);
+        when(run.getExecutionVersion()).thenReturn(2L);
+        when(laroPlanService.preflight(1L)).thenReturn(new LaroPreflightResponse(
+                "READY", true, 1L, "WH-1", 1L,
+                Map.of(), Map.of(), "redis", List.of()
+        ));
+
+        LaroPlanRequest.StructuredOperation operation = mock(
+                LaroPlanRequest.StructuredOperation.class
+        );
+        LaroPlanRequest planRequest = new LaroPlanRequest(
+                new LaroPlanRequest.StructuredInput(
+                        "REQ-LATE", List.of(operation), Map.of(), null
+                ),
+                null,
+                null,
+                null
+        );
+        FulfillmentCommandGenerateResponse.FrontView frontView = mock(
+                FulfillmentCommandGenerateResponse.FrontView.class
+        );
+        when(commandGenerationService.generate(eq(1L), any()))
+                .thenReturn(new FulfillmentCommandGenerateResponse(planRequest, frontView));
+        when(playbackService.hasActiveAiPlan(1L)).thenReturn(false);
+        when(laroPlanService.plan(eq(1L), eq(2L), any())).thenAnswer(invocation -> {
+            service.stop(1L);
+            throw new BusinessException(ErrorCode.SIMULATION_RUN_NOT_RUNNING);
+        });
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(0).run();
+            return null;
+        }).when(taskExecutor).execute(any(Runnable.class));
+
+        service.start(1L);
+
+        SimulationCommandCycleStatusResponse status = service.status(1L);
+        assertFalse(status.active());
+        assertEquals(SimulationCommandCycleStatusResponse.CycleState.IDLE, status.state());
+        verify(laroPlanService, never()).holdForHumanReview(any(), anyLong());
     }
 
     @Test
@@ -195,6 +245,8 @@ class SimulationCommandCycleServiceTest {
                 eq(1L), eq(2L), any(), eq("LOW_BATTERY"), any()
         ))
                 .thenReturn(mock(LaroPlanResponse.class));
+        when(replanPlanRequestFactory.enrichWithCurrentTaskContracts(eq(1L), any()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
         doAnswer(invocation -> {
             invocation.<Runnable>getArgument(0).run();
             return null;

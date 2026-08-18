@@ -16,6 +16,7 @@ import com.aivle.be.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -119,7 +120,7 @@ public class TaskService {
     }
 
     /** Applies the physical rack mutation at PICKUP/DROP completion once. */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean applyInventoryAtServiceCompletion(Long taskId, String serviceKind) {
         if (taskId == null) {
             return false;

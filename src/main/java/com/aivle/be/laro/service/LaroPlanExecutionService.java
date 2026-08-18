@@ -191,7 +191,13 @@ public class LaroPlanExecutionService {
             bindTaskIdentifiers(aiTaskToBeTask, operation, logicalOperations.get(operation.operationId()), plan, task);
         }
 
-        bindExistingPlanTasks(simulationRunId, logicalOperations, plan, aiTaskToBeTask);
+        bindExistingPlanTasks(
+                simulationRunId,
+                run.getWarehouse().getId(),
+                logicalOperations,
+                plan,
+                aiTaskToBeTask
+        );
 
         return new PreparedExecution(simulationRunId, plan, Map.copyOf(aiTaskToBeTask));
     }
@@ -210,6 +216,7 @@ public class LaroPlanExecutionService {
 
     private void bindExistingPlanTasks(
             Long simulationRunId,
+            Long warehouseId,
             Map<String, LaroPlanResponse.LogicalOperation> logicalOperations,
             LaroPlanResponse.SimulationPlan plan,
             Map<String, Long> bindings
@@ -225,6 +232,12 @@ public class LaroPlanExecutionService {
             if (task == null) {
                 continue;
             }
+            applyExistingLogicalPhysicalStorageContract(
+                    task,
+                    warehouseId,
+                    operation,
+                    plan
+            );
             bindIdentifier(bindings, operation.operationId(), task.getId());
             Set<String> logicalTaskIds = new HashSet<>();
             if (operation.taskIds() != null) {
@@ -377,6 +390,81 @@ public class LaroPlanExecutionService {
                             ? null : logicalOperation.rackId(),
                     "logicalRackLevel", logicalOperation == null
                             ? null : logicalOperation.rackLevel(),
+                    "causeType", exception.getClass().getSimpleName(),
+                    "causeMessage", exception.getMessage()
+            );
+        }
+    }
+
+    /**
+     * A rolling replan may move an existing inbound operation even when that
+     * operation is no longer present in the current structured request. The
+     * AI still returns it in logical_operations, so keep the persisted Task's
+     * physical rack contract in sync before the new plan is staged.
+     */
+    private void applyExistingLogicalPhysicalStorageContract(
+            Task task,
+            Long warehouseId,
+            LaroPlanResponse.LogicalOperation logicalOperation,
+            LaroPlanResponse.SimulationPlan plan
+    ) {
+        if (plan == null
+                || !"REPLAN".equals(plan.planKind())
+                || task.getTaskType() != TaskType.INBOUND
+                || task.isInventoryApplied()
+                || logicalOperation == null
+                || !"INBOUND_ITEM".equals(logicalOperation.operationType())) {
+            return;
+        }
+
+        WarehouseNode rackNode = resolveRackNode(warehouseId, logicalOperation);
+        Integer rackLevel = logicalOperation.rackLevel();
+        if (rackNode == null || rackLevel == null) {
+            throw mappingFailure(
+                    "EXISTING_INBOUND_REPLAN_DESTINATION_UNRESOLVED",
+                    "simulationRunId", task.getSimulationRun() == null
+                            ? null : task.getSimulationRun().getId(),
+                    "warehouseId", warehouseId,
+                    "planId", plan.planId(),
+                    "planVersion", plan.planVersion(),
+                    "operationId", logicalOperation.operationId(),
+                    "logicalRackId", logicalOperation.rackId(),
+                    "logicalRackLevel", logicalOperation.rackLevel(),
+                    "taskId", task.getId(),
+                    "taskStatus", task.getStatus()
+            );
+        }
+
+        if (task.getEndNode() != null
+                && rackNode.getId().equals(task.getEndNode().getId())
+                && rackLevel.equals(task.getTargetRackLevel())) {
+            return;
+        }
+
+        try {
+            task.replanInboundDestination(rackNode, rackLevel);
+        } catch (RuntimeException exception) {
+            throw mappingFailure(
+                    "EXISTING_INBOUND_REPLAN_CONTRACT_REJECTED",
+                    exception,
+                    "simulationRunId", task.getSimulationRun() == null
+                            ? null : task.getSimulationRun().getId(),
+                    "warehouseId", warehouseId,
+                    "planId", plan.planId(),
+                    "planVersion", plan.planVersion(),
+                    "basePlanId", plan.basePlanId(),
+                    "operationId", logicalOperation.operationId(),
+                    "taskId", task.getId(),
+                    "taskStatus", task.getStatus(),
+                    "inventoryApplied", task.isInventoryApplied(),
+                    "existingRackId", task.getEndNode() == null
+                            ? null : task.getEndNode().getId(),
+                    "existingRackCode", task.getEndNode() == null
+                            ? null : task.getEndNode().getNodeCode(),
+                    "existingRackLevel", task.getTargetRackLevel(),
+                    "requestedRackId", rackNode.getId(),
+                    "requestedRackCode", rackNode.getNodeCode(),
+                    "requestedRackLevel", rackLevel,
                     "causeType", exception.getClass().getSimpleName(),
                     "causeMessage", exception.getMessage()
             );

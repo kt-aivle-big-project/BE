@@ -49,6 +49,7 @@ public class SimulationCommandCycleService {
     private final LaroPlanService laroPlanService;
     private final SimulationPlaybackService playbackService;
     private final SimulationRunPlanSnapshotStore planSnapshotStore;
+    private final SimulationReplanPlanRequestFactory replanPlanRequestFactory;
     private final TaskExecutor taskExecutor;
     private final Map<Long, CycleRuntime> runtimes = new ConcurrentHashMap<>();
     private final Map<Long, Object> executionLocks = new ConcurrentHashMap<>();
@@ -59,6 +60,7 @@ public class SimulationCommandCycleService {
             LaroPlanService laroPlanService,
             SimulationPlaybackService playbackService,
             SimulationRunPlanSnapshotStore planSnapshotStore,
+            SimulationReplanPlanRequestFactory replanPlanRequestFactory,
             @Qualifier("simulationCommandCycleExecutor") TaskExecutor taskExecutor
     ) {
         this.simulationRunRepository = simulationRunRepository;
@@ -66,6 +68,7 @@ public class SimulationCommandCycleService {
         this.laroPlanService = laroPlanService;
         this.playbackService = playbackService;
         this.planSnapshotStore = planSnapshotStore;
+        this.replanPlanRequestFactory = replanPlanRequestFactory;
         this.taskExecutor = taskExecutor;
     }
 
@@ -459,7 +462,10 @@ public class SimulationCommandCycleService {
                 runtime.generated(generated);
             }
             LaroPlanRequest planRequest = lowBatteryCycle
-                    ? runtime.lowBatteryPlanRequest()
+                    ? replanPlanRequestFactory.enrichWithCurrentTaskContracts(
+                            simulationRunId,
+                            runtime.lowBatteryPlanRequest()
+                    )
                     : withUserCommand(
                             generated.planRequest(),
                             runtime.cycleUserCommand()
@@ -510,7 +516,32 @@ public class SimulationCommandCycleService {
                             ? planRequest.structuredInput().requestId()
                             : generated.frontView().requestId()
             );
+        } catch (StaleSimulationExecutionException exception) {
+            // Reset/restart replaced this execution while the remote AI call
+            // was still in flight.  The candidate plan is already released by
+            // LaroPlanService; this old cycle must not create a Human Review.
+            runtime.stop();
+            log.info(
+                    "[command-cycle] stale response discarded: runId={}, executionVersion={}, reason={}",
+                    simulationRunId,
+                    runtime.executionVersion(),
+                    exception.getMessage()
+            );
         } catch (RuntimeException exception) {
+            if (!runtime.snapshot().active()) {
+                // stop/reset removes and deactivates the runtime before an
+                // in-flight AI response can be installed.  Some lower layers
+                // report the terminal run state as a BusinessException rather
+                // than StaleSimulationExecutionException, but it is still an
+                // expected late response and must not become an operator alert.
+                log.info(
+                        "[command-cycle] response discarded after stop/reset: runId={}, executionVersion={}, reason={}",
+                        simulationRunId,
+                        runtime.executionVersion(),
+                        exception.getMessage()
+                );
+                return;
+            }
             Map<String, Object> failureDiagnostic = failureDiagnostic(
                     runtime,
                     cycleMinute,
