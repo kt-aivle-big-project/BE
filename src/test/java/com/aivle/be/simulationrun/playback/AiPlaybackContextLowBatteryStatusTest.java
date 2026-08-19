@@ -65,6 +65,45 @@ class AiPlaybackContextLowBatteryStatusTest {
         assertThat(robot.isReturningToCharge(20)).isFalse();
     }
 
+    @Test
+    void lowBatteryRobotWithActiveTaskFinishesHandoverBeforeItIsHeld() {
+        AiPlaybackContext.RobotTimeline robot = new AiPlaybackContext.RobotTimeline(
+                101L,
+                List.of(
+                        new AiPlaybackContext.TimedStep(
+                                "MOVE-LOADED", 1, AiPlaybackContext.StepType.MOVE,
+                                0, 1_000, null, 10L, 20L, 301L, null
+                        ),
+                        new AiPlaybackContext.TimedStep(
+                                "DROP", 2, AiPlaybackContext.StepType.SERVICE,
+                                1_000, 2_000, 20L, null, null, 301L, "DROP"
+                        ),
+                        new AiPlaybackContext.TimedStep(
+                                "MOVE-EGRESS", 3, AiPlaybackContext.StepType.MOVE,
+                                2_000, 3_000, null, 20L, 30L, null, null
+                        )
+                ),
+                10L,
+                20
+        );
+        robot.setCurrentTaskId(301L);
+        robot.setStepStarted(true);
+
+        robot.holdForLowBattery(500L);
+        robot.requestInitialHandover(500L);
+
+        assertThat(robot.isHeld()).isFalse();
+        assertThat(robot.isLowBatteryHold()).isFalse();
+        assertThat(robot.hasLowBatteryAlert()).isTrue();
+        assertThat(robot.getHandoverAtMillis()).isEqualTo(2_000L);
+        assertThat(robot.getHandoverNodeId()).isEqualTo(20L);
+
+        robot.hold(3_000L);
+        assertThat(robot.isHeld()).isTrue();
+        assertThat(robot.isLowBatteryHold()).isTrue();
+        assertThat(robot.getHeldAtMillis()).isEqualTo(3_000L);
+    }
+
     private AiPlaybackContext.TimedStep waitStep(int sequence, Long nodeId) {
         return new AiPlaybackContext.TimedStep(
                 "WAIT-" + sequence,

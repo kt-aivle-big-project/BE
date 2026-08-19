@@ -12,6 +12,8 @@ import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunRobotRepository;
 import com.aivle.be.simulationrun.repository.SimulationRunStateStore;
+import com.aivle.be.task.entity.Task;
+import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.task.repository.TaskRepository;
 import com.aivle.be.task.service.TaskService;
 import com.aivle.be.warehousenode.repository.WarehouseNodeRepository;
@@ -69,12 +71,71 @@ class SimulationPlaybackServiceAiPlaybackTest {
                     assertThat(request.carryingLoad()).isFalse();
                     assertThat(request.stoppedAtSimTimeMs()).isEqualTo(100L);
                 });
-        assertThat(robot.isLowBatteryHold()).isTrue();
+        assertThat(robot.isLowBatteryHold()).isFalse();
+        assertThat(robot.isHeld()).isFalse();
+        assertThat(robot.hasLowBatteryAlert()).isTrue();
 
         ArgumentCaptor<RobotState> stateCaptor = ArgumentCaptor.forClass(RobotState.class);
         verify(fixture.stateStore(), times(2)).save(eq(1L), stateCaptor.capture());
         assertThat(stateCaptor.getAllValues())
                 .allSatisfy(state -> assertThat(state.batteryLevel()).isEqualTo(20));
+    }
+
+    @Test
+    void lowBatteryBarrierFinishesCurrentTaskBeforeRobotBecomesReady() {
+        Fixture fixture = fixture();
+        AiPlaybackContext context = activeTaskContext(1L, 101L, 301L);
+        AiPlaybackContext.RobotTimeline robot = context.getRobots().get(0);
+        robot.setCurrentTaskId(301L);
+        installContext(fixture.service(), context);
+        cacheNodeCodes(fixture.service(), Map.of(
+                10L, "A00",
+                11L, "R0_0",
+                12L, "R0_1",
+                13L, "A01"
+        ));
+
+        fixture.service().injectRandomActiveRobotLowBattery(1L, 20);
+        fixture.service().tick(100L);
+        fixture.service().beginQuiescing(1L);
+
+        assertThat(fixture.service().isReadyForReplanRequest(1L)).isFalse();
+        assertThat(robot.isHeld()).isFalse();
+
+        fixture.service().tick(100L);
+        fixture.service().tick(100L);
+        fixture.service().tick(100L);
+
+        assertThat(fixture.service().isReadyForReplanRequest(1L)).isTrue();
+        assertThat(robot.isHeld()).isTrue();
+        assertThat(robot.isLowBatteryHold()).isTrue();
+        assertThat(robot.isCarryingLoad()).isFalse();
+        assertThat(robot.getCurrentNodeId()).isEqualTo(12L);
+        assertThat(robot.getHeldAtMillis()).isEqualTo(400L);
+        verify(fixture.taskService()).applyInventoryAtServiceCompletion(301L, "PICKUP");
+        verify(fixture.taskService()).applyInventoryAtServiceCompletion(301L, "DROP");
+
+        ArgumentCaptor<RobotState> stateCaptor = ArgumentCaptor.forClass(RobotState.class);
+        verify(fixture.stateStore(), times(5)).save(eq(1L), stateCaptor.capture());
+        List<RobotState> states = stateCaptor.getAllValues();
+        RobotState heldState = states.get(states.size() - 1);
+        assertThat(heldState.waitStartedAtMillis()).isEqualTo(400L);
+        assertThat(heldState.waitingReason()).contains("배터리", "재계획");
+    }
+
+    @Test
+    void physicalTaskCompletionIsPersistedBeforeReplanCanReplaceOldPlan() {
+        Fixture fixture = fixture();
+        Task task = mock(Task.class);
+        when(task.getStatus()).thenReturn(TaskStatus.IN_PROGRESS);
+        when(fixture.taskRepository().findById(301L)).thenReturn(Optional.of(task));
+        AiPlaybackContext context = activeTaskContext(1L, 101L, 301L);
+        installContext(fixture.service(), context);
+
+        fixture.service().tick(400L);
+
+        verify(fixture.taskService()).completeTask(301L);
+        assertThat(context.getRobots().get(0).getCurrentNodeId()).isEqualTo(12L);
     }
 
     @Test
@@ -170,6 +231,25 @@ class SimulationPlaybackServiceAiPlaybackTest {
     }
 
     @Test
+    void alreadySafeRobotIsPublishedBeforeReplanRequestCanStart() {
+        Fixture fixture = fixture();
+        AiPlaybackContext context = movingContext(1L, 101L, 10L, 20L);
+        installContext(fixture.service(), context);
+        cacheNodeCodes(fixture.service(), Map.of(10L, "C01", 20L, "RJ01"));
+
+        fixture.service().beginQuiescing(1L);
+
+        assertThat(fixture.service().isReadyForReplanRequest(1L)).isTrue();
+        ArgumentCaptor<RobotState> stateCaptor = ArgumentCaptor.forClass(RobotState.class);
+        verify(fixture.stateStore()).save(eq(1L), stateCaptor.capture());
+        RobotState state = stateCaptor.getValue();
+        assertThat(state.currentNodeId()).isEqualTo(10L);
+        assertThat(state.status()).isEqualTo(RobotStatus.IDLE);
+        assertThat(state.waitStartedAtMillis()).isZero();
+        assertThat(state.waitingReason()).isEqualTo("재계획 안전 노드에서 대기 중");
+    }
+
+    @Test
     void failedRunIsSuspendedWithoutBlockingOtherRunsOrRepeatingTheFailure() {
         Fixture fixture = fixture();
         installContext(fixture.service(), movingContext(1L, 101L, 10L, 20L));
@@ -230,7 +310,7 @@ class SimulationPlaybackServiceAiPlaybackTest {
         when(run.getStatus()).thenReturn(SimulationRunStatus.RUNNING);
         when(runRepository.findById(1L)).thenReturn(Optional.of(run));
         when(runRepository.findById(2L)).thenReturn(Optional.of(run));
-        when(taskRepository.findById(-1L)).thenReturn(Optional.empty());
+        when(taskRepository.findById(any())).thenReturn(Optional.empty());
 
         TaskService taskService = mock(TaskService.class);
         SimulationPlaybackService service = new SimulationPlaybackService(
@@ -247,7 +327,7 @@ class SimulationPlaybackServiceAiPlaybackTest {
                 mock(JdbcTemplate.class),
                 mock(LaroInventoryReservationService.class)
         );
-        return new Fixture(service, stateStore, taskService);
+        return new Fixture(service, stateStore, taskRepository, taskService);
     }
 
     private AiPlaybackContext inboundDropContext(
@@ -343,6 +423,50 @@ class SimulationPlaybackServiceAiPlaybackTest {
                 1_000L,
                 List.of(robot),
                 Set.of(),
+                1.0
+        );
+    }
+
+    private AiPlaybackContext activeTaskContext(Long runId, Long robotId, Long taskId) {
+        List<AiPlaybackContext.TimedStep> steps = List.of(
+                new AiPlaybackContext.TimedStep(
+                        "MOVE-PICKUP", 0, AiPlaybackContext.StepType.MOVE,
+                        0, 100, null, 10L, 11L, taskId, null
+                ),
+                new AiPlaybackContext.TimedStep(
+                        "PICKUP", 1, AiPlaybackContext.StepType.SERVICE,
+                        100, 200, 11L, null, null, taskId, "PICKUP"
+                ),
+                new AiPlaybackContext.TimedStep(
+                        "MOVE-DROP", 2, AiPlaybackContext.StepType.MOVE,
+                        200, 300, null, 11L, 12L, taskId, null
+                ),
+                new AiPlaybackContext.TimedStep(
+                        "DROP", 3, AiPlaybackContext.StepType.SERVICE,
+                        300, 400, 12L, null, null, taskId, "DROP"
+                ),
+                new AiPlaybackContext.TimedStep(
+                        "MOVE-EGRESS", 4, AiPlaybackContext.StepType.MOVE,
+                        400, 500, null, 12L, 13L, null, null
+                )
+        );
+        AiPlaybackContext.RobotTimeline robot = new AiPlaybackContext.RobotTimeline(
+                robotId,
+                steps,
+                10L,
+                100
+        );
+        return new AiPlaybackContext(
+                runId,
+                2L,
+                "WH-002",
+                "PLAN-TASK-" + runId,
+                1,
+                "BE-RUN-" + runId,
+                0,
+                500,
+                List.of(robot),
+                Set.of(taskId),
                 1.0
         );
     }
@@ -474,6 +598,7 @@ class SimulationPlaybackServiceAiPlaybackTest {
     private record Fixture(
             SimulationPlaybackService service,
             SimulationRunStateStore stateStore,
+            TaskRepository taskRepository,
             TaskService taskService
     ) {
     }

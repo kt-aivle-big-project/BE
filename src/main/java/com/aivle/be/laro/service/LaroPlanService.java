@@ -40,7 +40,7 @@ public class LaroPlanService {
             SimulationPlaybackService playbackService,
             LaroInventoryReservationService inventoryReservationService,
             SimulationRunRepository simulationRunRepository,
-            @Value("${laro.replan.safe-node-timeout-ms:30000}") long safeNodeWaitTimeoutMs
+            @Value("${laro.replan.safe-node-timeout-ms:60000}") long safeNodeWaitTimeoutMs
     ) {
         this.client = client;
         this.executionService = executionService;
@@ -390,7 +390,18 @@ public class LaroPlanService {
         while (!playbackService.isReadyForReplanRequest(simulationRunId)) {
             requireCurrentExecution(simulationRunId, expectedExecutionVersion);
             if (System.nanoTime() >= deadline) {
-                throw new IllegalStateException("Timed out while waiting for robots to reach safe nodes");
+                List<SimulationPlaybackService.ReplanBarrierRobotStatus> barrier =
+                        playbackService.replanBarrierStatus(simulationRunId);
+                log.error(
+                        "[LARO replan] safe-node barrier timeout: runId={}, timeoutMs={}, robots={}",
+                        simulationRunId,
+                        safeNodeWaitTimeoutMs,
+                        barrier
+                );
+                throw new IllegalStateException(
+                        "Timed out while waiting for robots to finish their current tasks "
+                                + "and reach safe nodes: " + barrier
+                );
             }
             try {
                 Thread.sleep(25L);

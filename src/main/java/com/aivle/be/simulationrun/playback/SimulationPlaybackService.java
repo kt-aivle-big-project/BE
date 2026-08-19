@@ -782,6 +782,9 @@ public class SimulationPlaybackService {
             if (suspendedAiRunIds.contains(runId)) {
                 continue;
             }
+            if (context.isHandoverPlanning()) {
+                continue;
+            }
 
             try {
                 context.advanceClock(tickMillis);
@@ -851,7 +854,7 @@ public class SimulationPlaybackService {
         int guard = 0;
         while (!robot.isFinished() && guard++ < MAX_STEPS_PER_TICK) {
             if (context.isQuiescing() && robot.shouldHold(context.getClockMillis())) {
-                robot.hold();
+                robot.hold(context.getClockMillis());
                 publishAi(context, robot, null);
                 return;
             }
@@ -909,7 +912,7 @@ public class SimulationPlaybackService {
             robot.advanceStep();
         }
         if (context.isQuiescing() && robot.shouldHold(context.getClockMillis())) {
-            robot.hold();
+            robot.hold(context.getClockMillis());
             publishAi(context, robot, null);
             return;
         }
@@ -918,7 +921,7 @@ public class SimulationPlaybackService {
             if (!context.isQuiescing()) {
                 robot.setCurrentTaskId(null);
             } else {
-                robot.hold();
+                robot.hold(context.getClockMillis());
             }
             publishAi(context, robot, null);
         }
@@ -1248,8 +1251,63 @@ public class SimulationPlaybackService {
                     robot.isCarryingLoad(),
                     kind
             ));
+            if (robot.completesBeTaskAt(step)) {
+                completeAiTaskAtPhysicalBoundary(
+                        context,
+                        robot,
+                        step.taskId(),
+                        kind
+                );
+            }
         }
         return true;
+    }
+
+    private void completeAiTaskAtPhysicalBoundary(
+            AiPlaybackContext context,
+            AiPlaybackContext.RobotTimeline robot,
+            Long taskId,
+            String serviceKind
+    ) {
+        if (taskId == null) {
+            return;
+        }
+        Task task = taskRepository.findById(taskId).orElse(null);
+        if (task == null || task.getStatus() == TaskStatus.DONE
+                || task.getStatus() == TaskStatus.FAILED
+                || task.getStatus() == TaskStatus.CANCELLED) {
+            return;
+        }
+        try {
+            if (task.getStatus() == TaskStatus.ASSIGNED) {
+                task.start();
+                broadcastTask(task);
+            }
+            if (task.getStatus() == TaskStatus.IN_PROGRESS) {
+                taskService.completeTask(taskId);
+                log.info(
+                        "[AI playback] task completed at physical boundary: "
+                                + "runId={}, planId={}, robotId={}, taskId={}, serviceKind={}",
+                        context.getSimulationRunId(),
+                        context.getPlanId(),
+                        robot.getRobotId(),
+                        taskId,
+                        serviceKind
+                );
+            }
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "[AI playback] task completion at physical boundary failed: "
+                            + "runId={}, planId={}, robotId={}, taskId={}, serviceKind={}, reason={}",
+                    context.getSimulationRunId(),
+                    context.getPlanId(),
+                    robot.getRobotId(),
+                    taskId,
+                    serviceKind,
+                    exception.getMessage(),
+                    exception
+            );
+        }
     }
 
     private boolean isChargeService(AiPlaybackContext.TimedStep step) {
@@ -1355,10 +1413,11 @@ public class SimulationPlaybackService {
             );
         }
         boolean lowBatteryWaiting = robot.isLowBatteryHold();
+        boolean quiesceHeld = context.isQuiescing() && robot.isHeld();
         boolean returningToCharge = robot.isReturningToCharge(
                 context.getChargingThreshold()
         );
-        boolean waiting = lowBatteryWaiting || activeStep != null
+        boolean waiting = lowBatteryWaiting || quiesceHeld || activeStep != null
                 && activeStep.type() == AiPlaybackContext.StepType.WAIT;
         RobotStatus visualActivity = visualActivity(robot, activeStep, taskType);
         RobotStatus activity = visualActivity == RobotStatus.CHARGING
@@ -1374,16 +1433,22 @@ public class SimulationPlaybackService {
                                                 : visualActivity;
         Long waitingNodeId = lowBatteryWaiting
                 ? currentNodeId
+                : quiesceHeld ? currentNodeId
                 : waiting ? robot.nextMovementTargetNodeId() : null;
         String waitingReason = lowBatteryWaiting
                 ? "배터리 " + robot.getBatteryLevel()
                         + "% · 충전 기준 " + context.getChargingThreshold()
                         + "% 도달 · Rule 재계획 요청 중"
+                : quiesceHeld ? "재계획 안전 노드에서 대기 중"
                 : waiting ? userFacingWaitReason(activeStep.reason()) : null;
         Long waitStartedAtMillis = null;
         Long estimatedResumeAtMillis = null;
         if (lowBatteryWaiting) {
-            waitStartedAtMillis = robot.getLowBatteryWaitStartedAtMillis();
+            waitStartedAtMillis = robot.getHeldAtMillis() == null
+                    ? robot.getLowBatteryWaitStartedAtMillis()
+                    : robot.getHeldAtMillis();
+        } else if (quiesceHeld) {
+            waitStartedAtMillis = robot.getHeldAtMillis();
         } else if (waiting) {
             waitStartedAtMillis = activeStep.startAtMillis();
             estimatedResumeAtMillis = activeStep.endAtMillis();
@@ -2551,17 +2616,72 @@ public class SimulationPlaybackService {
             long simulationClockMillis
     ) {}
 
+    public record ReplanBarrierRobotStatus(
+            Long robotId,
+            boolean held,
+            Long currentNodeId,
+            Long currentTaskId,
+            String currentStepId,
+            String currentStepType,
+            Long handoverAtMillis,
+            Long handoverNodeId,
+            Long heldAtMillis,
+            boolean carryingLoad
+    ) {}
+
     public void beginQuiescing(Long simulationRunId) {
         AiPlaybackContext context = aiContexts.get(simulationRunId);
         if (context == null || pendingAiPlans.containsKey(simulationRunId)) {
             throw new BusinessException(ErrorCode.LARO_PLAN_NOT_EXECUTABLE);
         }
         context.requestQuiesce();
+        // requestQuiesce can hold robots that are already between steps. Push
+        // those exact nodes/timestamps to Redis before the command thread sees
+        // the barrier as ready and calls AI.
+        for (AiPlaybackContext.RobotTimeline robot : context.getRobots()) {
+            synchronized (robot) {
+                if (robot.isHeld()) {
+                    publishAi(context, robot, null);
+                }
+            }
+        }
+        log.info(
+                "[AI playback] replan barrier requested: runId={}, simTimeMs={}, robots={}",
+                simulationRunId,
+                context.getClockMillis(),
+                replanBarrierStatus(simulationRunId)
+        );
     }
 
     public boolean isReadyForReplanRequest(Long simulationRunId) {
         AiPlaybackContext context = aiContexts.get(simulationRunId);
         return context != null && context.readyForReplanRequest();
+    }
+
+    public List<ReplanBarrierRobotStatus> replanBarrierStatus(Long simulationRunId) {
+        AiPlaybackContext context = aiContexts.get(simulationRunId);
+        if (context == null) {
+            return List.of();
+        }
+        return context.getRobots().stream()
+                .map(robot -> {
+                    synchronized (robot) {
+                        AiPlaybackContext.TimedStep step = robot.currentStep();
+                        return new ReplanBarrierRobotStatus(
+                                robot.getRobotId(),
+                                robot.isHeld(),
+                                robot.getCurrentNodeId(),
+                                robot.getCurrentTaskId(),
+                                step == null ? null : step.stepId(),
+                                step == null ? null : step.type().name(),
+                                robot.getHandoverAtMillis(),
+                                robot.getHandoverNodeId(),
+                                robot.getHeldAtMillis(),
+                                robot.isCarryingLoad()
+                        );
+                    }
+                })
+                .toList();
     }
 
     public void cancelQuiescing(Long simulationRunId) {
