@@ -387,6 +387,43 @@ class AiPlaybackContextTest {
 
         assertEquals(4_000, robot.getHandoverAtMillis());
         assertEquals(12L, robot.getHandoverNodeId());
+        assertTrue(robot.isHeld());
+        assertTrue(context.readyForReplanRequest());
+    }
+
+    @Test
+    void quiescingDuringStartedEgressMoveHandsOverAtMoveDestination() {
+        AiPlaybackContext.RobotTimeline robot = new AiPlaybackContext.RobotTimeline(
+                10001L,
+                List.of(
+                        timedService("STATION", 1, 0, 1_000, 20L, 301L),
+                        timedMove("MOVE-EGRESS", 2, 1_000, 2_000, 20L, 30L, 301L),
+                        timedService("NEXT-PICKUP", 3, 2_000, 3_000, 30L, 302L)
+                ),
+                20L,
+                20
+        );
+        robot.setCursor(1);
+        robot.setStepStarted(true);
+        // The completed outbound task id remains on its egress MOVE, matching
+        // the cloud failure where an immediate handover at the departed node
+        // could never be reached again.
+        robot.setCurrentTaskId(301L);
+        AiPlaybackContext context = new AiPlaybackContext(
+                1L, 1L, "WH-001", "PLAN-1", 1, "BE-RUN-1", 1_500, 3_000,
+                List.of(robot), Set.of(301L, 302L), 1.0
+        );
+
+        context.requestQuiesce();
+
+        assertEquals(2_000, robot.getHandoverAtMillis());
+        assertEquals(30L, robot.getHandoverNodeId());
+        assertFalse(robot.shouldHold(1_999));
+
+        robot.setCurrentNodeId(30L);
+        robot.setStepStarted(false);
+        robot.advanceStep();
+        assertTrue(robot.shouldHold(2_000));
     }
 
     @Test

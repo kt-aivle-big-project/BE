@@ -389,6 +389,11 @@ public class LaroPlanService {
         long deadline = System.nanoTime() + safeNodeWaitTimeoutMs * 1_000_000L;
         while (!playbackService.isReadyForReplanRequest(simulationRunId)) {
             requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+            if (!playbackService.hasActiveAiPlan(simulationRunId)) {
+                throw new IllegalStateException(
+                        "Active AI playback context disappeared while waiting for safe nodes"
+                );
+            }
             if (System.nanoTime() >= deadline) {
                 List<SimulationPlaybackService.ReplanBarrierRobotStatus> barrier =
                         playbackService.replanBarrierStatus(simulationRunId);

@@ -581,12 +581,17 @@ final class AiPlaybackContext {
                 addCompletionAndEgressCandidates(result, firstCompletionIndex);
             } else {
                 TimedStep active = currentStep();
-                if (currentTaskId == null && stepStarted
-                        && active != null && active.type() == StepType.MOVE) {
+                if (stepStarted && active != null
+                        && active.type() == StepType.MOVE) {
+                    // The previous physical task can already be complete while
+                    // its task id remains attached to an in-flight egress MOVE.
+                    // Parking at currentNodeId is impossible in that state: the
+                    // robot has already left it. Finish the committed edge and
+                    // hand over at its destination instead.
                     addCandidate(
                             result, active.endAtMillis(), active.toNodeId(), cursor);
-                } else if (currentTaskId == null && stepStarted
-                        && active != null && active.type() == StepType.SERVICE) {
+                } else if (stepStarted && active != null
+                        && active.type() == StepType.SERVICE) {
                     addCandidate(
                             result, active.endAtMillis(), active.nodeId(), cursor);
                 } else {

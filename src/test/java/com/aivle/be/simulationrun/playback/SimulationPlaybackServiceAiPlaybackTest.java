@@ -124,6 +124,79 @@ class SimulationPlaybackServiceAiPlaybackTest {
     }
 
     @Test
+    void barrierFinishesAnAlreadyStartedOutboundEgressMove() {
+        Fixture fixture = fixture();
+        Long taskId = 301L;
+        AiPlaybackContext.RobotTimeline robot = new AiPlaybackContext.RobotTimeline(
+                101L,
+                List.of(
+                        new AiPlaybackContext.TimedStep(
+                                "STATION", 0, AiPlaybackContext.StepType.SERVICE,
+                                0, 100, 20L, null, null, taskId, "STATION"
+                        ),
+                        new AiPlaybackContext.TimedStep(
+                                "MOVE-EGRESS", 1, AiPlaybackContext.StepType.MOVE,
+                                100, 300, null, 20L, 30L, taskId, null
+                        ),
+                        new AiPlaybackContext.TimedStep(
+                                "NEXT-PICKUP", 2, AiPlaybackContext.StepType.SERVICE,
+                                300, 400, 30L, null, null, 302L, "PICKUP"
+                        )
+                ),
+                20L,
+                100
+        );
+        AiPlaybackContext context = new AiPlaybackContext(
+                1L, 2L, "WH-002", "PLAN-EGRESS-1", 1, "BE-RUN-1",
+                0, 400, List.of(robot), Set.of(taskId, 302L), 1.0
+        );
+        installContext(fixture.service(), context);
+        cacheNodeCodes(fixture.service(), Map.of(20L, "ST01", 30L, "A01"));
+
+        // Inject during STATION. Its completion queues the low-battery request
+        // at a safe step boundary, but the playback thread can enter the next
+        // MOVE before the command thread begins quiescing (cloud run 173).
+        fixture.service().tick(50L);
+        fixture.service().injectRandomActiveRobotLowBattery(1L, 20);
+        fixture.service().tick(50L);
+
+        assertThat(fixture.service().pendingLowBatteryReplanRequests())
+                .singleElement()
+                .satisfies(request -> {
+                    assertThat(request.robotId()).isEqualTo(101L);
+                    assertThat(request.currentTaskId()).isEqualTo(taskId);
+                    assertThat(request.currentNodeId()).isEqualTo(20L);
+                    assertThat(request.carryingLoad()).isFalse();
+                    assertThat(request.stoppedAtSimTimeMs()).isEqualTo(100L);
+                });
+        assertThat(robot.currentStep().stepId()).isEqualTo("MOVE-EGRESS");
+        assertThat(robot.isStepStarted()).isFalse();
+
+        fixture.service().acknowledgeLowBatteryReplanRequest(1L, 101L);
+        fixture.service().tick(50L);
+        assertThat(robot.currentStep().stepId()).isEqualTo("MOVE-EGRESS");
+        assertThat(robot.isStepStarted()).isTrue();
+
+        fixture.service().beginQuiescing(1L);
+
+        assertThat(fixture.service().replanBarrierStatus(1L))
+                .singleElement()
+                .satisfies(status -> {
+                    assertThat(status.handoverAtMillis()).isEqualTo(300L);
+                    assertThat(status.handoverNodeId()).isEqualTo(30L);
+                });
+        assertThat(fixture.service().isReadyForReplanRequest(1L)).isFalse();
+
+        fixture.service().tick(150L);
+
+        assertThat(fixture.service().isReadyForReplanRequest(1L)).isTrue();
+        assertThat(robot.isHeld()).isTrue();
+        assertThat(robot.getCurrentNodeId()).isEqualTo(30L);
+        assertThat(robot.currentStep().stepId()).isEqualTo("NEXT-PICKUP");
+        verify(fixture.taskService()).applyInventoryAtServiceCompletion(taskId, "STATION");
+    }
+
+    @Test
     void physicalTaskCompletionIsPersistedBeforeReplanCanReplaceOldPlan() {
         Fixture fixture = fixture();
         Task task = mock(Task.class);
