@@ -208,6 +208,12 @@ class SimulationPlaybackServiceAiPlaybackTest {
         assertThat(robot.getStatus()).isEqualTo(RobotStatus.CHARGING);
         assertThat(robot.getBatteryLevel()).isEqualTo(20);
         assertThat(fixture.service().pendingLowBatteryReplanRequests()).isEmpty();
+
+        fixture.service().tick(80_000L);
+        assertThat(robot.getBatteryLevel()).isEqualTo(100);
+        assertThat(robot.getStatus()).isEqualTo(RobotStatus.IDLE);
+        assertThat(robot.hasLowBatteryAlert()).isFalse();
+        assertThat(fixture.service().pendingLowBatteryReplanRequests()).isEmpty();
     }
 
     @Test

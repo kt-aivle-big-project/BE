@@ -364,6 +364,10 @@ class AiPlaybackContextTest {
 
         robot.setCurrentNodeId(12L);
         robot.setStepStarted(false);
+        // Merely arriving at the DROP node after a coarse clock tick does not
+        // satisfy a handover whose boundary is after the DROP service itself.
+        assertFalse(robot.shouldHold(4_000));
+        robot.setCursor(4);
         assertTrue(robot.shouldHold(4_000));
     }
 

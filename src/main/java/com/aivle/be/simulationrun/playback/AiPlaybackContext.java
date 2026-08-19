@@ -142,8 +142,7 @@ final class AiPlaybackContext {
                     if (target == null) {
                         robot.requestInitialHandover(clockMillis);
                     } else {
-                        robot.applyHandover(
-                                target.atMillis(), target.nodeId(), clockMillis);
+                        robot.applyHandover(target, clockMillis);
                     }
                 }
             }
@@ -312,6 +311,7 @@ final class AiPlaybackContext {
                     );
                     if (prior != null) {
                         shifted.carryingLoad = prior.carryingLoad;
+                        shifted.lowBatteryAlert = prior.lowBatteryAlert;
                     }
                     return shifted;
                 })
@@ -351,6 +351,7 @@ final class AiPlaybackContext {
         private boolean failed;
         private volatile Long handoverAtMillis;
         private volatile Long handoverNodeId;
+        private volatile int handoverAfterStepIndex = -1;
         private volatile boolean held;
         private boolean lowBatteryReplanRequested;
         private boolean lowBatteryHold;
@@ -533,14 +534,11 @@ final class AiPlaybackContext {
             List<HandoverTarget> candidates = handoverCandidates(clockMillis);
             if (!candidates.isEmpty()) {
                 HandoverTarget committedTask = candidates.get(0);
-                applyHandover(
-                        committedTask.atMillis(),
-                        committedTask.nodeId(),
-                        clockMillis
-                );
+                applyHandover(committedTask, clockMillis);
                 return;
             }
-            applyHandover(clockMillis, currentNodeId, clockMillis);
+            applyHandover(new HandoverTarget(
+                    clockMillis, currentNodeId, cursor - 1), clockMillis);
         }
 
         /**
@@ -552,7 +550,7 @@ final class AiPlaybackContext {
         private List<HandoverTarget> handoverCandidates(long clockMillis) {
             List<HandoverTarget> result = new ArrayList<>();
             if (held || cursor >= steps.size()) {
-                addCandidate(result, clockMillis, currentNodeId);
+                addCandidate(result, clockMillis, currentNodeId, cursor - 1);
                 return result;
             }
 
@@ -585,12 +583,14 @@ final class AiPlaybackContext {
                 TimedStep active = currentStep();
                 if (currentTaskId == null && stepStarted
                         && active != null && active.type() == StepType.MOVE) {
-                    addCandidate(result, active.endAtMillis(), active.toNodeId());
+                    addCandidate(
+                            result, active.endAtMillis(), active.toNodeId(), cursor);
                 } else if (currentTaskId == null && stepStarted
                         && active != null && active.type() == StepType.SERVICE) {
-                    addCandidate(result, active.endAtMillis(), active.nodeId());
+                    addCandidate(
+                            result, active.endAtMillis(), active.nodeId(), cursor);
                 } else {
-                    addCandidate(result, clockMillis, currentNodeId);
+                    addCandidate(result, clockMillis, currentNodeId, cursor - 1);
                 }
                 addEgressCandidates(result, cursor - 1);
             }
@@ -598,12 +598,14 @@ final class AiPlaybackContext {
             if (result.isEmpty()) {
                 TimedStep step = currentStep();
                 if (stepStarted && step != null && step.type() == StepType.MOVE) {
-                    addCandidate(result, step.endAtMillis(), step.toNodeId());
+                    addCandidate(
+                            result, step.endAtMillis(), step.toNodeId(), cursor);
                 } else if (stepStarted && step != null
                         && step.type() == StepType.SERVICE) {
-                    addCandidate(result, step.endAtMillis(), step.nodeId());
+                    addCandidate(
+                            result, step.endAtMillis(), step.nodeId(), cursor);
                 } else {
-                    addCandidate(result, clockMillis, currentNodeId);
+                    addCandidate(result, clockMillis, currentNodeId, cursor - 1);
                 }
             }
             return result;
@@ -614,7 +616,12 @@ final class AiPlaybackContext {
                 int completionIndex
         ) {
             TimedStep completion = steps.get(completionIndex);
-            addCandidate(result, completion.endAtMillis(), completion.nodeId());
+            addCandidate(
+                    result,
+                    completion.endAtMillis(),
+                    completion.nodeId(),
+                    completionIndex
+            );
             addEgressCandidates(result, completionIndex);
         }
 
@@ -632,14 +639,14 @@ final class AiPlaybackContext {
                 if (next.type() == StepType.WAIT
                         && Objects.equals(next.nodeId(), handoverNode)) {
                     handoverAt = next.endAtMillis();
-                    addCandidate(result, handoverAt, handoverNode);
+                    addCandidate(result, handoverAt, handoverNode, nextIndex);
                     continue;
                 }
                 if (next.type() == StepType.MOVE
                         && Objects.equals(next.fromNodeId(), handoverNode)) {
                     handoverAt = next.endAtMillis();
                     handoverNode = next.toNodeId();
-                    addCandidate(result, handoverAt, handoverNode);
+                    addCandidate(result, handoverAt, handoverNode, nextIndex);
                     continue;
                 }
                 break;
@@ -649,13 +656,14 @@ final class AiPlaybackContext {
         private void addCandidate(
                 List<HandoverTarget> result,
                 long atMillis,
-                Long nodeId
+                Long nodeId,
+                int afterStepIndex
         ) {
             if (nodeId == null) {
                 return;
             }
             HandoverTarget candidate = new HandoverTarget(
-                    Math.max(0, atMillis), nodeId);
+                    Math.max(0, atMillis), nodeId, afterStepIndex);
             if (!result.contains(candidate)) {
                 result.add(candidate);
             }
@@ -771,9 +779,21 @@ final class AiPlaybackContext {
         }
 
         void applyHandover(long atMillis, Long nodeId, long clockMillis) {
+            int afterStepIndex = resolveHandoverStepIndex(atMillis, nodeId);
+            applyHandover(
+                    new HandoverTarget(atMillis, nodeId, afterStepIndex),
+                    clockMillis
+            );
+        }
+
+        private void applyHandover(HandoverTarget target, long clockMillis) {
+            long atMillis = target.atMillis();
+            Long nodeId = target.nodeId();
             handoverAtMillis = Math.max(0, atMillis);
             handoverNodeId = nodeId;
+            handoverAfterStepIndex = target.afterStepIndex();
             boolean reached = !stepStarted
+                    && cursor > handoverAfterStepIndex
                     && clockMillis >= handoverAtMillis
                     && (handoverNodeId == null || handoverNodeId.equals(currentNodeId));
             if (reached) {
@@ -784,8 +804,24 @@ final class AiPlaybackContext {
         boolean shouldHold(long clockMillis) {
             return handoverAtMillis != null
                     && !stepStarted
+                    && cursor > handoverAfterStepIndex
                     && clockMillis >= handoverAtMillis
                     && (handoverNodeId == null || handoverNodeId.equals(currentNodeId));
+        }
+
+        private int resolveHandoverStepIndex(long atMillis, Long nodeId) {
+            for (int index = cursor; index < steps.size(); index++) {
+                TimedStep step = steps.get(index);
+                Long completedNode = switch (step.type()) {
+                    case MOVE -> step.toNodeId();
+                    case WAIT, SERVICE -> step.nodeId();
+                };
+                if (step.endAtMillis() == atMillis
+                        && Objects.equals(completedNode, nodeId)) {
+                    return index;
+                }
+            }
+            return cursor - 1;
         }
 
         void hold(long clockMillis) {
@@ -800,6 +836,7 @@ final class AiPlaybackContext {
         void clearHandover() {
             handoverAtMillis = null;
             handoverNodeId = null;
+            handoverAfterStepIndex = -1;
             held = lowBatteryHold;
             heldAtMillis = lowBatteryHold ? heldAtMillis : null;
             if (lowBatteryHold) {
@@ -807,7 +844,11 @@ final class AiPlaybackContext {
             }
         }
 
-        private record HandoverTarget(long atMillis, Long nodeId) {}
+        private record HandoverTarget(
+                long atMillis,
+                Long nodeId,
+                int afterStepIndex
+        ) {}
     }
 
     enum StepType {
