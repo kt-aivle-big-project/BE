@@ -5,6 +5,8 @@ import com.aivle.be.fulfillmentcommand.controller.response.FulfillmentCommandGen
 import com.aivle.be.fulfillmentcommand.service.FulfillmentCommandGenerationService;
 import com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleService;
 import com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleStatusResponse;
+import com.aivle.be.simulationrun.commandcycle.SimulationRunPlanSnapshotStore;
+import com.aivle.be.simulationrun.controller.response.SimulationRunPlanSnapshotResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -18,6 +20,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @Tag(name = "Fulfillment Command", description = "재고·빈 보관 위치 기반 입고/출고 BOX 명령 생성 API")
 @RestController
 @RequestMapping("/api/simulation-runs")
@@ -26,6 +30,7 @@ public class FulfillmentCommandController {
 
     private final FulfillmentCommandGenerationService service;
     private final SimulationCommandCycleService commandCycleService;
+    private final SimulationRunPlanSnapshotStore planSnapshotStore;
 
     @Operation(summary = "plan 입력과 프론트 표시용 입고/출고 명령 생성")
     @PostMapping("/{simulationRunId}/fulfillment-commands/generate")
@@ -64,5 +69,23 @@ public class FulfillmentCommandController {
             @Valid @RequestBody FulfillmentCommandGenerateRequest request
     ) {
         return ResponseEntity.ok(commandCycleService.configure(simulationRunId, request));
+    }
+
+    @Operation(summary = "이 실행에 저장된 주기별 AI 계획 이력 조회")
+    @GetMapping("/{simulationRunId}/plan-snapshots")
+    public ResponseEntity<List<SimulationRunPlanSnapshotResponse>> planSnapshots(
+            @PathVariable Long simulationRunId
+    ) {
+        return ResponseEntity.ok(planSnapshotStore.findAll(simulationRunId));
+    }
+
+    @Operation(summary = "이 실행에서 마지막으로 생성된 AI 계획 조회")
+    @GetMapping("/{simulationRunId}/plan-snapshots/latest")
+    public ResponseEntity<SimulationRunPlanSnapshotResponse> latestPlanSnapshot(
+            @PathVariable Long simulationRunId
+    ) {
+        return planSnapshotStore.findLatest(simulationRunId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
     }
 }
