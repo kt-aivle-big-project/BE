@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -126,6 +127,35 @@ class ScenarioServiceTest {
                 ErrorCode.ACCESS_DENIED
         );
         verifyNoInteractions(robotRepository);
+    }
+
+    @Test
+    void listsOnlyScenariosOwnedByAuthenticatedUser() {
+        when(scenarioRepository.findAllVisibleToUser(USER_ID))
+                .thenReturn(List.of());
+
+        assertThat(scenarioService.getAll(
+                null,
+                AuthenticatedRequester.user(USER_ID)
+        )).isEmpty();
+
+        verify(scenarioRepository)
+                .findAllVisibleToUser(USER_ID);
+    }
+
+    @Test
+    void rejectsReadingAnotherUsersScenario() {
+        long scenarioId = 31L;
+        when(scenarioRepository.findVisibleToUser(scenarioId, USER_ID))
+                .thenReturn(Optional.empty());
+
+        assertError(
+                () -> scenarioService.get(
+                        scenarioId,
+                        AuthenticatedRequester.user(USER_ID)
+                ),
+                ErrorCode.SCENARIO_NOT_FOUND
+        );
     }
 
     private Warehouse ownedWarehouse() {
