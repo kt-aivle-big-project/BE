@@ -13,4 +13,6 @@ public interface ScenarioRepository extends JpaRepository<Scenario, Long> {
     Optional<Scenario> findByWarehouse_IdAndScenarioCode(Long warehouseId, String scenarioCode);
 
     boolean existsByWarehouse_IdAndScenarioCode(Long warehouseId, String scenarioCode);
+
+    boolean existsByScenarioCode(String scenarioCode);
 }

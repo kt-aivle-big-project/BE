@@ -64,6 +64,7 @@ public class SimulationRunService {
             SimulationRunStatus.PENDING_ACTIVATION
     );
 
+    // 런 자체의 생명주기(생성/시작/일시정지/재개/종료) 변경 브로드캐스트
     private static final String RUN_TOPIC = "/topic/simulation-runs";
 
     // 작업 상태 변경 브로드캐스트
@@ -94,6 +95,11 @@ public class SimulationRunService {
         return create(request, (Long) null);
     }
 
+    /**
+     * 시뮬레이션 실행 생성.
+     *
+     * @param userId 실행한 사용자 ID (인증 정보에서 전달, 없으면 null)
+     */
     @Transactional
     public SimulationRunResponse create(SimulationRunCreateRequest request, Long userId) {
         AuthenticatedRequester requester = userId == null
@@ -119,8 +125,9 @@ public class SimulationRunService {
         validateWarehouseForExecution(warehouse, requester);
         SimulationRun run = SimulationRun.createRolling(warehouse, LocalDateTime.now());
 
-        Scenario scenario = findScenarioForWarehouse(
-                request.scenarioId(), warehouse.getId());
+        // 화면에서 고른 시나리오의 설정(충전 기준·자동 재계획·장애물·배속)을 실행에 옮긴다.
+        // 시나리오와 창고는 독립적으로 선택하며, 시나리오를 안 골랐으면 요청 배속만 쓴다.
+        Scenario scenario = findScenario(request.scenarioId());
 
         run.applyScenario(scenario, request.simulationSpeed());
 
@@ -136,21 +143,24 @@ public class SimulationRunService {
         return broadcastRun(saved);
     }
 
-    private Scenario findScenarioForWarehouse(Long scenarioId, Long warehouseId) {
+    /**
+     * 실행에 쓸 시나리오를 찾는다.
+     *
+     * <p>시나리오와 창고는 독립적으로 선택하므로 scenarioId로만 조회한다.
+     * 고르지 않았으면 null 이다.
+     */
+    private Scenario findScenario(Long scenarioId) {
         if (scenarioId == null) {
             return null;
         }
 
-        Scenario scenario = scenarioRepository.findById(scenarioId)
+        return scenarioRepository.findById(scenarioId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SCENARIO_NOT_FOUND));
-
-        if (!scenario.getWarehouse().getId().equals(warehouseId)) {
-            throw new BusinessException(ErrorCode.SCENARIO_WAREHOUSE_MISMATCH);
-        }
-
-        return scenario;
     }
 
+    /**
+     * 로그인한 사용자가 실행했던 시뮬레이션 이력을 최신순으로 반환한다.
+     */
     @Transactional(readOnly = true)
     public List<SimulationRunHistoryResponse> getMyRuns(Long userId) {
         return simulationRunRepository.findAllByUser_IdOrderByIdDesc(userId)
@@ -164,13 +174,16 @@ public class SimulationRunService {
         List<SimulationRun> runs = requester.isUser()
                 ? simulationRunRepository.findAllByUser_IdOrderByIdDesc(requester.userId())
                 : simulationRunRepository.findAllByGuestSessionIdOrderByIdDesc(
-                        requester.guestSessionId()
-                );
+                requester.guestSessionId()
+        );
         return runs.stream()
                 .map(this::toHistoryResponse)
                 .toList();
     }
 
+    /**
+     * 시뮬레이션 초기화. 로봇 실시간 상태(Redis)를 비우고 대기 상태로 되돌린다.
+     */
     @Transactional
     public SimulationRunResponse reset(
             Long simulationRunId,
@@ -178,6 +191,8 @@ public class SimulationRunService {
     ) {
         SimulationRun run = findOwnedByForUpdate(simulationRunId, requester);
         run.reset();
+        // 초기화 뒤에는 현재 실행 ID를 재사용하지 않는다. 같은 실행 ID에서 새 명령을
+        // 만들면 기존 external operation ID와 충돌할 수 있으므로 다음 시작은 새 실행으로 한다.
         run.stop(LocalDateTime.now());
         simulationRunStateStore.deleteAll(simulationRunId);
         simulationPlaybackService.clear(simulationRunId);
@@ -185,6 +200,9 @@ public class SimulationRunService {
         simulationRunPlanSnapshotStore.deleteAll(simulationRunId);
         inventoryReservationService.releaseActiveForRun(simulationRunId);
 
+        // 초기화는 현재 재고를 그대로 유지하면서 실행 중이던 화면/작업만 정리한다.
+        // 이미 랙에 반영된 입·출고를 PENDING 으로 되돌리면 같은 작업이 재실행되어
+        // 재고가 이중 반영되므로, 미완료 작업은 취소하고 다음 시작 때 새 배치를 만든다.
         List<Task> tasks = taskRepository
                 .findAllBySimulationRun_IdOrderByRequestedAtAsc(simulationRunId);
 
@@ -211,21 +229,25 @@ public class SimulationRunService {
 
         boolean alreadyActive = requester.isGuest()
                 ? simulationRunRepository.existsByGuestSessionIdAndStatusInAndIdNot(
-                        requester.guestSessionId(),
+                requester.guestSessionId(),
+                ACTIVE_STATUSES,
+                simulationRunId
+        )
+                : simulationRunRepository
+                .existsByWarehouse_IdAndGuestSessionIdIsNullAndStatusInAndIdNot(
+                        warehouseId,
                         ACTIVE_STATUSES,
                         simulationRunId
-                )
-                : simulationRunRepository
-                        .existsByWarehouse_IdAndGuestSessionIdIsNullAndStatusInAndIdNot(
-                                warehouseId,
-                                ACTIVE_STATUSES,
-                                simulationRunId
-                        );
+                );
         if (alreadyActive) {
             throw new BusinessException(ErrorCode.SIMULATION_RUN_ALREADY_ACTIVE);
         }
 
+        // 창고에 등록된 로봇을 전부 투입한다.
         //
+        // 예전에는 시나리오 프리셋의 robot_count 만큼 잘라서 썼는데,
+        // 창고에 로봇을 추가해도 화면에 안 나타나 혼란스러웠다.
+        // 투입 대수는 "창고에 로봇을 몇 대 등록했는가"로 정한다.
         List<Robot> robots =
                 robotRepository.findAllByWarehouse_IdAndStatusAndNodeIdIsNotNullOrderById(
                         warehouseId,
@@ -236,6 +258,7 @@ public class SimulationRunService {
             throw new BusinessException(ErrorCode.NO_AVAILABLE_ROBOTS);
         }
 
+        // 실제 참가 대수를 기록해 둔다 (실행 이력 조회용)
         run.recordRobotCount(robots.size());
 
         log.info("[실행] runId={} 창고 {} 로봇 {}대 투입", simulationRunId, warehouseId, robots.size());
@@ -244,6 +267,7 @@ public class SimulationRunService {
         run.enableRollingCommandGeneration();
         run.start(now);
 
+        // 초기화 후 재시작하는 경우 참가 기록이 이미 있으므로 중복 등록을 피한다
         List<SimulationRunRobot> participants = robots.stream()
                 .filter(robot -> !simulationRunRobotRepository
                         .existsBySimulationRun_IdAndRobot_Id(simulationRunId, robot.getId()))
@@ -261,6 +285,8 @@ public class SimulationRunService {
                     messagingTemplate.convertAndSend(robotTopic(simulationRunId), RobotStateResponse.from(state));
                 });
 
+        // 기존 일괄 작업/BFS 재생 대신 커밋 후 0분 명령 생성을 시작한다.
+        // 이후 시뮬레이션 시각 5분, 10분 ...마다 같은 파이프라인이 반복된다.
         simulationCommandCycleService.startAfterCommit(simulationRunId);
 
         return broadcastRun(run);
@@ -276,6 +302,12 @@ public class SimulationRunService {
         return broadcastRun(run);
     }
 
+    /**
+     * 실행 배속 변경.
+     *
+     * 실행 기록을 갱신하고, 재생 중이면 엔진의 시계 속도도 즉시 바꾼다.
+     * 정지 상태에서 바꿔두면 다음 시작 때 그 배속으로 재생된다.
+     */
     @Transactional
     public SimulationRunResponse changeSpeed(
             Long simulationRunId,
@@ -315,6 +347,14 @@ public class SimulationRunService {
         return broadcastRun(run);
     }
 
+    /**
+     * 창고에서 진행 중인 모든 시뮬레이션을 중지한다.
+     *
+     * 한 창고에서는 하나의 실행만 활성화될 수 있으므로,
+     * 새 시뮬레이션을 만들기 전에 이전 실행을 정리하는 용도로 쓴다.
+     *
+     * @return 중지된 실행 수
+     */
     @Transactional
     public int stopActiveRuns(
             Long warehouseId,
@@ -410,6 +450,12 @@ public class SimulationRunService {
         );
     }
 
+    /**
+     * 작업 중인 AI 로봇 한 대의 playback 배터리를 현재 실행의 충전 기준까지 낮춘다.
+     *
+     * Redis만 수정하면 다음 playback tick이 이전 값을 다시 저장하므로,
+     * 반드시 playback의 권위 상태를 먼저 변경하고 그 상태를 발행한다.
+     */
     public SimulationRunLowBatteryEventResponse injectLowBatteryEvent(
             Long simulationRunId,
             AuthenticatedRequester requester
@@ -533,6 +579,12 @@ public class SimulationRunService {
         );
     }
 
+    /**
+     * 시작 시점의 로봇 상태를 만든다.
+     *
+     * <p>배터리는 시나리오의 초기 배터리를 쓴다. 시나리오를 안 골랐으면
+     * 로봇에 등록된 값을 그대로 쓴다.
+     */
     private RobotState initialState(
             Robot robot,
             Long warehouseId,

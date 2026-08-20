@@ -28,7 +28,7 @@ public class Scenario {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "warehouse_id", nullable = false)
+    @JoinColumn(name = "warehouse_id")
     private Warehouse warehouse;
 
     // 프론트 scenario_id ("S1")

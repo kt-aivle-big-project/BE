@@ -25,8 +25,8 @@ public record ScenarioResponse(
     public static ScenarioResponse from(Scenario scenario) {
         return new ScenarioResponse(
                 scenario.getId(),
-                scenario.getWarehouse().getId(),
-                scenario.getWarehouse().getName(),
+                scenario.getWarehouse() == null ? null : scenario.getWarehouse().getId(),
+                scenario.getWarehouse() == null ? null : scenario.getWarehouse().getName(),
                 scenario.getScenarioCode(),
                 scenario.getScenarioName(),
                 scenario.getDescription(),

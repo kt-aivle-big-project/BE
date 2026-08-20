@@ -36,25 +36,14 @@ public class ScenarioService {
             ScenarioRequest request,
             AuthenticatedRequester requester
     ) {
-        Warehouse warehouse = findWarehouse(request.warehouseId());
-        validateCreateAccess(warehouse, requester);
-
-        int availableRobotCount = robotRepository
-                .findAllByWarehouse_Id(warehouse.getId())
-                .size();
-        if (availableRobotCount == 0) {
-            throw new BusinessException(ErrorCode.NO_AVAILABLE_ROBOTS);
-        }
-
         int robotCount = request.robotCount() == null
-                ? availableRobotCount
-                : Math.min(request.robotCount(), availableRobotCount);
+                ? 1
+                : request.robotCount();
 
-        String scenarioCode = resolveScenarioCode(
-                warehouse.getId(), request.scenarioCode());
+        String scenarioCode = resolveScenarioCode(request.scenarioCode());
 
         Scenario scenario = Scenario.create(
-                warehouse,
+                null,
                 scenarioCode,
                 request.scenarioName().trim(),
                 request.description() == null ? null : request.description().trim(),
@@ -87,10 +76,17 @@ public class ScenarioService {
         }
     }
 
-    private String resolveScenarioCode(Long warehouseId, String requestedCode) {
+    /**
+     * 시나리오 코드를 정한다.
+     *
+     * <p>화면에서는 코드를 입력받지 않으므로, 안 들어오면
+     * S1, S2 ... 로 비어 있는 첫 번호를 찾아 붙인다.
+     * 직접 보낸 경우에만 중복을 오류로 돌려준다.
+     */
+    private String resolveScenarioCode(String requestedCode) {
         if (requestedCode != null && !requestedCode.isBlank()) {
             String code = requestedCode.trim();
-            if (scenarioRepository.existsByWarehouse_IdAndScenarioCode(warehouseId, code)) {
+            if (scenarioRepository.existsByScenarioCode(code)) {
                 throw new BusinessException(ErrorCode.DUPLICATE_SCENARIO_CODE);
             }
             return code;
@@ -98,7 +94,7 @@ public class ScenarioService {
 
         for (int number = 1; number <= 1000; number++) {
             String candidate = "S" + number;
-            if (!scenarioRepository.existsByWarehouse_IdAndScenarioCode(warehouseId, candidate)) {
+            if (!scenarioRepository.existsByScenarioCode(candidate)) {
                 return candidate;
             }
         }
