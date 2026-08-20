@@ -14,15 +14,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Rebinds a replan request to the physical Task contracts already committed by BE.
- *
- * <p>The first command request is created before the AI chooses an inbound rack and
- * rack level.  Copying that request verbatim during a low-battery replan loses the
- * destination persisted on {@link Task}, allowing the AI to select the same empty
- * rack slot again.  This factory keeps the business operation intact while adding
- * the authoritative task ID and physical storage destination.</p>
- */
 @Service
 @RequiredArgsConstructor
 public class SimulationReplanPlanRequestFactory {

@@ -12,9 +12,6 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 
-/**
- * 시뮬레이션 시각에 따라 움직이는 로봇 한 대의 실행 상태.
- */
 @Getter
 @Setter
 public class RobotRuntime {
@@ -44,7 +41,6 @@ public class RobotRuntime {
 
     private Long currentNodeId;
 
-    // 직전 노드. 이동 중일 때 화면 보간의 출발점으로 사용한다.
     private Long previousNodeId;
 
     private Long currentTaskId;
@@ -58,12 +54,8 @@ public class RobotRuntime {
     // 재계획 종료 후 복구할 화면 표시 상태
     private RobotStatus statusBeforeReplanningPause;
 
-    // 이 시뮬레이션 시각(ms)까지는 현재 동작을 수행 중.
-    // 시계가 이 값을 넘어야 다음 동작으로 넘어간다.
     private long busyUntilMillis = 0L;
 
-    // 현재 이동 구간이 시작된 시뮬레이션 시각. 화면은 이 값과
-    // busyUntilMillis를 이용해 절대 진행률을 계산한다.
     private long movementStartAtMillis = 0L;
 
     private double batteryLevel;
@@ -128,10 +120,6 @@ public class RobotRuntime {
         return remainingPath.poll();
     }
 
-    /**
-     * 다음에 이동할 노드 (꺼내지 않고 확인만).
-     * 화면 보간용으로 전송한다.
-     */
     public Long peekNextNode() {
         return remainingPath.peek();
     }
@@ -274,25 +262,15 @@ public class RobotRuntime {
         return phase == Phase.IDLE;
     }
 
-    /**
-     * 다음 노드로 진입한다. 직전 노드를 보간 출발점으로 기록한다.
-     */
     public void moveTo(Long nodeId) {
         this.previousNodeId = this.currentNodeId;
         this.currentNodeId = nodeId;
     }
 
-    /**
-     * 정지 상태로 전환. 보간 출발점을 지운다.
-     */
     public void stopMoving() {
         this.previousNodeId = null;
         this.movementStartAtMillis = 0L;
     }
-    /**
-     * 재계획을 위해 현재 안전 위치에서 정지한다.
-     * phase와 remainingPath는 유지해 기존 진행 단계를 보존한다.
-     */
     public void pauseForReplanning() {
         if (pausedForReplanning
                 || status == RobotStatus.ERROR
@@ -306,9 +284,6 @@ public class RobotRuntime {
         stopMoving();
     }
 
-    /**
-     * 재계획이 끝난 뒤 정지 전 상태로 복귀한다.
-     */
     public void resumeAfterReplanning() {
         if (!pausedForReplanning) {
             return;
@@ -316,7 +291,6 @@ public class RobotRuntime {
 
         pausedForReplanning = false;
 
-        // 재계획 대기 중 고장·오프라인이 됐다면 해당 상태를 유지한다.
         if (status == RobotStatus.ERROR
                 || status == RobotStatus.OFFLINE) {
             statusBeforeReplanningPause = null;
@@ -329,10 +303,6 @@ public class RobotRuntime {
 
         statusBeforeReplanningPause = null;
     }
-    /**
-     * 재계획을 시작할 수 있을 만큼 정지된 상태인지 확인한다.
-     * 고장·오프라인 로봇은 이미 정지된 것으로 본다.
-     */
     public boolean isStoppedForReplanning() {
         return pausedForReplanning
                 || status == RobotStatus.ERROR
@@ -357,9 +327,6 @@ public class RobotRuntime {
         this.chargingPowerPerMinute = nonNegativeRate(chargingPowerPerMinute);
     }
 
-    /**
-     * 충전. 분당 충전량을 경과 시간(ms)만큼 적용한다.
-     */
     public void charge(long simulatedMillis) {
         if (simulatedMillis <= 0 || chargingPowerPerMinute <= 0) {
             return;

@@ -87,13 +87,6 @@ public class ScenarioService {
         }
     }
 
-    /**
-     * 시나리오 코드를 정한다.
-     *
-     * <p>화면에서는 코드를 입력받지 않으므로, 안 들어오면 창고 안에서
-     * S1, S2 ... 로 비어 있는 첫 번호를 찾아 붙인다.
-     * 직접 보낸 경우에만 중복을 오류로 돌려준다.
-     */
     private String resolveScenarioCode(Long warehouseId, String requestedCode) {
         if (requestedCode != null && !requestedCode.isBlank()) {
             String code = requestedCode.trim();

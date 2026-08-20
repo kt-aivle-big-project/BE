@@ -23,12 +23,6 @@ public class OperationController {
 
     private final OperationDashboardService operationDashboardService;
 
-    /**
-     * 운영 관리 화면의 모든 지표를 한 번에 내려준다.
-     *
-     * <p>작업·이벤트·로봇을 따로 받아 화면에서 더하면
-     * 작업이 쌓일수록 전부 내려받아야 해서 느려진다. 집계는 서버에서 한다.
-     */
     @Operation(
             summary = "운영 대시보드 조회",
             description = "요약 카드, 시간대별 작업량·이벤트, 로봇 상태 분포, "
@@ -49,12 +43,6 @@ public class OperationController {
         );
     }
 
-    /**
-     * 대시보드와 같은 조건의 작업을 자르지 않고 전부 내려준다.
-     *
-     * <p>대시보드 응답은 화면이 무거워지지 않게 최근 10건만 담는다.
-     * 「전체 보기」 팝업을 열 때만 이 API 를 부른다.
-     */
     @Operation(
             summary = "운영 작업 전체 조회",
             description = "선택한 창고와 기간의 작업을 최신순으로 모두 돌려준다."

@@ -4,13 +4,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.util.List;
 
-/**
- * 운영 관리 화면이 한 번에 받아 가는 대시보드 데이터.
- *
- * <p>화면에서 쓰는 그대로의 모양으로 내려준다.
- * 프론트가 여러 API 를 받아 직접 집계하면 작업이 쌓일수록 느려지고,
- * 같은 계산이 화면마다 흩어지기 때문이다.
- */
 public record OperationDashboardResponse(
 
         @Schema(description = "상단 요약 카드")
@@ -43,24 +36,10 @@ public record OperationDashboardResponse(
             @Schema(description = "오류 상태 로봇 수") long errorRobotCount
     ) {}
 
-    /**
-     * hour 는 화면 라벨과 같은 "00시" 형식이다.
-     *
-     * @param count          그 시간대에 발생한 건수
-     * @param completedCount 그중 완료된 건수. 이벤트에는 해당이 없어 0 이다.
-     */
     public record HourlyCount(String hour, long count, long completedCount) {}
 
-    /** key 는 화면의 상태 구분값(AVAILABLE, WORKING, ...)이다. */
     public record StatusCount(String key, long count) {}
 
-    /**
-     * 창고별 처리량.
-     *
-     * @param count          완료 작업 수
-     * @param totalCount     기간 내 발생한 전체 작업 수
-     * @param completionRate 완료 비율(%)
-     */
     public record WarehouseCount(
             Long warehouseId,
             String warehouseName,
@@ -69,10 +48,6 @@ public record OperationDashboardResponse(
             int completionRate
     ) {}
 
-    /**
-     * @param delayMinutes AI 계획보다 얼마나 늦게 끝났는지(분).
-     *                     계획이 없거나 아직 안 끝난 작업은 null.
-     */
     public record RecentTask(
             Long taskId,
             String taskCode,

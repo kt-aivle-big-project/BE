@@ -6,7 +6,6 @@ import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
-/** Browser response to one pending LARO human-review interaction. */
 public record LaroHumanReviewRequest(
         @NotBlank String action,
         String selectedOptionId,

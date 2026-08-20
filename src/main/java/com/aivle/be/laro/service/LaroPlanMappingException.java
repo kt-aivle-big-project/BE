@@ -5,10 +5,6 @@ import com.aivle.be.global.exception.ErrorCode;
 
 import java.util.StringJoiner;
 
-/**
- * Keeps the public LARO mapping error code while preserving the exact failed
- * contract field for command-cycle diagnostics and Human Review.
- */
 public final class LaroPlanMappingException extends BusinessException {
 
     private final String diagnosticMessage;

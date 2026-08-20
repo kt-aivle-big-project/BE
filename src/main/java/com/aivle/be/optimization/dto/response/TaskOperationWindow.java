@@ -2,7 +2,6 @@ package com.aivle.be.optimization.dto.response;
 
 import java.util.Objects;
 
-/** A closed node-occupancy interval expressed on the simulation clock. */
 public record TaskOperationWindow(
         Long nodeId,
         Long startTimeMillis,

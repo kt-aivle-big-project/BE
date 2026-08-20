@@ -25,7 +25,6 @@ public class StorageLocation {
     @JoinColumn(name = "warehouse_id", nullable = false)
     private Warehouse warehouse;
 
-    // 1:1 관계 - 이 저장위치가 어느 노드(그래프 상 지점)에 해당하는지
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "node_id", nullable = false, unique = true)
     private WarehouseNode node;

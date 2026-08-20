@@ -4,9 +4,6 @@ import com.aivle.be.robotstate.domain.RobotStatus;
 
 import java.util.List;
 
-/**
- * 모든 정상 로봇이 안전 정지한 시점의 불변 Runtime snapshot.
- */
 public record ReplanningSnapshot(
         String replanId,
         Long simulationRunId,

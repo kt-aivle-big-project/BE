@@ -13,7 +13,6 @@ import java.net.http.HttpClient;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** HTTP/1.1 client for the LARO fulfillment-command Agent. */
 @Component
 public class FulfillmentCommandAgentClient {
 

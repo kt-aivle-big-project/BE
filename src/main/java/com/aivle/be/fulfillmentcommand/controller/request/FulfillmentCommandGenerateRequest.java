@@ -79,7 +79,6 @@ public record FulfillmentCommandGenerateRequest(
         @Schema(description = "자동 배치에서 로봇 한 대당 목표 평균 작업 수", example = "3.5")
         Double averageTasksPerRobot
 ) {
-    /** 기존 명령 생성 호출부와의 소스 호환성을 유지한다. */
     public FulfillmentCommandGenerateRequest(
             FulfillmentCommandMode mode,
             Integer inboundCount,
@@ -206,7 +205,6 @@ public record FulfillmentCommandGenerateRequest(
         };
     }
 
-    /** Resolve one expression branch from the fresh random seed assigned to this batch. */
     public CommandExpressionMode selectCommandExpressionMode(long cycleSeed) {
         CommandExpressionMode requested = effectiveCommandExpressionMode();
         if (requested != CommandExpressionMode.AUTO) {

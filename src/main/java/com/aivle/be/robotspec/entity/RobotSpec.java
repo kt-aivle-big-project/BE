@@ -16,7 +16,6 @@ public class RobotSpec {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // 로봇 모델 코드 - 비즈니스상 의미있는 값이지만 PK는 아님 (인조키로 통일)
     @Column(name = "robot_code", nullable = false, unique = true)
     private String robotCode;
 

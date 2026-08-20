@@ -25,14 +25,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * LARO 응답의 문자열 계약을 BE의 영속 Task와 재생용 숫자 ID 계약으로 변환한다.
- */
 @Service
 @RequiredArgsConstructor
 public class LaroPlanExecutionService {
@@ -46,9 +42,6 @@ public class LaroPlanExecutionService {
     private final SimulationPlaybackService simulationPlaybackService;
     private final JdbcTemplate jdbcTemplate;
 
-    /**
-     * 승인 대기 응답은 그대로 프론트에 돌려주고, READY 계획만 실행기로 넘긴다.
-     */
     @Transactional
     public boolean activateIfReady(
             Long simulationRunId,
@@ -63,10 +56,6 @@ public class LaroPlanExecutionService {
         return true;
     }
 
-    /**
-     * 응답이 현재 실행 세대에 속할 때만 READY 계획을 설치한다.
-     * 실행 행을 잠가 초기화와 계획 설치가 서로 엇갈리지 않게 한다.
-     */
     @Transactional
     public boolean activateIfReady(
             Long simulationRunId,
@@ -92,7 +81,6 @@ public class LaroPlanExecutionService {
         return true;
     }
 
-    /** 현재 실행 세대의 재계획만 안전 지점 활성화 후보로 등록한다. */
     @Transactional
     public boolean stageReplanIfReady(
             Long simulationRunId,
@@ -350,7 +338,6 @@ public class LaroPlanExecutionService {
             // committed to the old plan until handover. Their physical rack
             // was persisted when the original plan was installed. Only
             // operations present in logical_operations receive a new physical
-            // contract; remapping omitted history would discard valid data.
             return;
         }
         WarehouseNode rackNode = resolveEndNode(
@@ -396,12 +383,6 @@ public class LaroPlanExecutionService {
         }
     }
 
-    /**
-     * A rolling replan may move an existing inbound operation even when that
-     * operation is no longer present in the current structured request. The
-     * AI still returns it in logical_operations, so keep the persisted Task's
-     * physical rack contract in sync before the new plan is staged.
-     */
     private void applyExistingLogicalPhysicalStorageContract(
             Task task,
             Long warehouseId,
@@ -475,9 +456,7 @@ public class LaroPlanExecutionService {
             LaroPlanRequest.StructuredOperation operation,
             LaroPlanResponse.LogicalOperation logicalOperation
     ) {
-        // targetRackLevel is the physical putaway destination for INBOUND only.
         // An OUTBOUND logical rack level describes the source inventory and is
-        // already preserved by sourceWarehouseItemId/startNode.
         if (operation.operationType() != LaroPlanRequest.OperationType.INBOUND) {
             return null;
         }

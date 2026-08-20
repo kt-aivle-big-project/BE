@@ -21,9 +21,6 @@ public class ReoptimizationPlanStagingService {
     private final SimulationRunRepository simulationRunRepository;
     private final ReoptimizationPlanStageRepository stageRepository;
 
-    /**
-     * 검증·AI coordinator의 트랜잭션과 분리된 짧은 staging 트랜잭션.
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Long stage(ReoptimizationPlanStageCommand command) {
         SimulationRun simulationRun = simulationRunRepository
@@ -39,7 +36,6 @@ public class ReoptimizationPlanStagingService {
             );
         }
 
-        // 같은 run의 동시 staging은 run lock 뒤에서 다시 직렬화된다.
         rejectDuplicateOrMismatchedReplan(command);
 
         try {

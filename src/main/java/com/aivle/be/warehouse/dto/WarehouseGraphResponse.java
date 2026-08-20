@@ -7,12 +7,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 창고 그래프(맵) 내보내기 응답.
- *
- * 프론트 화면과 AI(cuOpt/MAPF)가 같은 맵을 바라보도록 DB 내용을 그대로 내려준다.
- * 외부와는 숫자 PK 가 아니라 코드(R0_0, H0_0)로 소통한다.
- */
 @Schema(description = "창고 그래프(노드/간선) 전체")
 public record WarehouseGraphResponse(
 

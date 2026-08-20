@@ -31,37 +31,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 운영 관리 화면에 필요한 값을 한 번에 모아 준다.
- *
- * <p>작업·이벤트·로봇을 각각 내려주고 화면에서 더하게 하면
- * 같은 계산이 화면마다 흩어지고, 작업이 쌓일수록 전부 받아야 해서 느려진다.
- * 그래서 집계는 여기서 하고 화면은 그리기만 한다.
- *
- * <p>로봇 상태는 두 곳에 있다.
- * <pre>
- *   robot 테이블   등록된 로봇의 기본값 (사용 가능 / 사용 불가)
- *   Redis         실행 중인 시뮬레이션의 실시간 상태 (이동 중, 충전 중, 오류 ...)
- * </pre>
- * 실행 중이면 실시간 상태가 더 정확하므로 그쪽을 우선한다.
- */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class OperationDashboardService {
 
-    /** 화면 막대그래프 칸. 2시간 단위 12칸이며 라벨 문자열까지 화면과 같아야 한다. */
     private static final List<String> HOUR_SLOTS = List.of(
             "00시", "02시", "04시", "06시", "08시", "10시",
             "12시", "14시", "16시", "18시", "20시", "22시"
     );
 
-    /** 화면 도넛 그래프의 상태 구분. 순서와 이름이 화면과 같아야 한다. */
     private static final List<String> STATUS_KEYS = List.of(
             "AVAILABLE", "WORKING", "CHARGING", "UNAVAILABLE", "OFFLINE", "ERROR"
     );
 
-    /** 이 값 아래면 "충전 필요"로 센다. 시나리오 기본 충전 임계값과 같다. */
     private static final int LOW_BATTERY_THRESHOLD = 20;
 
     /** 최근 작업 표에 보여줄 건수 */
@@ -82,11 +65,6 @@ public class OperationDashboardService {
     private final SimulationRunRepository simulationRunRepository;
     private final SimulationRunStateStore simulationRunStateStore;
 
-    /**
-     * @param warehouseId 창고 하나만 볼 때. null 이면 전체 창고
-     * @param startDate   조회 시작일 (포함)
-     * @param endDate     조회 종료일 (포함)
-     */
     public OperationDashboardResponse getDashboard(
             Long warehouseId,
             LocalDate startDate,
@@ -95,7 +73,6 @@ public class OperationDashboardService {
         LocalDate from = startDate == null ? LocalDate.now() : startDate;
         LocalDate to = endDate == null ? from : endDate;
 
-        // 종료일도 포함해야 하므로 다음 날 0시 직전까지 본다
         LocalDateTime fromTime = from.atStartOfDay();
         LocalDateTime toTime = to.plusDays(1).atStartOfDay();
 
@@ -103,8 +80,6 @@ public class OperationDashboardService {
         List<Event> events = findEvents(warehouseId, fromTime, toTime);
         List<Robot> robots = findRobots(warehouseId);
 
-        // 창고별 처리량은 창고끼리 비교하는 그래프라 창고 필터를 걸지 않는다.
-        // 필터를 걸면 고르지 않은 창고가 0 으로 나와 "작업이 없다"처럼 보인다.
         List<Task> tasksForComparison = warehouseId == null
                 ? tasks
                 : findTasks(null, fromTime, toTime);
@@ -124,16 +99,6 @@ public class OperationDashboardService {
         );
     }
 
-    /**
-     * 같은 조건의 작업을 자르지 않고 전부 돌려준다.
-     *
-     * <p>대시보드는 화면이 무거워지지 않게 최근 10건만 담는데,
-     * 「전체 보기」 팝업은 기간 안의 모든 작업을 보여줘야 해서 따로 둔다.
-     *
-     * @param warehouseId 창고 하나만 볼 때. null 이면 전체 창고
-     * @param startDate   조회 시작일 (포함)
-     * @param endDate     조회 종료일 (포함)
-     */
     public List<OperationDashboardResponse.RecentTask> getTasks(
             Long warehouseId,
             LocalDate startDate,
@@ -188,11 +153,6 @@ public class OperationDashboardService {
         return names;
     }
 
-    /**
-     * 실행 중인 시뮬레이션의 로봇 실시간 상태를 모은다.
-     *
-     * <p>실행 중인 게 없으면 빈 결과다. 그 경우 로봇 상태는 DB 값만 쓴다.
-     */
     private Map<Long, RobotState> loadRuntimeStates(Long warehouseId) {
         List<SimulationRun> runs = warehouseId == null
                 ? simulationRunRepository.findAllByStatusIn(LIVE_RUN_STATUSES)
@@ -242,7 +202,6 @@ public class OperationDashboardService {
         );
     }
 
-    /** 실시간 배터리가 있으면 그 값을, 없으면 DB 값을 쓴다. */
     private int batteryOf(Robot robot, Map<Long, RobotState> runtimeStates) {
         RobotState state = runtimeStates.get(robot.getId());
 
@@ -253,12 +212,6 @@ public class OperationDashboardService {
         return robot.getBattery() == null ? 100 : robot.getBattery();
     }
 
-    /**
-     * 로봇을 화면의 6가지 상태로 분류한다.
-     *
-     * <p>실행 중이면 Redis 의 실시간 상태를, 아니면 DB 의 사용 가능 여부를 본다.
-     * 실시간 상태의 세부 작업 유형(PICKING, PUTAWAY 등)은 모두 WORKING 으로 묶는다.
-     */
     private Map<String, Long> countRobotStatus(
             List<Robot> robots,
             Map<Long, RobotState> runtimeStates
@@ -276,7 +229,6 @@ public class OperationDashboardService {
 
     private String classify(Robot robot, RobotState state) {
         if (state == null || state.status() == null) {
-            // 실행 중이 아니면 DB 값만 안다
             return robot.getStatus() == RobotAvailabilityStatus.UNAVAILABLE
                     ? "UNAVAILABLE"
                     : "AVAILABLE";
@@ -308,13 +260,6 @@ public class OperationDashboardService {
                 .toList();
     }
 
-    /**
-     * 시간대별 작업량.
-     *
-     * <p>발생 건수와 그중 완료된 건수를 함께 담는다.
-     * 화면에서 "작업 수 / 완료 작업" 을 골라 그릴 수 있게 하기 위해서다.
-     * 두 값 모두 요청 시각(requestedAt) 기준으로 같은 칸에 넣는다.
-     */
     private List<OperationDashboardResponse.HourlyCount> buildHourlyTaskVolume(List<Task> tasks) {
         long[] totals = new long[HOUR_SLOTS.size()];
         long[] completed = new long[HOUR_SLOTS.size()];
@@ -342,7 +287,6 @@ public class OperationDashboardService {
         return result;
     }
 
-    /** 시각 목록을 2시간 단위 12칸으로 센다. 이벤트처럼 완료 개념이 없는 값에 쓴다. */
     private List<OperationDashboardResponse.HourlyCount> bucketByHour(
             List<LocalDateTime> timestamps
     ) {
@@ -365,12 +309,6 @@ public class OperationDashboardService {
         return result;
     }
 
-    /**
-     * 창고별 완료 작업 수.
-     *
-     * <p>창고를 하나 골라도 전체 창고를 함께 보여 준다. 비교가 목적이기 때문이다.
-     * 작업이 없는 창고는 0 으로 나온다.
-     */
     private List<OperationDashboardResponse.WarehouseCount> buildWarehouseThroughput(
             List<Task> tasks,
             Map<Long, String> warehouseNames

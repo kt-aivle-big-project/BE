@@ -28,12 +28,7 @@ public class Robot {
     @JoinColumn(name = "warehouse_id", nullable = false)
     private Warehouse warehouse;
 
-    // 참고: node_id / battery / status는 실시간으로 계속 바뀌는 값이라
-    // 원래는 Redis에서 관리하기로 했습니다. 여기 남겨둔 필드는
-    // "최초 등록 시 초기값" 또는 "참고용 스냅샷" 정도로만 쓰시고,
-    // 실제 실시간 조회/갱신은 Redis 쪽 로직을 쓰시는 걸 추천드립니다.
     // Live position is stored in Redis. This persistent node is the robot's
-    // stable initial/home charging slot and becomes its cuOpt end node.
     @Column(name = "node_id")
     private Long nodeId;
 

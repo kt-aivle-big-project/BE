@@ -34,10 +34,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import static com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleStatusResponse.CycleState;
 
-/**
- * 시뮬레이션 시각 0분과 실행별 설정 주기 경계마다 새 명령 배치를 생성하고
- * 최초 계획 또는 안전 정지 기반 재계획을 호출한다.
- */
 @Service
 public class SimulationCommandCycleService {
 
@@ -72,7 +68,6 @@ public class SimulationCommandCycleService {
         this.taskExecutor = taskExecutor;
     }
 
-    /** 트랜잭션 커밋 뒤 0분 배치를 시작한다. */
     public void startAfterCommit(Long simulationRunId) {
         runAfterCommit(() -> start(simulationRunId));
     }
@@ -97,8 +92,6 @@ public class SimulationCommandCycleService {
     }
 
     public void stop(Long simulationRunId) {
-        // reset/stop 뒤 상태 조회가 이전 simulatedTimeMs를 다시 반환하지 않도록
-        // 런타임을 비활성화하는 데서 끝내지 않고 저장소에서도 제거한다.
         CycleRuntime runtime = runtimes.remove(simulationRunId);
         if (runtime != null) {
             runtime.stop();
@@ -134,7 +127,6 @@ public class SimulationCommandCycleService {
         return runtime.snapshot();
     }
 
-    /** 사용자 자연어 의도를 이번 배치에만 주입하고 기존 명령 사이클을 즉시 실행한다. */
     public SimulationCommandCycleStatusResponse triggerUserCommand(
             Long simulationRunId,
             long expectedExecutionVersion,
@@ -267,8 +259,6 @@ public class SimulationCommandCycleService {
                 if (retryMinute != null) {
                     dispatchIfAccepted(runtime, retryMinute);
                 } else {
-                    // 활성 계획이 있으면 안전 정지를 풀고 기존 계획을 계속한다.
-                    // 최초 계획 오류처럼 실행할 계획이 없으면 PAUSED 상태를 유지한다.
                     laroPlanService.cancelHumanReviewHold(
                             simulationRunId,
                             request.executionVersion()
@@ -346,7 +336,6 @@ public class SimulationCommandCycleService {
         return runtime.snapshot();
     }
 
-    /** 배속이 적용된 시뮬레이션 시계를 전진시키고 분 경계를 감지한다. */
     public void tick() {
         dispatchPendingLowBatteryReplans();
         long nowNanos = System.nanoTime();
@@ -519,7 +508,6 @@ public class SimulationCommandCycleService {
         } catch (StaleSimulationExecutionException exception) {
             // Reset/restart replaced this execution while the remote AI call
             // was still in flight.  The candidate plan is already released by
-            // LaroPlanService; this old cycle must not create a Human Review.
             runtime.stop();
             log.info(
                     "[command-cycle] stale response discarded: runId={}, executionVersion={}, reason={}",
@@ -533,7 +521,6 @@ public class SimulationCommandCycleService {
                 // in-flight AI response can be installed.  Some lower layers
                 // report the terminal run state as a BusinessException rather
                 // than StaleSimulationExecutionException, but it is still an
-                // expected late response and must not become an operator alert.
                 log.info(
                         "[command-cycle] response discarded after stop/reset: runId={}, executionVersion={}, reason={}",
                         simulationRunId,
@@ -574,7 +561,6 @@ public class SimulationCommandCycleService {
         try {
             activePlan = playbackService.activeAiPlan(runtime.simulationRunId());
         } catch (RuntimeException ignored) {
-            // The absence of an active plan is itself captured as null below.
         }
 
         Map<String, Object> values = new LinkedHashMap<>();
@@ -780,7 +766,6 @@ public class SimulationCommandCycleService {
                     : request;
             if (generationRequest.generationIntervalSeconds() != null) {
                 intervalMs = generationRequest.generationIntervalSeconds() * 1_000L;
-                // 변경 시점 다음의 새 주기 경계에서 재계획하도록 버킷을 다시 맞춘다.
                 lastTriggeredMinute = simulatedTimeMs / intervalMs;
             }
             updatedAt = Instant.now();
@@ -934,7 +919,6 @@ public class SimulationCommandCycleService {
                 humanReviewResponse = null;
                 state = CycleState.REVIEW_REQUIRED;
                 error = null;
-                // Keep inFlight true so another automatic cycle cannot overtake review.
                 inFlight = true;
                 updatedAt = Instant.now();
                 return;
@@ -1159,7 +1143,6 @@ public class SimulationCommandCycleService {
             operationalFailureReview = true;
             state = CycleState.REVIEW_REQUIRED;
             error = normalizedMessage;
-            // 검토가 끝나기 전에는 다음 자동 계획 주기가 현재 오류를 추월할 수 없다.
             inFlight = true;
             updatedAt = Instant.now();
         }

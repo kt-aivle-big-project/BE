@@ -365,7 +365,6 @@ class AiPlaybackContextTest {
         robot.setCurrentNodeId(12L);
         robot.setStepStarted(false);
         // Merely arriving at the DROP node after a coarse clock tick does not
-        // satisfy a handover whose boundary is after the DROP service itself.
         assertFalse(robot.shouldHold(4_000));
         robot.setCursor(4);
         assertTrue(robot.shouldHold(4_000));
@@ -490,7 +489,6 @@ class AiPlaybackContextTest {
         context.requestQuiesce();
 
         // 12 is needed by the second robot after 2s, so the early low-battery
-        // robot follows its already-safe MAPF egress and stops at 13 instead.
         assertEquals(3_000, early.getHandoverAtMillis());
         assertEquals(13L, early.getHandoverNodeId());
         assertEquals(4_500, committed.getHandoverAtMillis());

@@ -79,12 +79,10 @@ public class TaskCreationService {
                 itemId
         );
 
-        // 시뮬레이션 내 발생 시각 지정 (시나리오 타임라인용)
         task.scheduleAt(command.releaseAtSeconds());
         task.bindExternalOperationId(command.externalOperationId());
         // A target rack level is a putaway contract, never OUTBOUND source
         // metadata. Ignore it defensively for every non-INBOUND task even if an
-        // upstream adapter accidentally supplies a source rack level.
         if (command.taskType() == TaskType.INBOUND) {
             task.reserveTargetRackLevel(command.targetRackLevel());
         }

@@ -47,11 +47,9 @@ public class WarehouseNode {
     @Column(name = "zone_id")
     private String zoneId;
 
-    // 프론트 그래프의 노드 식별자 ("R0_0", "K0_1" 등)
     @Column(name = "node_code", length = 50)
     private String nodeCode;
 
-    // 노드 역할 (통로 / 랙 / 입고구 / 출고구 / 충전 슬롯)
     @Enumerated(EnumType.STRING)
     @Column(name = "node_type", length = 30)
     private NodeType nodeType;
@@ -81,17 +79,9 @@ public class WarehouseNode {
     @Column(name = "side", length = 30)
     private String side;
 
-    /**
-     * Whether this node belongs to the warehouse's current operational map.
-     * Retired nodes remain in PostgreSQL so historical task foreign keys stay valid.
-     */
     @Column(name = "is_active", nullable = false, columnDefinition = "boolean default true")
     private Boolean active = true;
 
-    /**
-     * Optional, type-specific route metadata. Core planning properties are
-     * stored in typed columns above and are deliberately removed from this map.
-     */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "route_attributes", columnDefinition = "jsonb")
     private Map<String, Object> routeAttributes = new LinkedHashMap<>();

@@ -12,9 +12,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * AI가 만든 MOVE/WAIT/SERVICE 시간표를 원형 그대로 재생하기 위한 실행 상태다.
- */
 @Getter
 final class AiPlaybackContext {
 
@@ -151,12 +148,6 @@ final class AiPlaybackContext {
         }
     }
 
-    /**
-     * Selects a barrier where a robot that stops early is not left on a node
-     * another old-plan robot still needs before reaching its own barrier.
-     * Every candidate is a task-complete boundary, so extending a robot never
-     * abandons a picked load halfway through its physical cycle.
-     */
     private Map<RobotTimeline, RobotTimeline.HandoverTarget>
     selectConflictFreeHandoverTargets(
             Map<RobotTimeline, List<RobotTimeline.HandoverTarget>> candidates,
@@ -261,14 +252,6 @@ final class AiPlaybackContext {
         return Math.max(0.0, chargingPowerByNode.getOrDefault(nodeId, 0.0));
     }
 
-    /**
-     * A replan is produced from the clock and battery snapshot captured when
-     * the request was sent.  The previous plan can continue until every robot
-     * reaches its safe handover node, so activating that snapshot verbatim
-     * would rewind both simulation time and battery state.  Move the complete
-     * replacement timeline to the real activation clock and carry over the
-     * physical state that changed while the replan was being calculated.
-     */
     AiPlaybackContext rebaseForActivation(
             long activationClockMillis,
             AiPlaybackContext previous
@@ -479,10 +462,6 @@ final class AiPlaybackContext {
             if (batteryLevel > threshold) {
                 return false;
             }
-            // 재계획으로 이미 MOVE/WAIT -> CHARGE 직접 복귀 경로를 받은 로봇은
-            // 같은 저배터리 조건으로 다시 멈추지 않고 충전소까지 이동해야 한다.
-            // 반대로 CHARGE 전에 PICKUP/DROP 같은 SERVICE가 남아 있으면
-            // 해당 업무를 계속 수행하지 않도록 다시 안전 재계획 대상으로 둔다.
             return !isDirectChargeRecoveryRoute();
         }
 
@@ -494,7 +473,6 @@ final class AiPlaybackContext {
                     && step != null
                     // A MAPF conflict may insert WAIT between MOVE steps.  It
                     // is still the same direct recovery trip and must remain
-                    // visible as charging-station return, not ordinary idle.
                     && (step.type() == StepType.MOVE || step.type() == StepType.WAIT)
                     && isDirectChargeRecoveryRoute();
         }
@@ -516,8 +494,6 @@ final class AiPlaybackContext {
             lowBatteryWaitStartedAtMillis = Math.max(0, clockMillis);
             // Do not invalidate the active MAPF schedule by parking a robot in
             // the middle of its assigned physical cycle. requestQuiesce() will
-            // let it reach the current task's unload/egress boundary first.
-            // An idle robot has no such commitment and may stop immediately.
             if (currentTaskId == null) {
                 lowBatteryHold = true;
                 held = true;
@@ -541,12 +517,6 @@ final class AiPlaybackContext {
                     clockMillis, currentNodeId, cursor - 1), clockMillis);
         }
 
-        /**
-         * Candidate handovers start at the final physical service of the
-         * current task and may continue through egress MOVE/WAIT steps only
-         * until the next SERVICE. A low-battery barrier must never make a
-         * robot start another business task merely to find a parking node.
-         */
         private List<HandoverTarget> handoverCandidates(long clockMillis) {
             List<HandoverTarget> result = new ArrayList<>();
             if (held || cursor >= steps.size()) {
@@ -584,7 +554,6 @@ final class AiPlaybackContext {
                 if (stepStarted && active != null
                         && active.type() == StepType.MOVE) {
                     // The previous physical task can already be complete while
-                    // its task id remains attached to an in-flight egress MOVE.
                     // Parking at currentNodeId is impossible in that state: the
                     // robot has already left it. Finish the committed edge and
                     // hand over at its destination instead.
@@ -758,13 +727,6 @@ final class AiPlaybackContext {
                     || "RETURN".equalsIgnoreCase(serviceKind);
         }
 
-        /**
-         * Returns true only for the last physical completion service belonging
-         * to the BE task. Several AI task/cycle identifiers may be collapsed
-         * into one BE task, so completing on the first DROP/STATION would make
-         * the database get ahead of the robot. The last completion boundary is
-         * also the safe point used by battery-replan handover selection.
-         */
         boolean completesBeTaskAt(TimedStep completedStep) {
             if (completedStep == null
                     || completedStep.type() != StepType.SERVICE

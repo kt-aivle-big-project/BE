@@ -81,11 +81,6 @@ class ReoptimizationPlanApplicationRepositoryTest {
 
     @BeforeEach
     void removeH2ConverterCheckConstraint() {
-        /*
-         * H2 2.4 closes its in-memory database while evaluating the
-         * converter-derived Robot status CHECK constraint. PostgreSQL uses
-         * the converter values without this generated test-only constraint.
-         */
         jdbcTemplate.queryForList(
                 """
                 select constraint_name

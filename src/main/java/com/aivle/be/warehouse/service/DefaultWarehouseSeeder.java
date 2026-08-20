@@ -15,20 +15,6 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.InputStream;
 import java.util.List;
 
-/**
- * 앱이 처음 켜질 때 기본 창고 3개를 넣는다.
- *
- * <p>예전에는 파이썬 스크립트가 지도 JSON 을 SQL 로 바꿔 두고
- * 그 SQL 을 시작할 때 실행했다. 그런데 화면에서 창고를 추가하는 기능이 생기면서
- * 같은 변환 규칙이 파이썬과 자바 두 곳에 생겼고,
- * 한쪽만 고치면 기본 창고와 사용자 창고가 서로 다르게 만들어지는 문제가 있었다.
- *
- * <p>그래서 기본 창고도 화면 업로드와 똑같이 {@link WarehouseImportService} 를 태운다.
- * 변환 규칙은 이제 한 곳에만 있고, 지도가 바뀌면 {@code db/maps} 의 JSON 만 갈아끼우면 된다.
- *
- * <p>공용 창고가 하나라도 있으면 아무 일도 하지 않는다.
- * 공용 창고는 화면에서 지울 수 없으므로 한 번 들어가면 계속 남아 있다.
- */
 @Component
 @RequiredArgsConstructor
 public class DefaultWarehouseSeeder implements ApplicationRunner {
@@ -42,12 +28,6 @@ public class DefaultWarehouseSeeder implements ApplicationRunner {
 
     private static final String LOCATION = "대전광역시 유성구";
 
-    /**
-     * 넣을 기본 창고.
-     *
-     * <p>ID 를 못 박는 이유: 화면이 마지막으로 고른 창고를 ID 로 기억하고,
-     * 기본값도 1번 창고다. 실행할 때마다 ID 가 달라지면 엉뚱한 창고를 보게 된다.
-     */
     private record DefaultWarehouse(
             long id,
             String file,
@@ -84,7 +64,6 @@ public class DefaultWarehouseSeeder implements ApplicationRunner {
             try {
                 seed(spec);
             } catch (Exception exception) {
-                // 한 창고가 실패해도 나머지는 넣는다. 앱은 계속 뜨게 둔다.
                 log.error("[기본 창고] {} 생성 실패 - {}", spec.name(), exception.getMessage(), exception);
             }
         }
@@ -116,7 +95,6 @@ public class DefaultWarehouseSeeder implements ApplicationRunner {
                 response.chargingStationCount(), response.robotCount());
     }
 
-    /** 지도 JSON 에서 우리가 쓰는 nodes / edges 만 읽는다. */
     private WarehouseImportRequest.MapPayload readMap(String path) throws Exception {
         ClassPathResource resource = new ClassPathResource(path);
 

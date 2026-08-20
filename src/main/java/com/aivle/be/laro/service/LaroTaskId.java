@@ -3,7 +3,6 @@ package com.aivle.be.laro.service;
 import java.util.List;
 import java.util.Objects;
 
-/** Normalizes optimizer phase IDs to the logical task ID shared with BE. */
 public final class LaroTaskId {
 
     private static final List<String> PHASE_SUFFIXES = List.of(

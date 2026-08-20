@@ -11,12 +11,6 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * 지도 JSON 으로 창고를 만드는 요청.
- *
- * <p>화면에서 올린 warehouse_graph.json 을 그대로 담는다.
- * 백엔드가 노드·간선을 읽어 랙·충전소·보관위치·로봇까지 만들어준다.
- */
 public record WarehouseImportRequest(
 
         @NotBlank(message = "창고 이름은 필수입니다.")
@@ -25,14 +19,12 @@ public record WarehouseImportRequest(
         @NotNull @Positive Integer width,
         @NotNull @Positive Integer height,
 
-        /** 창고 소유자. 없으면 로그인한 사용자로 채운다. */
         Long userId,
 
         String location,
         String description,
         com.aivle.be.warehouse.entity.Warehouse.WarehouseStatus status,
 
-        /** 배치할 로봇 대수. 충전 슬롯 수를 넘지 않는다. */
         Integer robotCount,
 
         @NotNull(message = "지도 정보가 필요합니다.")
@@ -40,10 +32,6 @@ public record WarehouseImportRequest(
         MapPayload map
 ) {
 
-    /**
-     * 지도 JSON 의 본문.
-     * 우리가 쓰지 않는 필드(summary, routing_model 등)는 무시한다.
-     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record MapPayload(
             @NotEmpty(message = "노드가 비어 있습니다.")
@@ -53,14 +41,6 @@ public record WarehouseImportRequest(
             @Valid List<MapEdge> edges
     ) {}
 
-    /**
-     * 지도 노드 하나.
-     *
-     * <pre>
-     * { "id": "R0_0", "type": "route", "x": 4.1, "y": 0.72 }
-     * { "id": "K0_1_ACCESS_A", "type": "rack_access", "rack_id": "K0_1", ... }
-     * </pre>
-     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record MapNode(
             @NotBlank String id,
@@ -114,18 +94,6 @@ public record WarehouseImportRequest(
             };
         }
 
-        /**
-         * 이 노드가 가리키는 설비 코드.
-         *
-         * <p>지도 JSON 이 설비 코드를 따로 적어 두지 않은 경우가 많다.
-         * 예를 들어 빈 토트 버퍼는 {@code {"id": "ETB_0", "type":
-         * "empty_tote_buffer_access", ...}} 처럼 {@code buffer_id} 없이 온다.
-         * 이때 코드가 비면 Neo4j 계약에 {@code buffer_id} 가 빠져
-         * AI 가 경로 계획을 세우지 못한다.
-         *
-         * <p>설비 접근 노드는 하나가 설비 하나에 대응하므로,
-         * 적힌 코드가 없으면 노드 이름을 그대로 설비 코드로 쓴다.
-         */
         public String resourceCode() {
             if (rack_id != null) {
                 return rack_id;
@@ -146,13 +114,6 @@ public record WarehouseImportRequest(
         }
     }
 
-    /**
-     * 지도 간선 하나.
-     *
-     * <pre>
-     * { "id": "H0_0", "source": "R0_0", "target": "R0_1", "distance_m": 2.25 }
-     * </pre>
-     */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record MapEdge(
             String id,

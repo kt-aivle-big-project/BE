@@ -2,10 +2,6 @@ package com.aivle.be.simulationrun.playback;
 
 import com.aivle.be.robotstate.domain.RobotStatus;
 
-/**
- * 재생 한 틱에 수행할 단위 동작.
- * 로봇이 어느 노드에서 어떤 상태가 되는지, 그리고 작업 상태를 함께 바꿔야 하는지를 담는다.
- */
 public record PlaybackStep(
         Long nodeId,
         RobotStatus status,

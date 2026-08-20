@@ -7,7 +7,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
-/** Keeps the shared Neo4j projection current after BE map changes commit. */
 @Slf4j
 @Component
 @RequiredArgsConstructor

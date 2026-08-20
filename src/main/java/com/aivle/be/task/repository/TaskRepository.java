@@ -16,7 +16,6 @@ import java.util.Optional;
 
 public interface TaskRepository extends JpaRepository<Task, Long> {
 
-    // 이 로봇이 지금 ASSIGNED/IN_PROGRESS 상태의 다른 Task를 이미 갖고 있는지 확인
     boolean existsByRobot_IdAndStatusIn(
             Long robotId,
             Collection<TaskStatus> statuses
@@ -48,7 +47,6 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
             TaskStatus status
     );
 
-    // 재생 엔진에서 로봇이 수행 중인 작업을 찾을 때 사용
     List<Task> findAllByRobot_IdAndStatusIn(
             Long robotId,
             Collection<TaskStatus> statuses
@@ -58,7 +56,6 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     @Query("update Task task set task.robot = null where task.robot.id = :robotId")
     void clearRobotReference(@Param("robotId") Long robotId);
 
-    // 전역 재계획 DB 적용 시 Task를 ID 순으로 잠금
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             select task

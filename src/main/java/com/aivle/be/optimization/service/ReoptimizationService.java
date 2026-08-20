@@ -20,7 +20,6 @@ import com.aivle.be.robotstate.domain.RobotStatus;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.entity.SimulationRun;
 import com.aivle.be.simulationrun.playback.ReplanningSnapshot;
-import com.aivle.be.simulationrun.playback.RobotRuntime;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.task.entity.Task;
@@ -73,13 +72,6 @@ public class ReoptimizationService {
     private final SimpMessagingTemplate messagingTemplate;
     private final TransactionTemplate transactionTemplate;
 
-    /**
-     * 같은 simulationRunId의 재계획 coordinator가 동시에 실행되지 않도록 한다.
-     * 서로 다른 실행 ID는 서로 다른 key를 사용하므로 병렬 진행할 수 있다.
-     *
-     * 이 guard는 현재 재생 context와 마찬가지로 단일 애플리케이션 인스턴스를
-     * 전제로 한다. 다중 인스턴스 분산 락은 Phase 2에서 다룬다.
-     */
     private final ConcurrentMap<Long, Object> activeReoptimizations =
             new ConcurrentHashMap<>();
 
@@ -110,10 +102,6 @@ public class ReoptimizationService {
         this.transactionTemplate = transactionTemplate;
     }
 
-    /**
-     * 외부 호출자가 트랜잭션 안에 있어도 coordinator 전체에서는 이를 suspend한다.
-     * 필요한 DB 작업만 TransactionTemplate의 짧은 트랜잭션으로 실행한다.
-     */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public ReoptimizationResponse reoptimize(
             Long simulationRunId,
@@ -193,7 +181,6 @@ public class ReoptimizationService {
             );
         }
 
-        // AI 오류 또는 응답 계약 거부가 발생해도 이 커밋은 유지되어야 한다.
         startReplanningInDatabase(simulationRunId);
 
         String replanId = UUID.randomUUID().toString();
@@ -499,11 +486,6 @@ public class ReoptimizationService {
             );
         }
 
-        /*
-         * Phase 2-4A installs the immutable AI plan beside the legacy
-         * execution fields. Activation, ready queues, and resume remain
-         * unchanged until Phase 2-4B.
-         */
         return new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
     }
 
@@ -679,9 +661,6 @@ public class ReoptimizationService {
         }
     }
 
-    /**
-     * 모든 정상 로봇이 재계획을 위한 안전 정지를 완료할 때까지 기다린다.
-     */
     private void awaitRobotsStoppedForReplanning(Long simulationRunId) {
         long deadlineNanos = System.nanoTime()
                 + REPLANNING_STOP_TIMEOUT_MILLIS * 1_000_000L;
@@ -730,10 +709,6 @@ public class ReoptimizationService {
         }
     }
 
-    /**
-     * Phase 2에서 실행 계획 적용이 구현되면 DB 커밋 이후에만 호출한다.
-     * 현재 Phase 1에서는 성공 적용 경로가 없으므로 호출되지 않는다.
-     */
     @SuppressWarnings("unused")
     private void publishReoptimizationCompletedAfterCommit(
             Long simulationRunId,

@@ -12,14 +12,6 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Spring BE가 LARO 계획 API에 전달할 공개 요청 DTO.
- *
- * <p>업무 사실은 이 요청의 {@code structuredInput}이 권위값이다. LARO는 별도
- * orders/handling_units 마스터 테이블을 조회하지 않는다. {@code userCommand}는
- * 우선순위·통로 정책·목적함수 같은 운영 의도를 보충하며 구조화 업무를 삭제하거나
- * 새 업무를 만들어 내는 근거가 될 수 없다.
- */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record LaroPlanRequest(
         @NotNull @Valid StructuredInput structuredInput,
@@ -35,7 +27,6 @@ public record LaroPlanRequest(
             @Valid RoutingContext routingContext
     ) {}
 
-    /** Rule/Agent 분기 전에 사용하는 요청 시점의 작업 부하 스냅샷. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record RoutingContext(
             @PositiveOrZero Integer newOperationCount,
@@ -83,7 +74,6 @@ public record LaroPlanRequest(
         PARK
     }
 
-    /** 테스트·재현용 선택 필드. 운영에서는 공유 Redis가 권위값이다. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record RuntimeSnapshot(
             String mode,

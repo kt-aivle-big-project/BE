@@ -6,11 +6,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDateTime;
 
-/**
- * 사용자가 실행했던 시뮬레이션 이력 한 건.
- *
- * 목록 화면에서 "언제 어떤 설정으로 무엇을 돌렸는지" 훑어볼 수 있게 요약만 담는다.
- */
 @Schema(description = "시뮬레이션 실행 이력")
 public record SimulationRunHistoryResponse(
 

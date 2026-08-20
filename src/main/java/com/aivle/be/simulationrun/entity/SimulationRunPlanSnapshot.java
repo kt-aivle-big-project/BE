@@ -14,10 +14,6 @@ import java.time.LocalDateTime;
 
 import static lombok.AccessLevel.PROTECTED;
 
-/**
- * 한 실행에서 AI가 만든 주기별 계획 요청과 응답을 진단 이력으로 보관한다.
- * 초기화하면 기존 이력은 삭제되고 새 실행 세대의 계획이 다시 기록된다.
- */
 @Entity
 @Table(
         name = "simulation_run_plan_snapshots",
@@ -37,7 +33,6 @@ public class SimulationRunPlanSnapshot {
     @Column(name = "simulation_run_id", nullable = false)
     private Long simulationRunId;
 
-    /** 시뮬레이션 시각 기준 주기 번호. 0분 배치가 0이다. */
     @Column(name = "cycle_minute", nullable = false)
     private long cycleMinute;
 

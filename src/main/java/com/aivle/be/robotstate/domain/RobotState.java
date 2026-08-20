@@ -2,15 +2,6 @@ package com.aivle.be.robotstate.domain;
 
 import java.time.LocalDateTime;
 
-/**
- * Redis에 저장되는 로봇 실시간 상태.
- *
- * currentNodeCode 는 프론트 창고 그래프의 노드 식별자("R0_0")로, 화면에서 로봇 위치를 찾을 때 사용한다.
- *
- * nextNodeCode / arrivalInSeconds 는 화면에서 로봇을 부드럽게 이동시키기 위한 정보다.
- * 프론트는 현재 노드에서 다음 노드까지를 arrivalInSeconds 동안 보간해서 그린다.
- * 이동 중이 아니면 두 값 모두 null 이다.
- */
 public record RobotState(
         Long robotId,
         Long warehouseId,

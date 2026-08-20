@@ -4,10 +4,6 @@ import lombok.Getter;
 
 import java.util.List;
 
-/**
- * 로봇 한 대의 재생 계획.
- * 미리 계산된 단계 목록을 순서대로 소비한다.
- */
 @Getter
 public class RobotPlan {
 
@@ -27,10 +23,6 @@ public class RobotPlan {
         return cursor >= steps.size();
     }
 
-    /**
-     * 다음 단계를 꺼내고 커서를 전진시킨다.
-     * 이동 단계마다 배터리를 조금씩 소모한다.
-     */
     public PlaybackStep next() {
         PlaybackStep step = steps.get(cursor);
         cursor++;

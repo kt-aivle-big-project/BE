@@ -19,7 +19,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Existing OptimizationClient를 건드리지 않는 Native Plan 전용 Client. */
 @Component
 public class LaroPlanClient {
 

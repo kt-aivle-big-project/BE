@@ -43,8 +43,6 @@ public class SimulationRunProgressService {
         if (run == null || run.getStatus() != SimulationRunStatus.RUNNING) {
             return;
         }
-        // Rolling-horizon 실행은 현재 배치가 끝나도 다음 분에 새 명령이 들어온다.
-        // 사용자가 명시적으로 중지/완료하기 전까지 실행을 자동 완료하지 않는다.
         if (run.getGenerationIntervalSeconds() != null
                 && run.getGenerationIntervalSeconds() > 0) {
             return;

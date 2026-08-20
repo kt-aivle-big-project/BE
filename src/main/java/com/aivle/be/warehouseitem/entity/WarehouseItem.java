@@ -39,7 +39,6 @@ public class WarehouseItem {
     @JoinColumn(name = "storage_location_id", nullable = false)
     private StorageLocation storageLocation;
 
-    /** One physical rack has exactly three levels; each level stores one BOX. */
     @Column(name = "rack_level", nullable = false, columnDefinition = "integer default 1")
     private Integer rackLevel;
 
@@ -126,7 +125,6 @@ public class WarehouseItem {
         this.quantity = quantity;
     }
 
-    /** Reuses a physically empty rack-level row for the next BOX. */
     public void replaceEmptyBox(Product product, LocalDateTime receivedAt) {
         if (safeQuantity() != 0 || product == null || receivedAt == null) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
@@ -160,10 +158,6 @@ public class WarehouseItem {
         this.outboundQuantity = safeCount(outboundQuantity) + amount;
     }
 
-    /**
-     * 기존 Task 및 API 계약은 숫자 itemId를 사용하므로 호환 접근자를 유지한다.
-     * 실제 저장 관계는 product_id 외래 키와 Product 연관관계로 관리한다.
-     */
     public Long getItemId() {
         return product == null ? null : product.getId();
     }

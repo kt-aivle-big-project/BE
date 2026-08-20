@@ -20,11 +20,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 
-/**
- * BE 프로세스가 재시작되면 메모리에 있던 AI 재생 시간표와 command cycle은 사라진다.
- * 그 상태에서 DB/Redis의 RUNNING·QUIESCING 실행만 재사용하면 이전 로봇 위치에서
- * 멈춘 채 계획이 없는 고아 실행이 되므로, 시작 시 명시적으로 종료 처리한다.
- */
 @Service
 @RequiredArgsConstructor
 public class SimulationRunStartupRecoveryService {

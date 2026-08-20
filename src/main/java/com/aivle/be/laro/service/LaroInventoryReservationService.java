@@ -9,13 +9,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Owns the lifecycle of AI inventory reservations stored in PostgreSQL.
- *
- * <p>The LARO extension schema is optional for a standalone BE, so every
- * operation is deliberately tolerant of a missing schema. Reservations are
- * released instead of deleted so plan/run history remains auditable.</p>
- */
 @Service
 public class LaroInventoryReservationService {
 
@@ -80,7 +73,6 @@ public class LaroInventoryReservationService {
         releaseActiveForPlan(simulationRunId, planId);
     }
 
-    /** Release the old plan only after its replacement is actually active. */
     @Transactional
     public int releaseSupersededPlan(Long simulationRunId, String activatedPlanId) {
         if (simulationRunId == null || activatedPlanId == null || activatedPlanId.isBlank()) {
@@ -105,10 +97,6 @@ public class LaroInventoryReservationService {
         );
     }
 
-    /**
-     * Repairs reservations left ACTIVE by a previous process termination.
-     * A CREATED/reset or terminal run cannot own executable reservations.
-     */
     @EventListener(ApplicationReadyEvent.class)
     @Transactional
     public void reconcileInactiveRunsOnStartup() {

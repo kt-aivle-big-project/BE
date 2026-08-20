@@ -48,22 +48,12 @@ import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.Locale;
-import java.util.Optional;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
-/**
- * 시뮬레이션 재생 엔진 (시간 기반).
- *
- * 내부 시계를 두고, 작업은 지정된 발생 시각(releaseAtMillis)에 투입된다.
- * 유휴 로봇이 대기 중인 작업을 집어가고, 이동/집품/적재에 각각 소요 시간이 걸린다.
- *
- * 지금은 백엔드가 BFS로 경로를 계산하지만,
- * cuOpt 연동 후에는 AI가 만든 경로를 그대로 사용하도록 교체하면 된다.
- */
 @Service
 @RequiredArgsConstructor
 public class SimulationPlaybackService {
@@ -73,17 +63,12 @@ public class SimulationPlaybackService {
     private static final String RUN_TOPIC = "/topic/simulation-runs";
     private static final String TASK_TOPIC = "/topic/tasks";
 
-    // 한 tick 에서 로봇 한 대가 처리할 수 있는 최대 동작 수.
-    // 배속이 높거나 동작 시간이 짧을 때 밀리지 않게 하되,
-    // 예기치 못한 무한 루프는 막는다.
     private static final int MAX_STEPS_PER_TICK = 50;
 
     // Battery specs describe the real-device rate. Accelerate consumption in the
-    // simulator so that movement and work consumption remain visible to users.
     static final double SIMULATION_BATTERY_RATE_MULTIPLIER = 10.0;
 
     // Redis projection publication and playback ticks can briefly cross at the
-    // replan barrier. Retry a bounded number of times before freezing the run.
     private static final int MAX_PLAN_ACTIVATION_ATTEMPTS = 3;
 
     // 계획 대상 작업 상태
@@ -103,49 +88,26 @@ public class SimulationPlaybackService {
     private final JdbcTemplate jdbcTemplate;
     private final LaroInventoryReservationService inventoryReservationService;
 
-    // 진행 중인 재생 (simulationRunId -> 상태)
     private final Map<Long, PlaybackContext> contexts = new ConcurrentHashMap<>();
 
-    // AI의 MOVE/WAIT/SERVICE 절대 시간표. 같은 run에서는 BFS context와 동시에 존재하지 않는다.
     private final Map<Long, AiPlaybackContext> aiContexts = new ConcurrentHashMap<>();
 
     // A replan is built and validated first, then activated only after every
-    // robot reaches the handover barrier declared by the AI plan.
     private final Map<Long, PendingAiPlan> pendingAiPlans = new ConcurrentHashMap<>();
 
-    // One system replan is enough to cover every low-battery robot in the same run.
-    // Keep the request pending until the command cycle explicitly accepts it.
     private final Map<Long, LowBatteryReplanRequest> lowBatteryReplanRequests =
             new ConcurrentHashMap<>();
 
-    // UI 이벤트 연타로 한 실행에서 여러 로봇의 배터리가 동시에 바뀌지 않게 한다.
-    // 새 계획이 설치·활성화되거나 실행이 정리되면 해제한다.
     private final Set<Long> lowBatteryInjectionRunIds = ConcurrentHashMap.newKeySet();
 
-    // A broken playback run must not abort every other run on the shared scheduler.
-    // Freeze it after the first failure to prevent partial in-memory progress and log storms.
     private final Set<Long> suspendedAiRunIds = ConcurrentHashMap.newKeySet();
 
-    // 노드 코드 캐시 (nodeId -> nodeCode)
     private final Map<Long, String> nodeCodeCache = new ConcurrentHashMap<>();
 
     /* =========================================================
        계획 수립
     ========================================================= */
 
-    /**
-     * 시뮬레이션 시작 시 호출.
-     * 작업을 발생 시각 순으로 예약하고 로봇 실행 상태를 초기화한다.
-     */
-    /**
-     * 재생을 시작할 때 쓸 배터리를 정한다.
-     *
-     * <p>우선순위는 <b>Redis 실시간 상태 → 시나리오 초기 배터리 → 로봇 등록값</b> 이다.
-     *
-     * <p>{@code robot.getBattery()} 는 로봇을 등록할 때 넣은 값이라 실행 중에 바뀌지 않는다.
-     * 그것만 쓰면 시나리오에서 초기 배터리를 80% 로 잡아도 계획이 적용되는 순간
-     * 100% 로 되돌아가고, 재계획 때마다 배터리가 다시 차오른다.
-     */
     private Integer currentBattery(Long simulationRunId, SimulationRun run, Robot robot) {
         Integer live = simulationRunStateStore
                 .findByRobotId(simulationRunId, robot.getId())
@@ -254,15 +216,6 @@ public class SimulationPlaybackService {
        재생 진행
     ========================================================= */
 
-    /**
-     * 스케줄러가 주기적으로 호출한다.
-     *
-     * @param tickMillis 실제 경과 시간(ms)
-     */
-    /**
-     * READY LARO 계획을 현재 실행 계획으로 설치한다.
-     * 설치가 끝난 시점부터 기존 BFS context는 제거되고 AI 시간표가 유일한 이동 권위가 된다.
-     */
     @Transactional
     public void installAiPlan(
             Long simulationRunId,
@@ -748,7 +701,6 @@ public class SimulationPlaybackService {
                 continue;
             }
 
-            // 일시정지 중에는 시계도 멈춘다
             if (run.getStatus() != SimulationRunStatus.RUNNING) {
                 continue;
             }
@@ -999,13 +951,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * The in-memory playback context owns the position of robots that belonged
-     * to the previous plan. Redis is a UI projection and can still contain the
-     * final MOVE for one publication cycle, so it must not reject a valid safe
-     * handover. A robot newly introduced by the replan has no old timeline; for
-     * it, use the published stationary state or its registered start node.
-     */
     static ActivationStateMismatch findActivationStateMismatch(
             AiPlaybackContext oldContext,
             AiPlaybackContext nextContext,
@@ -1541,8 +1486,6 @@ public class SimulationPlaybackService {
     }
 
     private void advance(PlaybackContext context, long tickMillis) {
-        // 모든 로봇의 안전 정지가 완료되면 DB 상태 전환 전이라도
-        // 시뮬레이션 시계와 작업 발생을 즉시 멈춘다.
         if (context.isReplanRequested()
                 && context.areAllRobotsStoppedForReplanning()) {
             return;
@@ -1569,13 +1512,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 로봇 한 대를 현재 시각까지 진행시킨다.
-     *
-     * 한 tick 사이에 여러 동작이 끝날 수 있으므로
-     * (예: tick 500ms 인데 이동 1칸이 200ms) 시계가 지난 동작은 모두 소진한다.
-     * 그렇지 않으면 tick 마다 동작 하나씩만 처리되어 계획보다 점점 뒤처진다.
-     */
     private void step(
             PlaybackContext context,
             RobotRuntime robot,
@@ -1594,7 +1530,6 @@ public class SimulationPlaybackService {
             return;
         }
 
-        // 무한 루프 방지 (동작이 시간을 전혀 소비하지 않는 경우 대비)
         int guard = 0;
 
         while (context.getClockMillis() >= robot.getBusyUntilMillis()
@@ -1623,7 +1558,6 @@ public class SimulationPlaybackService {
                 return;
             }
 
-            // 아무 진전이 없으면(대기 중인 작업이 없는 유휴 상태 등) 이번 tick 은 종료
             if (robot.getBusyUntilMillis() == busyBefore
                     && robot.getPhase() == phaseBefore) {
                 return;
@@ -1631,9 +1565,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 재계획 요청 시 로봇을 현재 동작의 안전한 종료 지점에서 멈춘다.
-     */
     private boolean pauseIfReadyForReplanning(
             PlaybackContext context,
             RobotRuntime robot
@@ -1674,7 +1605,6 @@ public class SimulationPlaybackService {
         return false;
     }
 
-    /** 유휴 로봇이 대기 중인 작업을 집어간다. */
     private void tryStartNextTask(PlaybackContext context, RobotRuntime robot) {
         if (robot.getStatus() == RobotStatus.ERROR) {
             return;
@@ -1725,7 +1655,6 @@ public class SimulationPlaybackService {
             broadcastTask(task);
         }
 
-        // 출발지가 랙이면 랙 앞 통로까지만 이동한다
         List<Long> path = pathToWorkPosition(
                 context, robot, task.getStartNode().getId());
 
@@ -1766,7 +1695,6 @@ public class SimulationPlaybackService {
         publish(context, robot);
     }
 
-    /** 경로를 한 칸 이동하거나, 도착했으면 다음 단계로 넘어간다. */
     private void moveOrArrive(PlaybackContext context, RobotRuntime robot, boolean towardStart) {
         if (robot.hasRemainingPath()) {
             if (!robot.canMove()) {
@@ -1787,7 +1715,6 @@ public class SimulationPlaybackService {
             return;
         }
 
-        // 도착 - 더 이상 이동하지 않으므로 보간 정보를 지운다
         robot.stopMoving();
 
         if (towardStart) {
@@ -1853,7 +1780,6 @@ public class SimulationPlaybackService {
                 robot.getRobotId(), taskId);
     }
 
-    /** 집품이 끝나면 도착지로 향한다. */
     private void beginMoveToEnd(PlaybackContext context, RobotRuntime robot) {
         Task task = taskRepository.findById(robot.getCurrentTaskId()).orElse(null);
         if (task == null) {
@@ -1864,7 +1790,6 @@ public class SimulationPlaybackService {
 
         taskService.applyInventoryAtServiceCompletion(task.getId(), "PICKUP");
 
-        // 도착지가 랙이면 랙 앞 통로까지만 이동한다
         List<Long> path = pathToWorkPosition(
                 context, robot, task.getEndNode().getId());
 
@@ -1874,7 +1799,6 @@ public class SimulationPlaybackService {
         moveOrArrive(context, robot, false);
     }
 
-    /** 적재가 끝나면 작업을 완료 처리하고 대기 상태로 돌아간다. */
     private void finishTask(PlaybackContext context, RobotRuntime robot) {
         Long taskId = robot.getCurrentTaskId();
 
@@ -1913,12 +1837,6 @@ public class SimulationPlaybackService {
        상태 전송
     ========================================================= */
 
-    /**
-     * 로봇 상태를 Redis에 저장하고 WebSocket으로 브로드캐스트한다.
-     *
-     * 이동 중이면 다음 노드와 도착까지 남은 시간을 함께 보낸다.
-     * 프론트는 이 값으로 두 노드 사이를 보간해 부드럽게 그린다.
-     */
     private void publish(PlaybackContext context, RobotRuntime robot) {
         Long nextNodeId = null;
         String nextNodeCode = null;
@@ -1933,8 +1851,6 @@ public class SimulationPlaybackService {
             long remainingMillis = robot.getBusyUntilMillis() - context.getClockMillis();
 
             if (remainingMillis > 0) {
-                // 지금 향하고 있는 노드는 방금 진입한 currentNode 이므로,
-                // 화면에서는 "직전 노드 -> 현재 노드" 구간을 보간한다.
                 nextNodeId = robot.getCurrentNodeId();
                 nextNodeCode = nodeCodeCache.get(nextNodeId);
                 // 배속을 반영한 실제 경과 시간(초)으로 환산
@@ -1998,13 +1914,6 @@ public class SimulationPlaybackService {
        정리 / 유틸
     ========================================================= */
 
-    /**
-     * 실행 중인 모든 정상 로봇에 재계획 안전 정지를 요청한다.
-     *
-     * 로봇은 현재 이동 한 칸 또는 진행 중인 짧은 작업을 마친 뒤 정지한다.
-     *
-     * @return 재생 중인 실행에 요청을 등록했으면 true
-     */
     public boolean requestReplanningStop(Long simulationRunId) {
         PlaybackContext context = contexts.get(simulationRunId);
 
@@ -2026,9 +1935,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 모든 정상 로봇이 재계획을 위한 안전 정지를 완료했는지 확인한다.
-     */
     public boolean areAllRobotsStoppedForReplanning(Long simulationRunId) {
         PlaybackContext context = contexts.get(simulationRunId);
 
@@ -2256,9 +2162,6 @@ public class SimulationPlaybackService {
         return true;
     }
 
-    /**
-     * 모든 로봇이 안전 정지한 동일 context lock 안에서 AI 요청 snapshot을 만든다.
-     */
     public ReplanningSnapshot captureReplanningSnapshot(
             Long simulationRunId
     ) {
@@ -2289,11 +2192,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * Installs a DB-applied AI plan without repository I/O, publishing, or
-     * changing any legacy execution field. Robots and the simulation clock
-     * remain frozen after this method succeeds.
-     */
     public RuntimeReoptimizationPlan installReoptimizationPlan(
             Long simulationRunId,
             ReoptimizationActivationPlan activationPlan
@@ -2327,9 +2225,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 재계획 완료 후 정상 로봇들의 정지를 해제한다.
-     */
     public boolean activateInstalledReoptimizationPlan(
             Long simulationRunId,
             String replanId
@@ -2364,7 +2259,6 @@ public class SimulationPlaybackService {
         );
     }
 
-    /** Kept as a compatibility alias for existing callers. */
     public boolean finishReplanning(Long simulationRunId, String replanId) {
         return activateInstalledReoptimizationPlan(simulationRunId, replanId);
     }
@@ -2378,17 +2272,6 @@ public class SimulationPlaybackService {
         suspendedAiRunIds.remove(simulationRunId);
     }
 
-    /**
-     * 로봇을 고장(ERROR) 상태로 만든다.
-     *
-     * 재생 엔진이 로봇 상태의 주인이므로, 외부에서 Redis를 직접 고치면
-     * 다음 tick 에 덮어써져 화면이 한 번 튄다. 반드시 이 메서드를 통해야 한다.
-     *
-     * ERROR 로봇은 tick 에서 건너뛰므로 더 이상 움직이지 않는다.
-     * 현재 task/phase/path는 AI 입력 및 향후 복구를 위해 보존한다.
-     *
-     * @return 재생 중이어서 실제로 반영했으면 true
-     */
     public boolean markRobotError(Long simulationRunId, Long robotId) {
         AiPlaybackContext aiContext = aiContexts.get(simulationRunId);
         if (aiContext != null && robotId != null) {
@@ -2433,14 +2316,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 재생 중인 시뮬레이션의 배속을 즉시 변경한다.
-     *
-     * 배속이 바뀌면 화면 보간에 쓰이는 "도착까지 남은 시간"도 달라지므로,
-     * 이동 중인 로봇의 상태를 다시 내보내 화면이 바로 반응하게 한다.
-     *
-     * @return 재생 중이어서 실제로 반영했으면 true
-     */
     public boolean changeSpeed(Long simulationRunId, double newSpeed) {
         AiPlaybackContext aiContext = aiContexts.get(simulationRunId);
         if (aiContext != null) {
@@ -2475,12 +2350,6 @@ public class SimulationPlaybackService {
         return aiContexts.containsKey(simulationRunId);
     }
 
-    /**
-     * 작업 중인 AI 로봇 한 대의 in-memory 배터리를 낮춘 뒤 Redis/WebSocket에 발행한다.
-     *
-     * 현재 MOVE/SERVICE를 강제로 중단하지 않는다. 기존 playback 감지기는
-     * step 경계에서 LOW_BATTERY 요청을 만들고 command cycle이 안전 재계획을 수행한다.
-     */
     public LowBatteryInjection injectRandomActiveRobotLowBattery(
             Long simulationRunId,
             int requestedBatteryLevel
@@ -2793,12 +2662,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 랙 노드마다 "앞에 설 수 있는 통로 노드"를 찾아둔다.
-     *
-     * 로봇은 랙 안으로 들어가지 않고 인접한 통로에 서서 집품·적재한다.
-     * 랙 하나에 통로가 여러 개 붙어 있으면(위/아래 통로) 모두 후보로 둔다.
-     */
     private Map<Long, List<Long>> buildAccessNodes(
             Long warehouseId,
             Map<Long, Set<Long>> adjacency
@@ -2814,8 +2677,6 @@ public class SimulationPlaybackService {
 
         Map<Long, List<Long>> accessNodes = new HashMap<>();
 
-        // 엣지는 방향이 있을 수 있으므로 양쪽 방향을 모두 훑어
-        // "랙과 맞닿은 통로 노드"를 모은다.
         for (Map.Entry<Long, Set<Long>> entry : adjacency.entrySet()) {
             Long from = entry.getKey();
 
@@ -2832,12 +2693,6 @@ public class SimulationPlaybackService {
         return accessNodes;
     }
 
-    /**
-     * 목적지까지의 경로를 만든다.
-     *
-     * 목적지가 랙이면 랙 안이 아니라 "앞 통로"까지만 간다.
-     * 통로가 여러 개면 더 가까운 쪽을 고른다.
-     */
     private List<Long> pathToWorkPosition(
             PlaybackContext context,
             RobotRuntime robot,
@@ -2845,13 +2700,11 @@ public class SimulationPlaybackService {
     ) {
         List<Long> candidates = context.getAccessNodes().get(targetNodeId);
 
-        // 랙이 아니면(입고구역·출고구역 등) 그 노드까지 그대로 간다
         if (candidates == null || candidates.isEmpty()) {
             return pathFinder.findPath(
                     context.getAdjacency(), robot.getCurrentNodeId(), targetNodeId);
         }
 
-        // 이미 작업 가능한 통로에 서 있으면 이동하지 않는다
         if (candidates.contains(robot.getCurrentNodeId())) {
             return List.of();
         }

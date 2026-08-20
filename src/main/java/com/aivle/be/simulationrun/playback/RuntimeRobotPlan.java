@@ -3,7 +3,6 @@ package com.aivle.be.simulationrun.playback;
 import java.util.List;
 import java.util.Objects;
 
-/** Immutable ordered task queue for one playback robot. */
 public record RuntimeRobotPlan(
         Long robotId,
         List<RuntimeTaskPlan> taskPlans

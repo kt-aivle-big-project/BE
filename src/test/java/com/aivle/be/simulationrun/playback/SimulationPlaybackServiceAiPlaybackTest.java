@@ -155,7 +155,6 @@ class SimulationPlaybackServiceAiPlaybackTest {
 
         // Inject during STATION. Its completion queues the low-battery request
         // at a safe step boundary, but the playback thread can enter the next
-        // MOVE before the command thread begins quiescing (cloud run 173).
         fixture.service().tick(50L);
         fixture.service().injectRandomActiveRobotLowBattery(1L, 20);
         fixture.service().tick(50L);

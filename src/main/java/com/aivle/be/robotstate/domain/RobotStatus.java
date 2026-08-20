@@ -1,10 +1,5 @@
 package com.aivle.be.robotstate.domain;
 
-/**
- * 로봇 실시간 운행 상태.
- * PICKING / PUTAWAY / REPLENISH / RELOCATION은 WORKING의 세부 작업 유형으로,
- * 프론트에서 로봇 아이콘을 구분해 표시하기 위해 사용한다.
- */
 public enum RobotStatus {
 
     // 대기

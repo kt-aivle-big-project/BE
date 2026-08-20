@@ -43,7 +43,6 @@ public record ReoptimizationOptimizationRequest(
         }
     }
 
-    /** Compatibility constructor for tests that exercise the pre-window contract. */
     public ReoptimizationOptimizationRequest(
             String replanId,
             Long simulationRunId,

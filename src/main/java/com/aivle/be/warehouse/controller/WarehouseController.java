@@ -36,12 +36,6 @@ public class WarehouseController {
     private final WarehouseImportService warehouseImportService;
     private final WarehouseTemplateCloneService warehouseTemplateCloneService;
 
-    /**
-     * 창고 그래프(맵) 전체를 내려준다.
-     *
-     * 프론트 화면과 AI(cuOpt/MAPF)가 같은 맵을 바라보게 하기 위한 창구다.
-     * 노드·간선을 숫자 PK 가 아니라 코드(R0_0, H0_0)로 내보낸다.
-     */
     @GetMapping("/{warehouseId}/graph")
     public ResponseEntity<WarehouseGraphResponse> getGraph(
             @PathVariable Long warehouseId,
@@ -92,16 +86,6 @@ public class WarehouseController {
         ));
     }
 
-    /**
-     * 지도 JSON 으로 창고를 만든다.
-     *
-     * <p>일반 생성({@code POST /api/warehouses})은 이름·크기만 저장해
-     * 노드가 없는 빈 창고가 된다. 시뮬레이션을 돌리려면 지도가 필요하므로
-     * 화면에서 창고를 추가할 때는 이 엔드포인트를 쓴다.
-     *
-     * <p>노드·간선뿐 아니라 랙·충전소·보관위치·로봇까지 함께 만들어진다.
-     * 시나리오는 사용자가 창고를 선택해 별도로 만든다.
-     */
     @PostMapping("/import")
     public ResponseEntity<WarehouseImportResponse> importWarehouse(
             @Valid @RequestBody WarehouseImportRequest request,
@@ -112,9 +96,6 @@ public class WarehouseController {
                 .body(warehouseImportService.importWarehouse(request, parseUserId(userId)));
     }
 
-    /**
-     * 인증 정보에서 사용자 ID 를 꺼낸다. 없으면 null 로 두고 요청 값을 쓴다.
-     */
     private Long parseUserId(String principal) {
         if (principal == null || principal.isBlank()) {
             return null;
@@ -136,10 +117,6 @@ public class WarehouseController {
 
         return ResponseEntity.ok(response);
     }
-    /**
-     * 볼 수 있는 창고 목록.
-     * 공용 창고와 본인이 만든 창고만 나온다.
-     */
     @GetMapping
     public ResponseEntity<List<WarehouseResponse>> getWarehouses(
             @AuthenticationPrincipal String userId
@@ -177,7 +154,6 @@ public class WarehouseController {
         );
     }
 
-    /** 기존 창고의 기본 정보와 노드·엣지 지도를 코드 기준으로 갱신한다. */
     @PutMapping("/{warehouseId}/layout")
     public ResponseEntity<WarehouseImportResponse> updateWarehouseLayout(
             @PathVariable Long warehouseId,

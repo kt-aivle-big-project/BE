@@ -5,7 +5,6 @@ import com.aivle.be.fulfillmentcommand.domain.FulfillmentCommandMode;
 
 import java.util.List;
 
-/** Internal Spring-to-AI contract after Java has selected a feasible BOX batch. */
 public record FulfillmentCommandSelection(
         long selectionSeed,
         FulfillmentCommandMode mode,

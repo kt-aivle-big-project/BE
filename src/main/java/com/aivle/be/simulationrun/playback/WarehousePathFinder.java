@@ -16,22 +16,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 창고 그래프 위의 최단 경로 탐색 (BFS).
- *
- * 지금은 백엔드가 직접 경로를 계산하지만,
- * cuOpt 연동이 완료되면 AI가 계산한 경로로 대체된다.
- */
 @Component
 @RequiredArgsConstructor
 public class WarehousePathFinder {
 
     private final WarehouseEdgeRepository warehouseEdgeRepository;
 
-    /**
-     * 창고의 인접 리스트를 만든다.
-     * 방향 제약(A_TO_B / B_TO_A)을 반영한다.
-     */
     @Transactional(readOnly = true)
     public Map<Long, Set<Long>> loadAdjacency(Long warehouseId) {
         List<WarehouseEdge> edges =
@@ -58,11 +48,6 @@ public class WarehousePathFinder {
         return adjacency;
     }
 
-    /**
-     * 최단 경로를 찾는다.
-     *
-     * @return 출발 노드를 제외한 이동 경로. 경로가 없으면 빈 리스트.
-     */
     public List<Long> findPath(Map<Long, Set<Long>> adjacency, Long fromNodeId, Long toNodeId) {
         if (fromNodeId == null || toNodeId == null) {
             return Collections.emptyList();

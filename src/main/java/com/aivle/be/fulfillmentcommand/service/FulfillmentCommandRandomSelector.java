@@ -34,12 +34,6 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
-/**
- * Java selector for the authoritative operation batch.
- *
- * <p>LLM is deliberately not involved in mode, count, product, or BOX selection.
- * It may only add an expression to the already selected operations later.</p>
- */
 @Service
 @RequiredArgsConstructor
 public class FulfillmentCommandRandomSelector {

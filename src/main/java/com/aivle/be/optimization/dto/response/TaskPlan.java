@@ -3,12 +3,6 @@ package com.aivle.be.optimization.dto.response;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * AI가 반환하는 작업 단위 실행 계획.
- *
- * pathToStart와 pathToEnd는 각 구간의 시작 노드와 끝 노드를 모두 포함한다.
- * executionStage가 TO_END이면 pathToStart는 빈 배열이어야 한다.
- */
 public record TaskPlan(
         Long robotId,
         Long taskId,
@@ -106,7 +100,6 @@ public record TaskPlan(
         }
     }
 
-    /** Compatibility constructor for pre-operation-window callers. */
     public TaskPlan(
             Long robotId,
             Long taskId,

@@ -55,7 +55,6 @@ public class LaroPlanService {
         return client.preflight(simulationRunId);
     }
 
-    /** Human Review가 열리면 현재 계획을 안전 노드에서 멈춘 뒤 실행 시계도 일시정지한다. */
     public void holdForHumanReview(
             Long simulationRunId,
             long expectedExecutionVersion
@@ -82,7 +81,6 @@ public class LaroPlanService {
                     awaitSafeNodes(simulationRunId, expectedExecutionVersion);
                 }
             } finally {
-                // 안전 노드 대기가 시간 초과되어도 Review 중 실행 시계가 계속 흐르면 안 된다.
                 replanStateService.pauseForHumanReview(simulationRunId);
             }
             return;
@@ -90,7 +88,6 @@ public class LaroPlanService {
         replanStateService.pauseForHumanReview(simulationRunId);
     }
 
-    /** 검토 답변을 처리할 때만 일시정지 상태를 다시 실행 상태로 연다. */
     public void resumeForHumanReviewDecision(
             Long simulationRunId,
             long expectedExecutionVersion
@@ -99,7 +96,6 @@ public class LaroPlanService {
         replanStateService.resumeFromHumanReview(simulationRunId);
     }
 
-    /** 새 계획을 종료하면 안전 정지 중이던 이전 활성 계획을 다시 진행한다. */
     public void cancelHumanReviewHold(
             Long simulationRunId,
             long expectedExecutionVersion
@@ -142,7 +138,6 @@ public class LaroPlanService {
         return response;
     }
 
-    /** 외부 단건 API 호환용. 요청 시작 시점의 실행 세대를 캡처한다. */
     public LaroPlanResponse plan(Long simulationRunId, LaroPlanRequest request) {
         validateExecutableWarehouse(simulationRunId);
         return plan(
@@ -174,12 +169,6 @@ public class LaroPlanService {
         }
     }
 
-    /**
-     * 이미 저장된 계획을 AI 호출 없이 그대로 다시 실행한다.
-     *
-     * <p>초기화 후 재시작할 때 쓴다. {@link #plan}과 같은 반영 절차를 타되
-     * {@code client.plan} 만 건너뛰므로, 처음 실행과 완전히 같은 계획이 돈다.
-     */
     public LaroPlanResponse replay(
             Long simulationRunId,
             long expectedExecutionVersion,
@@ -200,7 +189,6 @@ public class LaroPlanService {
         }
     }
 
-    /** Apply a plan returned after Human Review without issuing another AI request. */
     public LaroPlanResponse applyHumanReviewPlan(
             Long simulationRunId,
             long expectedExecutionVersion,
@@ -423,9 +411,6 @@ public class LaroPlanService {
                 && "READY".equalsIgnoreCase(response.result().plan().status());
     }
 
-    /**
-     * AI가 정상 응답한 뒤 BE 반영에서 실패하더라도 입력과 결과를 한 줄로 대조할 수 있게 한다.
-     */
     private void logReplanResponse(
             Long simulationRunId,
             long expectedExecutionVersion,
@@ -540,7 +525,6 @@ public class LaroPlanService {
                 || "FAILED".equalsIgnoreCase(response.resumeOutcome());
     }
 
-    /** Review 대기 중 이미 정지한 재계획은 다시 RUNNING부터 시작하지 않는다. */
     private void prepareReplanAtSafeNodes(
             Long simulationRunId,
             long expectedExecutionVersion
@@ -589,7 +573,6 @@ public class LaroPlanService {
         replanStateService.restoreRunning(simulationRunId);
     }
 
-    /** 외부 단건 재계획 API 호환용. 요청 시작 시점의 실행 세대를 캡처한다. */
     public LaroPlanResponse replan(Long simulationRunId, LaroPlanRequest request) {
         validateExecutableWarehouse(simulationRunId);
         return replan(

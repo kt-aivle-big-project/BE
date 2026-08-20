@@ -22,16 +22,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Keeps the AI facility contract in the same transaction as a warehouse map edit.
- *
- * <p>The layout editor stores the two fixed outbound robots as shared route hubs:
- * every hub is connected to several visual outbound endpoints and to the AMR-side
- * boundary route nodes.  This service materializes that topology as two explicit
- * OUTBOUND_STATION resources, their station robots, logical chutes, and up to four
- * AMR hand-off nodes.  The AI no longer has to invent station robots from graph
- * node names.</p>
- */
 @Service
 @RequiredArgsConstructor
 public class WarehouseFacilitySyncService {
@@ -39,14 +29,6 @@ public class WarehouseFacilitySyncService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
 
-    /**
-     * Rebuild the facility contract from the already persisted map.
-     *
-     * <p>This overload is used by the manual/automatic Neo4j graph sync path,
-     * so an existing PostgreSQL map also repairs stale seeded facility rows.
-     * It runs in its own writable transaction because graph synchronization is
-     * otherwise a read-only PostgreSQL operation.</p>
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void synchronizeOutboundFacilities(
             Long warehouseId,

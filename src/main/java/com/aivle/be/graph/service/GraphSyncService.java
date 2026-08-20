@@ -21,14 +21,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Publishes the BE warehouse map using the LARO Neo4j contract.
- *
- * <p>PostgreSQL is the authoritative writer.  FastAPI reads the resulting
- * {@code (:RouteNode)-[:TRAVERSES]->(:RouteNode)} projection directly, so the
- * projection deliberately uses stable warehouse/node/edge codes rather than
- * database primary keys.</p>
- */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -159,7 +151,6 @@ public class GraphSyncService {
     private void ensureSchema() {
         // Neo4j does not allow schema changes and data writes in the same
         // transaction. Use a dedicated driver session so these auto-commit
-        // schema queries finish before Neo4jClient starts the graph write.
         try (Session session = neo4jDriver.session()) {
             session.run("""
                     CREATE CONSTRAINT route_node_scope_id IF NOT EXISTS
