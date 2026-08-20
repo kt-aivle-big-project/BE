@@ -111,6 +111,21 @@ public class SecurityConfig {
                         ).hasAnyRole("USER", "GUEST")
                         .requestMatchers(
                                 HttpMethod.POST,
+                                "/api/scenarios",
+                                "/api/scenarios/**"
+                        ).hasRole("USER")
+                        .requestMatchers(
+                                HttpMethod.PATCH,
+                                "/api/scenarios",
+                                "/api/scenarios/**"
+                        ).hasRole("USER")
+                        .requestMatchers(
+                                HttpMethod.DELETE,
+                                "/api/scenarios",
+                                "/api/scenarios/**"
+                        ).hasRole("USER")
+                        .requestMatchers(
+                                HttpMethod.POST,
                                 "/api/warehouses/*/personal-copy"
                         ).hasRole("USER")
                         .requestMatchers(

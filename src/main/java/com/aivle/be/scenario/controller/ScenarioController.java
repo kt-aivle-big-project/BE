@@ -1,7 +1,6 @@
 package com.aivle.be.scenario.controller;
 
 import com.aivle.be.auth.security.AuthenticatedRequesterResolver;
-import com.aivle.be.auth.security.GuestAccessPolicy;
 import com.aivle.be.scenario.controller.request.ScenarioRequest;
 import com.aivle.be.scenario.controller.request.ScenarioUpdateRequest;
 import com.aivle.be.scenario.controller.response.ScenarioResponse;
@@ -25,7 +24,6 @@ public class ScenarioController {
 
     private final ScenarioService scenarioService;
     private final AuthenticatedRequesterResolver requesterResolver;
-    private final GuestAccessPolicy guestAccessPolicy;
 
     @Operation(summary = "시나리오 생성")
     @PostMapping
@@ -46,34 +44,48 @@ public class ScenarioController {
             @PathVariable Long scenarioId,
             Authentication authentication
     ) {
-        guestAccessPolicy.validateScenarioRead(
-                requesterResolver.resolve(authentication),
-                scenarioId
-        );
-        return ResponseEntity.ok(scenarioService.get(scenarioId));
+        return ResponseEntity.ok(scenarioService.get(
+                scenarioId,
+                requesterResolver.resolve(authentication)
+        ));
     }
 
     @Operation(summary = "시나리오 목록 조회 (warehouseId 지정 시 창고별)")
     @GetMapping
     public ResponseEntity<List<ScenarioResponse>> getAll(
-            @RequestParam(required = false) Long warehouseId
+            @RequestParam(required = false) Long warehouseId,
+            Authentication authentication
     ) {
-        return ResponseEntity.ok(scenarioService.getAll(warehouseId));
+        return ResponseEntity.ok(scenarioService.getAll(
+                warehouseId,
+                requesterResolver.resolve(authentication)
+        ));
     }
 
     @Operation(summary = "시나리오 설정 저장")
     @PatchMapping("/{scenarioId}")
     public ResponseEntity<ScenarioResponse> update(
             @PathVariable Long scenarioId,
-            @Valid @RequestBody ScenarioUpdateRequest request
+            @Valid @RequestBody ScenarioUpdateRequest request,
+            Authentication authentication
     ) {
-        return ResponseEntity.ok(scenarioService.update(scenarioId, request));
+        return ResponseEntity.ok(scenarioService.update(
+                scenarioId,
+                request,
+                requesterResolver.resolve(authentication)
+        ));
     }
 
     @Operation(summary = "시나리오 삭제")
     @DeleteMapping("/{scenarioId}")
-    public ResponseEntity<Void> delete(@PathVariable Long scenarioId) {
-        scenarioService.delete(scenarioId);
+    public ResponseEntity<Void> delete(
+            @PathVariable Long scenarioId,
+            Authentication authentication
+    ) {
+        scenarioService.delete(
+                scenarioId,
+                requesterResolver.resolve(authentication)
+        );
         return ResponseEntity.noContent().build();
     }
 }
