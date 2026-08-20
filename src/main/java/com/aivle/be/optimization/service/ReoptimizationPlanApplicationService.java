@@ -50,10 +50,6 @@ public class ReoptimizationPlanApplicationService {
     private final RobotRepository robotRepository;
     private final SimulationRunRobotRepository participantRepository;
 
-    /**
-     * Lock 순서: SimulationRun -> stage -> Task(id 오름차순)
-     * -> Robot(id 오름차순). 모든 검증 후에만 Task를 변경한다.
-     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ReoptimizationActivationPlan apply(
             Long simulationRunId,
@@ -217,7 +213,6 @@ public class ReoptimizationPlanApplicationService {
             );
         }
 
-        // 모든 결정적 검증이 끝난 뒤 id 오름차순으로만 변경한다.
         for (Long taskId : plannedTaskIds.stream().sorted().toList()) {
             applyTask(
                     tasksById.get(taskId),

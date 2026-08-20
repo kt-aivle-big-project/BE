@@ -2,6 +2,7 @@ package com.aivle.be.simulationrun.commandcycle;
 
 import com.aivle.be.laro.dto.LaroPlanRequest;
 import com.aivle.be.laro.dto.LaroPlanResponse;
+import com.aivle.be.simulationrun.controller.response.SimulationRunPlanSnapshotResponse;
 import com.aivle.be.simulationrun.entity.SimulationRunPlanSnapshot;
 import com.aivle.be.simulationrun.repository.SimulationRunPlanSnapshotRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,12 +12,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
-/**
- * 성공한 AI 계획을 실행·주기 단위의 진단 이력으로 저장한다.
- *
- * <p>초기화 시 이력은 삭제하며 새 실행 세대는 새 AI 계획을 만든다.
- * 이력 저장 실패가 시뮬레이션 실행을 중단시키지는 않는다.</p>
- */
+import java.util.List;
+import java.util.Optional;
+
 @Service
 @RequiredArgsConstructor
 public class SimulationRunPlanSnapshotStore {
@@ -58,10 +56,47 @@ public class SimulationRunPlanSnapshotStore {
         }
     }
 
-    /**
-     * 초기화된 실행은 이전 실행 계획을 재생하지 않고 새 계획을 만든다.
-     * 예약이 해제된 과거 계획을 다시 설치하면 계획과 재고 소유권이 어긋난다.
-     */
+    public List<SimulationRunPlanSnapshotResponse> findAll(Long simulationRunId) {
+        return repository
+                .findAllBySimulationRunIdOrderByCycleMinuteAsc(simulationRunId)
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    public Optional<SimulationRunPlanSnapshotResponse> findLatest(Long simulationRunId) {
+        return repository
+                .findFirstBySimulationRunIdOrderByCycleMinuteDesc(simulationRunId)
+                .map(this::toResponse);
+    }
+
+    private SimulationRunPlanSnapshotResponse toResponse(SimulationRunPlanSnapshot snapshot) {
+        return new SimulationRunPlanSnapshotResponse(
+                snapshot.getId(),
+                snapshot.getSimulationRunId(),
+                snapshot.getCycleMinute(),
+                read(snapshot.getRequestJson(), LaroPlanRequest.class),
+                read(snapshot.getResponseJson(), LaroPlanResponse.class),
+                snapshot.getCreatedAt()
+        );
+    }
+
+    private <T> T read(String json, Class<T> type) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, type);
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "[command-cycle] 계획 스냅샷 역직렬화 실패 type={}: {}",
+                    type.getSimpleName(),
+                    exception.getMessage()
+            );
+            return null;
+        }
+    }
+
     @Transactional
     public void deleteAll(Long simulationRunId) {
         repository.deleteAllBySimulationRunId(simulationRunId);

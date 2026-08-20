@@ -7,9 +7,6 @@ import com.aivle.be.optimization.entity.ReoptimizationStagedTaskPlan;
 
 import java.util.List;
 
-/**
- * DB 적용이 끝난 뒤 Phase 2-4 Runtime 설치에 전달할 불변 계획.
- */
 public record ReoptimizationActivationPlan(
         Long stageId,
         Long simulationRunId,

@@ -6,7 +6,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 import java.util.Map;
 
-/** LARO FastAPI 응답의 안정적인 공개 영역을 표현하는 DTO. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record LaroPlanResponse(
         @JsonProperty("api_version") String apiVersion,

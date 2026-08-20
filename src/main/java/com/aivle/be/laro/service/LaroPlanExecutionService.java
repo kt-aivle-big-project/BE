@@ -25,14 +25,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * LARO 응답의 문자열 계약을 BE의 영속 Task와 재생용 숫자 ID 계약으로 변환한다.
- */
 @Service
 @RequiredArgsConstructor
 public class LaroPlanExecutionService {
@@ -46,9 +42,6 @@ public class LaroPlanExecutionService {
     private final SimulationPlaybackService simulationPlaybackService;
     private final JdbcTemplate jdbcTemplate;
 
-    /**
-     * 승인 대기 응답은 그대로 프론트에 돌려주고, READY 계획만 실행기로 넘긴다.
-     */
     @Transactional
     public boolean activateIfReady(
             Long simulationRunId,
@@ -63,10 +56,6 @@ public class LaroPlanExecutionService {
         return true;
     }
 
-    /**
-     * 응답이 현재 실행 세대에 속할 때만 READY 계획을 설치한다.
-     * 실행 행을 잠가 초기화와 계획 설치가 서로 엇갈리지 않게 한다.
-     */
     @Transactional
     public boolean activateIfReady(
             Long simulationRunId,
@@ -92,7 +81,6 @@ public class LaroPlanExecutionService {
         return true;
     }
 
-    /** 현재 실행 세대의 재계획만 안전 지점 활성화 후보로 등록한다. */
     @Transactional
     public boolean stageReplanIfReady(
             Long simulationRunId,
@@ -147,11 +135,22 @@ public class LaroPlanExecutionService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.SIMULATION_RUN_NOT_FOUND));
         if (response.simulationRunId() != null
                 && !simulationRunId.equals(response.simulationRunId())) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "SIMULATION_RUN_ID_MISMATCH",
+                    "simulationRunId", simulationRunId,
+                    "responseSimulationRunId", response.simulationRunId(),
+                    "planId", plan.planId()
+            );
         }
         if (response.warehouseNumericId() != null
                 && !run.getWarehouse().getId().equals(response.warehouseNumericId())) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "WAREHOUSE_ID_MISMATCH",
+                    "simulationRunId", simulationRunId,
+                    "warehouseId", run.getWarehouse().getId(),
+                    "responseWarehouseId", response.warehouseNumericId(),
+                    "planId", plan.planId()
+            );
         }
 
         Map<String, LaroPlanRequest.StructuredOperation> requestedOperations = new LinkedHashMap<>();
@@ -180,7 +179,13 @@ public class LaroPlanExecutionService {
             bindTaskIdentifiers(aiTaskToBeTask, operation, logicalOperations.get(operation.operationId()), plan, task);
         }
 
-        bindExistingPlanTasks(simulationRunId, logicalOperations, plan, aiTaskToBeTask);
+        bindExistingPlanTasks(
+                simulationRunId,
+                run.getWarehouse().getId(),
+                logicalOperations,
+                plan,
+                aiTaskToBeTask
+        );
 
         return new PreparedExecution(simulationRunId, plan, Map.copyOf(aiTaskToBeTask));
     }
@@ -199,6 +204,7 @@ public class LaroPlanExecutionService {
 
     private void bindExistingPlanTasks(
             Long simulationRunId,
+            Long warehouseId,
             Map<String, LaroPlanResponse.LogicalOperation> logicalOperations,
             LaroPlanResponse.SimulationPlan plan,
             Map<String, Long> bindings
@@ -214,6 +220,12 @@ public class LaroPlanExecutionService {
             if (task == null) {
                 continue;
             }
+            applyExistingLogicalPhysicalStorageContract(
+                    task,
+                    warehouseId,
+                    operation,
+                    plan
+            );
             bindIdentifier(bindings, operation.operationId(), task.getId());
             Set<String> logicalTaskIds = new HashSet<>();
             if (operation.taskIds() != null) {
@@ -316,18 +328,135 @@ public class LaroPlanExecutionService {
         if (task.getTaskType() != TaskType.INBOUND) {
             return;
         }
+        if (logicalOperation == null
+                && plan != null
+                && "REPLAN".equals(plan.planKind())
+                && task.getEndNode() != null
+                && task.getEndNode().getNodeType() == NodeType.RACK_STORAGE
+                && task.getTargetRackLevel() != null) {
+            // A reduced replan omits operations that are already completed or
+            // committed to the old plan until handover. Their physical rack
+            // was persisted when the original plan was installed. Only
+            // operations present in logical_operations receive a new physical
+            return;
+        }
         WarehouseNode rackNode = resolveEndNode(
                 warehouseId, operation, logicalOperation, plan);
-        task.planInboundDestination(rackNode, rackLevel);
+        try {
+            if (plan != null && "REPLAN".equals(plan.planKind())) {
+                task.replanInboundDestination(rackNode, rackLevel);
+            } else {
+                task.planInboundDestination(rackNode, rackLevel);
+            }
+        } catch (LaroPlanMappingException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw mappingFailure(
+                    "INBOUND_PHYSICAL_CONTRACT_REJECTED",
+                    exception,
+                    "simulationRunId", task.getSimulationRun() == null
+                            ? null : task.getSimulationRun().getId(),
+                    "warehouseId", warehouseId,
+                    "planId", plan == null ? null : plan.planId(),
+                    "planVersion", plan == null ? null : plan.planVersion(),
+                    "basePlanId", plan == null ? null : plan.basePlanId(),
+                    "operationId", operation == null ? null : operation.operationId(),
+                    "operationType", operation == null ? null : operation.operationType(),
+                    "taskId", task.getId(),
+                    "taskStatus", task.getStatus(),
+                    "inventoryApplied", task.isInventoryApplied(),
+                    "existingRackId", task.getEndNode() == null
+                            ? null : task.getEndNode().getId(),
+                    "existingRackCode", task.getEndNode() == null
+                            ? null : task.getEndNode().getNodeCode(),
+                    "existingRackLevel", task.getTargetRackLevel(),
+                    "requestedRackId", rackNode == null ? null : rackNode.getId(),
+                    "requestedRackCode", rackNode == null ? null : rackNode.getNodeCode(),
+                    "requestedRackLevel", rackLevel,
+                    "logicalRackId", logicalOperation == null
+                            ? null : logicalOperation.rackId(),
+                    "logicalRackLevel", logicalOperation == null
+                            ? null : logicalOperation.rackLevel(),
+                    "causeType", exception.getClass().getSimpleName(),
+                    "causeMessage", exception.getMessage()
+            );
+        }
+    }
+
+    private void applyExistingLogicalPhysicalStorageContract(
+            Task task,
+            Long warehouseId,
+            LaroPlanResponse.LogicalOperation logicalOperation,
+            LaroPlanResponse.SimulationPlan plan
+    ) {
+        if (plan == null
+                || !"REPLAN".equals(plan.planKind())
+                || task.getTaskType() != TaskType.INBOUND
+                || task.isInventoryApplied()
+                || logicalOperation == null
+                || !"INBOUND_ITEM".equals(logicalOperation.operationType())) {
+            return;
+        }
+
+        WarehouseNode rackNode = resolveRackNode(warehouseId, logicalOperation);
+        Integer rackLevel = logicalOperation.rackLevel();
+        if (rackNode == null || rackLevel == null) {
+            throw mappingFailure(
+                    "EXISTING_INBOUND_REPLAN_DESTINATION_UNRESOLVED",
+                    "simulationRunId", task.getSimulationRun() == null
+                            ? null : task.getSimulationRun().getId(),
+                    "warehouseId", warehouseId,
+                    "planId", plan.planId(),
+                    "planVersion", plan.planVersion(),
+                    "operationId", logicalOperation.operationId(),
+                    "logicalRackId", logicalOperation.rackId(),
+                    "logicalRackLevel", logicalOperation.rackLevel(),
+                    "taskId", task.getId(),
+                    "taskStatus", task.getStatus()
+            );
+        }
+
+        if (task.getEndNode() != null
+                && rackNode.getId().equals(task.getEndNode().getId())
+                && rackLevel.equals(task.getTargetRackLevel())) {
+            return;
+        }
+
+        try {
+            task.replanInboundDestination(rackNode, rackLevel);
+        } catch (RuntimeException exception) {
+            throw mappingFailure(
+                    "EXISTING_INBOUND_REPLAN_CONTRACT_REJECTED",
+                    exception,
+                    "simulationRunId", task.getSimulationRun() == null
+                            ? null : task.getSimulationRun().getId(),
+                    "warehouseId", warehouseId,
+                    "planId", plan.planId(),
+                    "planVersion", plan.planVersion(),
+                    "basePlanId", plan.basePlanId(),
+                    "operationId", logicalOperation.operationId(),
+                    "taskId", task.getId(),
+                    "taskStatus", task.getStatus(),
+                    "inventoryApplied", task.isInventoryApplied(),
+                    "existingRackId", task.getEndNode() == null
+                            ? null : task.getEndNode().getId(),
+                    "existingRackCode", task.getEndNode() == null
+                            ? null : task.getEndNode().getNodeCode(),
+                    "existingRackLevel", task.getTargetRackLevel(),
+                    "requestedRackId", rackNode.getId(),
+                    "requestedRackCode", rackNode.getNodeCode(),
+                    "requestedRackLevel", rackLevel,
+                    "causeType", exception.getClass().getSimpleName(),
+                    "causeMessage", exception.getMessage()
+            );
+        }
     }
 
     private Integer plannedRackLevel(
             LaroPlanRequest.StructuredOperation operation,
             LaroPlanResponse.LogicalOperation logicalOperation
     ) {
-        // targetRackLevel is the physical putaway destination for INBOUND only.
         // An OUTBOUND logical rack level describes the source inventory and is
-        // already preserved by sourceWarehouseItemId/startNode.
         if (operation.operationType() != LaroPlanRequest.OperationType.INBOUND) {
             return null;
         }
@@ -366,13 +495,25 @@ public class LaroPlanExecutionService {
             if (rackNode != null) {
                 return rackNode;
             }
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw operationMappingFailure(
+                    "OUTBOUND_SOURCE_NODE_UNRESOLVED",
+                    warehouseId,
+                    operation,
+                    logicalOperation,
+                    plan
+            );
         }
         WarehouseNode serviceNode = resolveServiceNode(warehouseId, logicalOperation, plan, Set.of("PICKUP"), false);
         if (serviceNode != null) {
             return serviceNode;
         }
-        throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        throw operationMappingFailure(
+                "INBOUND_SOURCE_NODE_UNRESOLVED",
+                warehouseId,
+                operation,
+                logicalOperation,
+                plan
+        );
     }
 
     private WarehouseNode resolveEndNode(
@@ -391,7 +532,13 @@ public class LaroPlanExecutionService {
             if (directRack != null && directRack.getNodeType() == NodeType.RACK_STORAGE) {
                 return directRack;
             }
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw operationMappingFailure(
+                    "INBOUND_DESTINATION_RACK_UNRESOLVED",
+                    warehouseId,
+                    operation,
+                    logicalOperation,
+                    plan
+            );
         }
         WarehouseNode direct = resolveNode(warehouseId, operation.destinationNodeId(), operation.destinationNodeCode());
         if (direct != null) {
@@ -419,7 +566,54 @@ public class LaroPlanExecutionService {
         if (serviceNode != null) {
             return serviceNode;
         }
-        throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        throw operationMappingFailure(
+                "OUTBOUND_DESTINATION_NODE_UNRESOLVED",
+                warehouseId,
+                operation,
+                logicalOperation,
+                plan
+        );
+    }
+
+    private LaroPlanMappingException operationMappingFailure(
+            String reason,
+            Long warehouseId,
+            LaroPlanRequest.StructuredOperation operation,
+            LaroPlanResponse.LogicalOperation logicalOperation,
+            LaroPlanResponse.SimulationPlan plan
+    ) {
+        return mappingFailure(
+                reason,
+                "warehouseId", warehouseId,
+                "planId", plan == null ? null : plan.planId(),
+                "operationId", operation == null ? null : operation.operationId(),
+                "operationType", operation == null ? null : operation.operationType(),
+                "sourceNodeId", operation == null ? null : operation.sourceNodeId(),
+                "sourceNodeCode", operation == null ? null : operation.sourceNodeCode(),
+                "destinationNodeId", operation == null ? null : operation.destinationNodeId(),
+                "destinationNodeCode", operation == null ? null : operation.destinationNodeCode(),
+                "logicalRackId", logicalOperation == null ? null : logicalOperation.rackId(),
+                "logicalDestinationId", logicalOperation == null
+                        ? null : logicalOperation.logicalDestinationId()
+        );
+    }
+
+    private LaroPlanMappingException mappingFailure(String reason, Object... context) {
+        return mappingFailure(reason, null, context);
+    }
+
+    private LaroPlanMappingException mappingFailure(
+            String reason,
+            Throwable cause,
+            Object... context
+    ) {
+        LaroPlanMappingException exception = new LaroPlanMappingException(
+                reason,
+                cause,
+                context
+        );
+        log.warn("[LARO plan mapping] {}", exception.getMessage());
+        return exception;
     }
 
     private WarehouseNode resolveRackNode(

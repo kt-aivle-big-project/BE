@@ -12,22 +12,18 @@ public class GuestAccessPolicy {
             Long warehouseId,
             Long scenarioId
     ) {
-        // Guests may use all provided demo warehouses and scenarios.
-        // Existence and warehouse-scenario matching are validated by the service.
     }
 
     public void validateWarehouseRead(
             AuthenticatedRequester requester,
             Long warehouseId
     ) {
-        // Guests may read all provided demo warehouses.
     }
 
     public void validateScenarioRead(
             AuthenticatedRequester requester,
             Long scenarioId
     ) {
-        // Guests may read all provided demo scenarios.
     }
 
     public void requireUser(AuthenticatedRequester requester) {

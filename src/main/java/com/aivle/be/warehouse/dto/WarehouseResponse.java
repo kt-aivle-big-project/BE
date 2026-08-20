@@ -20,7 +20,6 @@ public class WarehouseResponse {
     private Long userId;
     private Long sourceTemplateId;
 
-    /** 공용 창고면 화면에서 수정·삭제 버튼을 감춘다. */
     private boolean shared;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

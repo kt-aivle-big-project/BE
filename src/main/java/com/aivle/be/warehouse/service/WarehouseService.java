@@ -50,12 +50,6 @@ public class WarehouseService {
 
         return WarehouseResponse.from(warehouse);
     }
-    /**
-     * 볼 수 있는 창고 목록.
-     *
-     * <p>공용 창고(기본 3개) + 본인이 만든 창고.
-     * 로그인 정보가 없으면 공용만 보여준다.
-     */
     @Transactional(readOnly = true)
     public List<WarehouseResponse> getWarehouses(Long userId) {
         List<Warehouse> warehouses = userId == null
@@ -88,13 +82,6 @@ public class WarehouseService {
         return WarehouseResponse.from(warehouse);
     }
 
-    /**
-     * 창고를 지운다.
-     *
-     * <p>창고에는 노드·간선·로봇·재고·시뮬레이션 기록이 딸려 있다.
-     * 엔티티에 연쇄 삭제가 걸려 있지 않아 그냥 지우면 외래키 제약에 막힌다.
-     * 참조하는 쪽부터 차례로 지운다.
-     */
     public void deleteWarehouse(Long warehouseId) {
         Warehouse warehouse = warehouseRepository.findById(warehouseId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND));
@@ -127,12 +114,6 @@ public class WarehouseService {
         warehouseRepository.delete(warehouse);
     }
 
-    /**
-     * 공용 창고는 손댈 수 없다.
-     *
-     * 모두가 쓰는 기본 지도라서, 한 사람이 바꾸면 다른 사람의 시뮬레이션까지 영향을 받는다.
-     * 지워도 다음 실행 때 시드가 되살리므로 삭제도 막는다.
-     */
     private void requireEditable(Warehouse warehouse) {
         if (warehouse.isShared()) {
             throw new BusinessException(ErrorCode.SHARED_WAREHOUSE_READ_ONLY);

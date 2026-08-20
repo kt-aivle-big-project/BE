@@ -7,10 +7,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/**
- * 재생 엔진을 주기적으로 구동한다.
- * 틱 주기만큼 시뮬레이션 시계를 전진시킨다.
- */
 @Component
 @RequiredArgsConstructor
 public class SimulationPlaybackScheduler {

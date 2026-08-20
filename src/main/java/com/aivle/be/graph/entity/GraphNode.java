@@ -6,7 +6,6 @@ import org.springframework.data.neo4j.core.schema.Id;
 import org.springframework.data.neo4j.core.schema.Node;
 import org.springframework.data.neo4j.core.schema.Property;
 
-/** Read model for the shared LARO RouteNode contract. */
 @Node("RouteNode")
 @Getter
 @NoArgsConstructor

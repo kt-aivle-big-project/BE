@@ -42,7 +42,6 @@ public class RobotStateValidationService {
         validateTask(robot, request.currentTaskId(), request.status());
         validateEventOrder(currentState, request);
 
-        // 외부에서 보고된 상태에는 이동 예정 정보가 없다
         return RobotState.stationary(
                 robotId,
                 robot.getWarehouse().getId(),

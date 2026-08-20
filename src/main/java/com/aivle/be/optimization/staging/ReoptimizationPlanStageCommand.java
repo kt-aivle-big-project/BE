@@ -14,9 +14,6 @@ import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/**
- * 검증이 끝난 AI 계획을 DB I/O와 분리해 운반하는 불변 staging 명령.
- */
 public record ReoptimizationPlanStageCommand(
         Long simulationRunId,
         String replanId,

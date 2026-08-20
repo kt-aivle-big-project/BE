@@ -12,11 +12,19 @@ import com.aivle.be.laro.dto.LaroLowBatteryContext;
 import com.aivle.be.simulationrun.domain.SimulationRunStatus;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 @Service
 public class LaroPlanService {
+    private static final Logger log = LoggerFactory.getLogger(LaroPlanService.class);
+
     private final LaroPlanClient client;
     private final LaroPlanExecutionService executionService;
     private final LaroReplanStateService replanStateService;
@@ -32,7 +40,7 @@ public class LaroPlanService {
             SimulationPlaybackService playbackService,
             LaroInventoryReservationService inventoryReservationService,
             SimulationRunRepository simulationRunRepository,
-            @Value("${laro.replan.safe-node-timeout-ms:30000}") long safeNodeWaitTimeoutMs
+            @Value("${laro.replan.safe-node-timeout-ms:60000}") long safeNodeWaitTimeoutMs
     ) {
         this.client = client;
         this.executionService = executionService;
@@ -47,7 +55,6 @@ public class LaroPlanService {
         return client.preflight(simulationRunId);
     }
 
-    /** Human Review가 열리면 현재 계획을 안전 노드에서 멈춘 뒤 실행 시계도 일시정지한다. */
     public void holdForHumanReview(
             Long simulationRunId,
             long expectedExecutionVersion
@@ -74,7 +81,6 @@ public class LaroPlanService {
                     awaitSafeNodes(simulationRunId, expectedExecutionVersion);
                 }
             } finally {
-                // 안전 노드 대기가 시간 초과되어도 Review 중 실행 시계가 계속 흐르면 안 된다.
                 replanStateService.pauseForHumanReview(simulationRunId);
             }
             return;
@@ -82,7 +88,6 @@ public class LaroPlanService {
         replanStateService.pauseForHumanReview(simulationRunId);
     }
 
-    /** 검토 답변을 처리할 때만 일시정지 상태를 다시 실행 상태로 연다. */
     public void resumeForHumanReviewDecision(
             Long simulationRunId,
             long expectedExecutionVersion
@@ -91,7 +96,6 @@ public class LaroPlanService {
         replanStateService.resumeFromHumanReview(simulationRunId);
     }
 
-    /** 새 계획을 종료하면 안전 정지 중이던 이전 활성 계획을 다시 진행한다. */
     public void cancelHumanReviewHold(
             Long simulationRunId,
             long expectedExecutionVersion
@@ -134,7 +138,6 @@ public class LaroPlanService {
         return response;
     }
 
-    /** 외부 단건 API 호환용. 요청 시작 시점의 실행 세대를 캡처한다. */
     public LaroPlanResponse plan(Long simulationRunId, LaroPlanRequest request) {
         validateExecutableWarehouse(simulationRunId);
         return plan(
@@ -166,12 +169,6 @@ public class LaroPlanService {
         }
     }
 
-    /**
-     * 이미 저장된 계획을 AI 호출 없이 그대로 다시 실행한다.
-     *
-     * <p>초기화 후 재시작할 때 쓴다. {@link #plan}과 같은 반영 절차를 타되
-     * {@code client.plan} 만 건너뛰므로, 처음 실행과 완전히 같은 계획이 돈다.
-     */
     public LaroPlanResponse replay(
             Long simulationRunId,
             long expectedExecutionVersion,
@@ -192,7 +189,6 @@ public class LaroPlanService {
         }
     }
 
-    /** Apply a plan returned after Human Review without issuing another AI request. */
     public LaroPlanResponse applyHumanReviewPlan(
             Long simulationRunId,
             long expectedExecutionVersion,
@@ -320,6 +316,15 @@ public class LaroPlanService {
                         reason
                 );
             }
+            logReplanResponse(
+                    simulationRunId,
+                    expectedExecutionVersion,
+                    reason,
+                    lowBatteryContext,
+                    request,
+                    active,
+                    response
+            );
             requireCurrentExecution(simulationRunId, expectedExecutionVersion);
             if (!isReady(response)) {
                 if (hasPendingHumanReview(response)) {
@@ -372,8 +377,24 @@ public class LaroPlanService {
         long deadline = System.nanoTime() + safeNodeWaitTimeoutMs * 1_000_000L;
         while (!playbackService.isReadyForReplanRequest(simulationRunId)) {
             requireCurrentExecution(simulationRunId, expectedExecutionVersion);
+            if (!playbackService.hasActiveAiPlan(simulationRunId)) {
+                throw new IllegalStateException(
+                        "Active AI playback context disappeared while waiting for safe nodes"
+                );
+            }
             if (System.nanoTime() >= deadline) {
-                throw new IllegalStateException("Timed out while waiting for robots to reach safe nodes");
+                List<SimulationPlaybackService.ReplanBarrierRobotStatus> barrier =
+                        playbackService.replanBarrierStatus(simulationRunId);
+                log.error(
+                        "[LARO replan] safe-node barrier timeout: runId={}, timeoutMs={}, robots={}",
+                        simulationRunId,
+                        safeNodeWaitTimeoutMs,
+                        barrier
+                );
+                throw new IllegalStateException(
+                        "Timed out while waiting for robots to finish their current tasks "
+                                + "and reach safe nodes: " + barrier
+                );
             }
             try {
                 Thread.sleep(25L);
@@ -388,6 +409,105 @@ public class LaroPlanService {
         return response != null && response.result() != null
                 && response.result().plan() != null
                 && "READY".equalsIgnoreCase(response.result().plan().status());
+    }
+
+    private void logReplanResponse(
+            Long simulationRunId,
+            long expectedExecutionVersion,
+            String reason,
+            LaroLowBatteryContext lowBatteryContext,
+            LaroPlanRequest request,
+            SimulationPlaybackService.ActiveAiPlan active,
+            LaroPlanResponse response
+    ) {
+        LaroPlanResponse.Result result = response == null ? null : response.result();
+        LaroPlanResponse.SimulationPlan plan = result == null ? null : result.plan();
+        List<LaroPlanResponse.RobotPlan> robots = plan == null || plan.robots() == null
+                ? List.of() : plan.robots();
+        int stepCount = robots.stream()
+                .map(LaroPlanResponse.RobotPlan::steps)
+                .filter(steps -> steps != null)
+                .mapToInt(List::size)
+                .sum();
+        String affectedRobotCode = lowBatteryContext == null
+                ? null : "R" + lowBatteryContext.robotId();
+        LaroPlanResponse.RobotPlan affectedRobotPlan = affectedRobotCode == null
+                ? null
+                : robots.stream()
+                        .filter(robot -> affectedRobotCode.equals(robot.robotId()))
+                        .findFirst()
+                        .orElse(null);
+
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("simulationRunId", simulationRunId);
+        values.put("executionVersion", expectedExecutionVersion);
+        values.put("reason", reason);
+        values.put("requestId", request == null || request.structuredInput() == null
+                ? null : request.structuredInput().requestId());
+        values.put("requestOperationCount", request == null
+                || request.structuredInput() == null
+                || request.structuredInput().operations() == null
+                ? 0 : request.structuredInput().operations().size());
+        values.put("activePlanId", active == null ? null : active.planId());
+        values.put("activePlanVersion", active == null ? null : active.planVersion());
+        values.put("replanAtSimTimeMs", active == null ? null : active.clockMillis());
+        values.put("lowBatteryContext", lowBatteryContext);
+        values.put("responseRequestId", response == null ? null : response.requestId());
+        values.put("responseSimulationRunId", response == null
+                ? null : response.simulationRunId());
+        values.put("responseWarehouseNumericId", response == null
+                ? null : response.warehouseNumericId());
+        values.put("resultStatus", result == null ? null : result.status());
+        values.put("requestMode", result == null ? null : result.requestMode());
+        values.put("finalRoute", result == null ? null : result.finalRoute());
+        values.put("effectivePlanningMode", result == null
+                ? null : result.effectivePlanningMode());
+        values.put("routerLlmExecuted", result == null
+                ? null : result.routerLlmExecuted());
+        values.put("planId", plan == null ? null : plan.planId());
+        values.put("planVersion", plan == null ? null : plan.planVersion());
+        values.put("basePlanId", plan == null ? null : plan.basePlanId());
+        values.put("planStatus", plan == null ? null : plan.status());
+        values.put("planKind", plan == null ? null : plan.planKind());
+        values.put("effectiveFromSimTimeMs", plan == null
+                ? null : plan.effectiveFromSimTimeMs());
+        values.put("makespanMs", plan == null ? null : plan.makespanMs());
+        values.put("absoluteFinishAtMs", plan == null
+                ? null : plan.absoluteFinishAtMs());
+        values.put("robotCount", robots.size());
+        values.put("stepCount", stepCount);
+        values.put("logicalOperationCount", plan == null
+                || plan.logicalOperations() == null
+                ? 0 : plan.logicalOperations().size());
+        values.put("handoverPoints", plan == null
+                || plan.handoverPoints() == null
+                ? List.of() : plan.handoverPoints());
+        values.put("stationReservations", plan == null
+                || plan.stationReservations() == null
+                ? List.of() : plan.stationReservations());
+        values.put("affectedRobotPlan", summarizeAffectedRobot(affectedRobotPlan));
+        values.put("workflowErrors", result == null || result.errors() == null
+                ? List.of() : result.errors());
+        log.info("[LARO replan diagnostic] {}", values);
+    }
+
+    private Map<String, Object> summarizeAffectedRobot(
+            LaroPlanResponse.RobotPlan robot
+    ) {
+        if (robot == null) {
+            return Map.of();
+        }
+        List<LaroPlanResponse.PlanStep> steps = robot.steps() == null
+                ? List.of() : robot.steps();
+        int fromIndex = Math.max(0, steps.size() - 8);
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("robotId", robot.robotId());
+        values.put("initialNode", robot.initialNode());
+        values.put("availableAtMs", robot.availableAtMs());
+        values.put("finishAtMs", robot.finishAtMs());
+        values.put("stepCount", steps.size());
+        values.put("terminalSteps", steps.subList(fromIndex, steps.size()));
+        return values;
     }
 
     private boolean hasPendingHumanReview(LaroPlanResponse response) {
@@ -405,7 +525,6 @@ public class LaroPlanService {
                 || "FAILED".equalsIgnoreCase(response.resumeOutcome());
     }
 
-    /** Review 대기 중 이미 정지한 재계획은 다시 RUNNING부터 시작하지 않는다. */
     private void prepareReplanAtSafeNodes(
             Long simulationRunId,
             long expectedExecutionVersion
@@ -454,7 +573,6 @@ public class LaroPlanService {
         replanStateService.restoreRunning(simulationRunId);
     }
 
-    /** 외부 단건 재계획 API 호환용. 요청 시작 시점의 실행 세대를 캡처한다. */
     public LaroPlanResponse replan(Long simulationRunId, LaroPlanRequest request) {
         validateExecutableWarehouse(simulationRunId);
         return replan(

@@ -10,7 +10,6 @@ import com.aivle.be.simulationrun.playback.ReplanningSnapshot;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -18,10 +17,6 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/**
- * AI가 반환한 전체 계획을 불변 snapshot만으로 검증한다.
- * repository 조회, 경로 계산, 계획 수정은 수행하지 않는다.
- */
 public final class ReoptimizationPlanValidator {
 
     private ReoptimizationPlanValidator() {
@@ -100,10 +95,6 @@ public final class ReoptimizationPlanValidator {
             );
         }
 
-        /*
-         * INFEASIBLE.unassignedTaskIds는 현재 계약만으로 해결 불가능한 전체
-         * 작업인지 단정할 수 없어 remaining task의 부분집합까지만 검증한다.
-         */
     }
 
     private static void validateBlockedEdgeIds(
@@ -426,9 +417,6 @@ public final class ReoptimizationPlanValidator {
         }
     }
 
-    /**
-     * 안전 우선 정책: 노드 점유 구간을 닫힌 구간으로 보고 동일 시각 교대도 충돌이다.
-     */
     private static void validateNodeConflicts(
             List<NodeOccupancy> occupancies
     ) {
@@ -455,9 +443,6 @@ public final class ReoptimizationPlanValidator {
         }
     }
 
-    /**
-     * 같은 physical edge의 동일·반대 방향 이동을 모두 단일 점유 자원으로 취급한다.
-     */
     private static void validateEdgeConflicts(
             List<EdgeOccupancy> occupancies
     ) {

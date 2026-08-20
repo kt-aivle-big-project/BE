@@ -5,7 +5,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Map;
 
-/** LARO response after resolving, holding, or terminating one human review. */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record LaroHumanReviewResponse(
         @JsonProperty("interaction_id") String interactionId,

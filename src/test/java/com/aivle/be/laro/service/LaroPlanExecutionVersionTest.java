@@ -187,6 +187,29 @@ class LaroPlanExecutionVersionTest {
         verify(replanStateService).pauseForHumanReview(runId);
     }
 
+    @Test
+    void safeNodeWaitFailsImmediatelyWhenPlaybackContextDisappears() {
+        Long runId = 7L;
+        long executionVersion = 2L;
+        SimulationRun run = mock(SimulationRun.class);
+
+        when(run.getExecutionVersion()).thenReturn(executionVersion);
+        when(run.getStatus()).thenReturn(SimulationRunStatus.RUNNING);
+        when(simulationRunRepository.findById(runId)).thenReturn(Optional.of(run));
+        when(playbackService.isReadyForReplanRequest(runId)).thenReturn(false);
+        when(playbackService.hasActiveAiPlan(runId)).thenReturn(true, false);
+
+        assertThatThrownBy(() -> service.holdForHumanReview(
+                runId,
+                executionVersion
+        )).isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("playback context disappeared");
+
+        verify(playbackService).beginQuiescing(runId);
+        verify(replanStateService).startQuiescing(runId);
+        verify(replanStateService).pauseForHumanReview(runId);
+    }
+
     private LaroPlanResponse readyResponse(Long runId, String planId) {
         LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
                 planId,

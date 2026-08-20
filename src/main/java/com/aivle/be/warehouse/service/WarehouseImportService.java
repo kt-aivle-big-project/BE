@@ -50,54 +50,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * 지도 JSON 을 읽어 창고 하나를 통째로 만든다.
- *
- * <p>화면에서 올린 warehouse_graph.json 은 AI 방식으로 되어 있어
- * 우리 구조와 두 가지가 다르다.
- *
- * <pre>
- *   1. 랙 자체가 노드로 없다
- *      K0_1 은 없고 K0_1_ACCESS_A / _B 만 있다.
- *      우리는 재고를 노드에 붙이므로 랙 노드가 있어야 한다.
- *
- *   2. 왕복 통로가 두 줄로 적혀 있다
- *      RA_K0_1_A_IN 과 RA_K0_1_A_OUT 처럼 방향마다 한 줄씩.
- *      그대로 넣으면 같은 길이 두 개가 되어 경로 계산이 흔들린다.
- * </pre>
- *
- * <p>그래서 저장 전에 이렇게 바꾼다.
- *
- * <pre>
- *   접근 노드 이름 -> 랙 노드 생성    K0_1_ACCESS_A -> K0_1
- *   좌표는 양쪽 접근 자리의 가운데
- *   접근 자리를 거치던 간선은 랙에 직접 연결
- *   왕복 두 줄은 BOTH 한 줄로 합침
- * </pre>
- *
- * <p>이 변환은 {@code tools/generate_warehouse_seed.py} 와 같은 규칙이다.
- * 기본 창고 3개는 그 스크립트로 미리 만들고, 사용자가 추가하는 창고는 여기서 만든다.
- */
 @Service
 @RequiredArgsConstructor
 public class WarehouseImportService {
 
     private static final Logger log = LoggerFactory.getLogger(WarehouseImportService.class);
 
-    /**
-     * 지도 JSON 의 타입 -> 우리 노드 타입.
-     *
-     * <p>{@code inbound_access} / {@code outbound_access} 는 입출고구 앞의 진입 자리다.
-     * 통로에서 입고구로 가는 길이 전부 이 자리를 거치므로 반드시 저장해야 한다.
-     * 빠뜨리면 양 끝 중 한쪽이 없는 간선이 통째로 버려져
-     * 입고구·출고구가 통로와 끊긴 외딴섬이 된다.
-     *
-     * <p>랙 접근 자리처럼 설비 하나로 합칠 수는 없다.
-     * 랙은 접근 자리 2개가 랙 1개에 대응하지만,
-     * 출고 진입 자리 {@code O_0} 은 출고구 {@code O_A}·{@code O_B}·{@code O_C}
-     * 세 개에 동시에 붙어 있다. 즉 이 자리들은 설비가 아니라 통로 교차점이므로
-     * {@code ROUTE} 로 저장한다.
-     */
     private static final Map<String, NodeType> NODE_TYPES = Map.ofEntries(
             Map.entry("route", NodeType.ROUTE),
             Map.entry("inbound_access", NodeType.ROUTE),
@@ -135,7 +93,6 @@ public class WarehouseImportService {
     private static final int DEFAULT_ROBOT_COUNT = 6;
     private static final double DEFAULT_CHARGING_POWER = 50.0;
 
-    /** 선반 한 대의 층 수. WarehouseItem 이 1~3만 허용한다. */
     private static final int RACK_LEVELS = 3;
     private static final Set<TaskStatus> OPERATIONAL_TASK_STATUSES = Set.of(
             TaskStatus.PENDING,
@@ -172,7 +129,6 @@ public class WarehouseImportService {
         return importWarehouse(request, loginUserId, false);
     }
 
-    /** 기본 데모 창고를 초기화할 때만 실행 설정 프리셋도 함께 만든다. */
     @Transactional
     public WarehouseImportResponse importWarehouseWithScenarioPresets(
             WarehouseImportRequest request,
@@ -263,14 +219,6 @@ public class WarehouseImportService {
         );
     }
 
-    /**
-     * Reconcile an edited map with an existing warehouse.
-     *
-     * <p>Stable node/edge codes are used as identities, so moving an icon
-     * updates coordinates without breaking inventory, charging-station or
-     * robot foreign keys. A protected rack/charging node cannot be removed
-     * while business data still references it.</p>
-     */
     @Transactional
     public WarehouseImportResponse updateWarehouseLayout(
             Long warehouseId,
@@ -333,8 +281,6 @@ public class WarehouseImportService {
         for (WarehouseImportRequest.MapNode raw : request.map().nodes()) {
             NodeType nodeType = NODE_TYPES.get(lower(raw.type()));
             if (nodeType == null) {
-                // 모르는 종류의 노드는 저장하지 않는다.
-                // 그 노드에 붙은 간선까지 같이 사라지므로 이름을 남긴다.
                 skipped += 1;
                 skippedNodes.add("%s(%s)".formatted(raw.id(), raw.type()));
                 continue;
@@ -396,9 +342,6 @@ public class WarehouseImportService {
             WarehouseNode source = nodeByCode.get(raw.source());
             WarehouseNode target = nodeByCode.get(raw.target());
             if (source == null || target == null || source == target) {
-                // 끝점 노드를 못 찾은 간선은 저장되지 않는다.
-                // 조용히 버리면 "저장은 되는데 간선만 안 생긴다" 로 보이므로
-                // 어느 노드 이름이 어긋났는지 남긴다.
                 droppedEdges.add("%s(%s->%s)".formatted(
                         raw.id(), raw.source(), raw.target()));
                 continue;
@@ -408,7 +351,6 @@ public class WarehouseImportService {
                 edgeCode = raw.source() + "::" + raw.target();
             }
             if (!requestedEdgeCodes.add(edgeCode)) {
-                // 같은 코드를 두 번 보내면 뒤에 온 간선은 저장되지 않는다.
                 droppedEdges.add("%s(중복, %s->%s)".formatted(
                         edgeCode, raw.source(), raw.target()));
                 continue;
@@ -498,7 +440,6 @@ public class WarehouseImportService {
 
         // The physical facility contract must advance with the same map
         // revision.  Otherwise FE/Neo4j show the edited two-robot topology
-        // while AI still reads the old seeded station rows.
         warehouseFacilitySyncService.synchronizeOutboundFacilities(
                 warehouseId, request.map(), nodeByCode
         );
@@ -531,12 +472,6 @@ public class WarehouseImportService {
        노드
     ========================================================= */
 
-    /**
-     * 저장할 노드를 만든다.
-     *
-     * <p>통로·충전·입출고는 그대로 옮기고,
-     * 랙 접근 자리는 저장하지 않는 대신 그 이름에서 랙 노드를 만들어낸다.
-     */
     private List<WarehouseNode> createNodes(
             Warehouse warehouse,
             List<WarehouseImportRequest.MapNode> rawNodes
@@ -571,7 +506,6 @@ public class WarehouseImportService {
             ));
         }
 
-        // 랙 되살리기 — 접근 자리 좌표의 가운데를 랙 위치로 본다
         Map<String, List<double[]>> rackPoints = new LinkedHashMap<>();
 
         for (WarehouseImportRequest.MapNode raw : rawNodes) {
@@ -621,10 +555,6 @@ public class WarehouseImportService {
         return warehouseNodeRepository.saveAll(nodes);
     }
 
-    /**
-     * 접근 자리가 가리키는 랙 코드.
-     * rack_id 가 있으면 그걸 쓰고, 없으면 이름에서 잘라낸다.
-     */
     private String rackCodeOf(WarehouseImportRequest.MapNode raw) {
         if (raw.rack_id() != null && !raw.rack_id().isBlank()) {
             return raw.rack_id();
@@ -638,16 +568,6 @@ public class WarehouseImportService {
        간선
     ========================================================= */
 
-    /**
-     * 간선을 만든다.
-     *
-     * <p>접근 자리를 거치던 간선은 랙에 직접 잇는다.
-     * <pre>
-     *   R0_1 -> K0_1_ACCESS_A   =>   R0_1 -> K0_1
-     * </pre>
-     *
-     * <p>양방향이 두 줄로 온 경우 BOTH 한 줄로 합친다.
-     */
     private int createEdges(
             WarehouseImportRequest.MapPayload map,
             Map<String, WarehouseNode> nodeByCode
@@ -695,11 +615,6 @@ public class WarehouseImportService {
         return edges.size();
     }
 
-    /**
-     * 간선이 가리키는 코드를 저장 대상 노드 코드로 바꾼다.
-     * 저장하지 않는 자리(입출고 접근 등)로 가는 간선은 버린다.
-     */
-    /** 왕복으로 합쳐진 간선은 방향 접미사를 뗀다. RA_K0_1_A_IN -> RA_K0_1_A */
     /* =========================================================
        구역 · 설비
     ========================================================= */
@@ -762,7 +677,6 @@ public class WarehouseImportService {
         chargingStationRepository.saveAll(stations);
     }
 
-    /** 랙마다 보관 자리를 하나씩 만든다. 재고는 여기에 붙는다. */
     private List<StorageLocation> createStorageLocations(Warehouse warehouse, List<WarehouseNode> racks) {
         LocalDateTime now = LocalDateTime.now();
         List<StorageLocation> locations = new ArrayList<>();
@@ -782,22 +696,6 @@ public class WarehouseImportService {
         return storageLocationRepository.saveAll(locations);
     }
 
-    /**
-     * 새로 만든 창고의 랙 앞쪽 절반을 3층까지 채운다.
-     *
-     * <p>기본 창고는 {@code V05_inventory.sql} 이 재고를 깔아 주지만,
-     * 지도를 올려 만든 창고에는 그 시드가 없다. 재고가 0이면
-     *
-     * <pre>
-     *   화면 - 선반 3칸이 전부 빈칸으로만 보인다
-     *   실행 - 출고 작업이 하나도 만들어지지 않는다
-     * </pre>
-     *
-     * <p>재고는 BOX 단위라 수량은 품목의 {@code unitsPerBox} 를 그대로 쓴다.
-     * 뒤쪽 절반은 비워 둬야 입고 작업이 들어갈 자리가 생긴다.
-     *
-     * @return 채운 칸 수 (랙 수 × 층 수)
-     */
     private int createInitialInventory(Warehouse warehouse, List<StorageLocation> locations) {
         List<Product> products = productRepository.findAllByOrderByProductCodeAsc()
                 .stream()
@@ -836,7 +734,6 @@ public class WarehouseImportService {
         return items.size();
     }
 
-    /** 로봇은 충전 슬롯에서 시작한다. */
     private int createRobots(Warehouse warehouse, List<WarehouseNode> slots, Integer requested) {
         if (slots.isEmpty()) {
             log.warn("[창고 가져오기] 충전 슬롯이 없어 로봇을 배치하지 못했습니다.");
@@ -868,12 +765,6 @@ public class WarehouseImportService {
         return robots.size();
     }
 
-    /**
-     * Keep one deterministic charging home per robot after a map edit.
-     * Runtime position lives in Redis, so updating this master node does not
-     * teleport a running robot; it only changes the terminal node used by the
-     * next plan/replan.
-     */
     private void synchronizeRobotHomeNodes(Long warehouseId, List<WarehouseNode> chargingSlots) {
         List<Robot> robots = robotRepository.findAllByWarehouse_Id(warehouseId).stream()
                 .sorted(java.util.Comparator.comparing(Robot::getId))
@@ -906,7 +797,6 @@ public class WarehouseImportService {
                 .toList();
     }
 
-    /** 화면에서 고를 수 있는 실행 설정을 만들어 둔다. */
     private void createScenarioPresets(Warehouse warehouse, int robotCount) {
         int robots = Math.max(1, robotCount);
 
@@ -926,18 +816,6 @@ public class WarehouseImportService {
        보조
     ========================================================= */
 
-    /**
-     * 창고의 가로·세로를 지도 좌표에서 정한다.
-     *
-     * <p>지도 JSON 의 좌표는 파워포인트 인치라 사용자가 입력한 폭·높이와
-     * 아무 관계가 없다. 입력값을 그대로 쓰면 화면의 도면 영역이
-     * 노드가 실제로 차지하는 범위와 어긋나 도면이 잘리거나 구석에 작게 박힌다.
-     *
-     * <p>그래서 노드 좌표의 최댓값을 올림해 창고 크기로 삼는다.
-     * 좌표를 읽을 수 없을 때만 요청값으로 되돌아간다.
-     *
-     * @return {가로, 세로}
-     */
     private int[] resolveDimensions(WarehouseImportRequest request) {
         List<WarehouseImportRequest.MapNode> rawNodes = request.map() == null
                 ? List.of()
@@ -960,7 +838,6 @@ public class WarehouseImportService {
             return new int[]{request.width(), request.height()};
         }
 
-        // 가장자리 노드가 경계선에 딱 붙지 않도록 한 칸 여유를 준다.
         return new int[]{
                 Math.max(1, (int) Math.ceil(maxX) + 1),
                 Math.max(1, (int) Math.ceil(maxY) + 1)
@@ -991,8 +868,6 @@ public class WarehouseImportService {
 
     private WarehouseEdge.DirectionType directionOf(String value) {
         if (value == null || value.isBlank()) {
-            // 사용자가 그린 일반 연결선의 기본 계약은 왕복 통행이다.
-            // 단방향이 필요한 서비스 인계선은 요청에 A_TO_B/B_TO_A를 명시한다.
             return WarehouseEdge.DirectionType.BOTH;
         }
         return switch (value.trim().toUpperCase()) {

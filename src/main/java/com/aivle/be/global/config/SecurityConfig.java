@@ -111,6 +111,21 @@ public class SecurityConfig {
                         ).hasAnyRole("USER", "GUEST")
                         .requestMatchers(
                                 HttpMethod.POST,
+                                "/api/scenarios",
+                                "/api/scenarios/**"
+                        ).hasRole("USER")
+                        .requestMatchers(
+                                HttpMethod.PATCH,
+                                "/api/scenarios",
+                                "/api/scenarios/**"
+                        ).hasRole("USER")
+                        .requestMatchers(
+                                HttpMethod.DELETE,
+                                "/api/scenarios",
+                                "/api/scenarios/**"
+                        ).hasRole("USER")
+                        .requestMatchers(
+                                HttpMethod.POST,
                                 "/api/warehouses/*/personal-copy"
                         ).hasRole("USER")
                         .requestMatchers(
@@ -141,9 +156,7 @@ public class SecurityConfig {
                                 "/api/simulation-runs/*/robots/states",
                                 "/api/optimizations/simulation-runs/*/reoptimization-histories"
                         ).hasAnyRole("USER", "GUEST")
-                        // 게스트도 로그인 사용자와 같은 기능을 쓴다.
                         // 내 것만 보이게 하는 범위 제한은 서비스 계층에서
-                        // guestSessionId 로 처리한다.
                         .anyRequest().hasAnyRole("USER", "GUEST")
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)

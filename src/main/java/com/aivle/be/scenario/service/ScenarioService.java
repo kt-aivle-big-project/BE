@@ -87,13 +87,6 @@ public class ScenarioService {
         }
     }
 
-    /**
-     * 시나리오 코드를 정한다.
-     *
-     * <p>화면에서는 코드를 입력받지 않으므로, 안 들어오면 창고 안에서
-     * S1, S2 ... 로 비어 있는 첫 번호를 찾아 붙인다.
-     * 직접 보낸 경우에만 중복을 오류로 돌려준다.
-     */
     private String resolveScenarioCode(Long warehouseId, String requestedCode) {
         if (requestedCode != null && !requestedCode.isBlank()) {
             String code = requestedCode.trim();
@@ -112,27 +105,43 @@ public class ScenarioService {
         throw new BusinessException(ErrorCode.DUPLICATE_SCENARIO_CODE);
     }
 
-    public ScenarioResponse get(Long scenarioId) {
-        return ScenarioResponse.from(findById(scenarioId));
+    public ScenarioResponse get(
+            Long scenarioId,
+            AuthenticatedRequester requester
+    ) {
+        return ScenarioResponse.from(findVisibleTo(scenarioId, requester));
     }
 
-    public List<ScenarioResponse> getAll(Long warehouseId) {
-        if (warehouseId == null) {
-            return scenarioRepository.findAll().stream()
-                    .map(ScenarioResponse::from)
-                    .toList();
+    public List<ScenarioResponse> getAll(
+            Long warehouseId,
+            AuthenticatedRequester requester
+    ) {
+        List<Scenario> scenarios;
+        if (requester.isUser()) {
+            scenarios = warehouseId == null
+                    ? scenarioRepository.findAllVisibleToUser(
+                            requester.userId())
+                    : scenarioRepository.findAllVisibleToUserInWarehouse(
+                            warehouseId, requester.userId());
+        } else {
+            scenarios = warehouseId == null
+                    ? scenarioRepository.findAllVisibleToGuest(
+                            requester.guestSessionId())
+                    : scenarioRepository.findAllVisibleToGuestInWarehouse(
+                            warehouseId, requester.guestSessionId());
         }
-        if (!warehouseRepository.existsById(warehouseId)) {
-            throw new BusinessException(ErrorCode.WAREHOUSE_NOT_FOUND);
-        }
-        return scenarioRepository.findAllByWarehouse_IdOrderByIdAsc(warehouseId).stream()
+        return scenarios.stream()
                 .map(ScenarioResponse::from)
                 .toList();
     }
 
     @Transactional
-    public ScenarioResponse update(Long scenarioId, ScenarioUpdateRequest request) {
-        Scenario scenario = findById(scenarioId);
+    public ScenarioResponse update(
+            Long scenarioId,
+            ScenarioUpdateRequest request,
+            AuthenticatedRequester requester
+    ) {
+        Scenario scenario = findOwnedBy(scenarioId, requester);
         scenario.updateSettings(
                 request.scenarioName(),
                 request.description(),
@@ -148,12 +157,31 @@ public class ScenarioService {
     }
 
     @Transactional
-    public void delete(Long scenarioId) {
-        scenarioRepository.delete(findById(scenarioId));
+    public void delete(Long scenarioId, AuthenticatedRequester requester) {
+        scenarioRepository.delete(findOwnedBy(scenarioId, requester));
     }
 
-    private Scenario findById(Long scenarioId) {
-        return scenarioRepository.findById(scenarioId)
+    private Scenario findOwnedBy(
+            Long scenarioId,
+            AuthenticatedRequester requester
+    ) {
+        return (requester.isUser()
+                ? scenarioRepository.findByIdAndWarehouse_User_Id(
+                        scenarioId, requester.userId())
+                : scenarioRepository.findByIdAndWarehouse_GuestSessionId(
+                        scenarioId, requester.guestSessionId()))
+                .orElseThrow(() -> new BusinessException(ErrorCode.SCENARIO_NOT_FOUND));
+    }
+
+    private Scenario findVisibleTo(
+            Long scenarioId,
+            AuthenticatedRequester requester
+    ) {
+        return (requester.isUser()
+                ? scenarioRepository.findVisibleToUser(
+                        scenarioId, requester.userId())
+                : scenarioRepository.findVisibleToGuest(
+                        scenarioId, requester.guestSessionId()))
                 .orElseThrow(() -> new BusinessException(ErrorCode.SCENARIO_NOT_FOUND));
     }
 

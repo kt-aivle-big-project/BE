@@ -5,7 +5,6 @@ import com.aivle.be.optimization.dto.response.TaskPlan;
 import java.util.List;
 import java.util.Objects;
 
-/** Immutable task-level plan kept separately from legacy playback fields. */
 public record RuntimeTaskPlan(
         Long taskId,
         Integer sequence,

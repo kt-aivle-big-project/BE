@@ -34,10 +34,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import static com.aivle.be.simulationrun.commandcycle.SimulationCommandCycleStatusResponse.CycleState;
 
-/**
- * 시뮬레이션 시각 0분과 실행별 설정 주기 경계마다 새 명령 배치를 생성하고
- * 최초 계획 또는 안전 정지 기반 재계획을 호출한다.
- */
 @Service
 public class SimulationCommandCycleService {
 
@@ -49,6 +45,7 @@ public class SimulationCommandCycleService {
     private final LaroPlanService laroPlanService;
     private final SimulationPlaybackService playbackService;
     private final SimulationRunPlanSnapshotStore planSnapshotStore;
+    private final SimulationReplanPlanRequestFactory replanPlanRequestFactory;
     private final TaskExecutor taskExecutor;
     private final Map<Long, CycleRuntime> runtimes = new ConcurrentHashMap<>();
     private final Map<Long, Object> executionLocks = new ConcurrentHashMap<>();
@@ -59,6 +56,7 @@ public class SimulationCommandCycleService {
             LaroPlanService laroPlanService,
             SimulationPlaybackService playbackService,
             SimulationRunPlanSnapshotStore planSnapshotStore,
+            SimulationReplanPlanRequestFactory replanPlanRequestFactory,
             @Qualifier("simulationCommandCycleExecutor") TaskExecutor taskExecutor
     ) {
         this.simulationRunRepository = simulationRunRepository;
@@ -66,10 +64,10 @@ public class SimulationCommandCycleService {
         this.laroPlanService = laroPlanService;
         this.playbackService = playbackService;
         this.planSnapshotStore = planSnapshotStore;
+        this.replanPlanRequestFactory = replanPlanRequestFactory;
         this.taskExecutor = taskExecutor;
     }
 
-    /** 트랜잭션 커밋 뒤 0분 배치를 시작한다. */
     public void startAfterCommit(Long simulationRunId) {
         runAfterCommit(() -> start(simulationRunId));
     }
@@ -94,8 +92,6 @@ public class SimulationCommandCycleService {
     }
 
     public void stop(Long simulationRunId) {
-        // reset/stop 뒤 상태 조회가 이전 simulatedTimeMs를 다시 반환하지 않도록
-        // 런타임을 비활성화하는 데서 끝내지 않고 저장소에서도 제거한다.
         CycleRuntime runtime = runtimes.remove(simulationRunId);
         if (runtime != null) {
             runtime.stop();
@@ -131,7 +127,6 @@ public class SimulationCommandCycleService {
         return runtime.snapshot();
     }
 
-    /** 사용자 자연어 의도를 이번 배치에만 주입하고 기존 명령 사이클을 즉시 실행한다. */
     public SimulationCommandCycleStatusResponse triggerUserCommand(
             Long simulationRunId,
             long expectedExecutionVersion,
@@ -264,8 +259,6 @@ public class SimulationCommandCycleService {
                 if (retryMinute != null) {
                     dispatchIfAccepted(runtime, retryMinute);
                 } else {
-                    // 활성 계획이 있으면 안전 정지를 풀고 기존 계획을 계속한다.
-                    // 최초 계획 오류처럼 실행할 계획이 없으면 PAUSED 상태를 유지한다.
                     laroPlanService.cancelHumanReviewHold(
                             simulationRunId,
                             request.executionVersion()
@@ -343,7 +336,6 @@ public class SimulationCommandCycleService {
         return runtime.snapshot();
     }
 
-    /** 배속이 적용된 시뮬레이션 시계를 전진시키고 분 경계를 감지한다. */
     public void tick() {
         dispatchPendingLowBatteryReplans();
         long nowNanos = System.nanoTime();
@@ -434,6 +426,7 @@ public class SimulationCommandCycleService {
 
     private void executeLocked(CycleRuntime runtime, long cycleMinute) {
         Long simulationRunId = runtime.simulationRunId();
+        LaroPlanResponse response = null;
         try {
             runtime.begin(CycleState.CHECKING, null);
             LaroPreflightResponse preflight = laroPlanService.preflight(simulationRunId);
@@ -458,7 +451,10 @@ public class SimulationCommandCycleService {
                 runtime.generated(generated);
             }
             LaroPlanRequest planRequest = lowBatteryCycle
-                    ? runtime.lowBatteryPlanRequest()
+                    ? replanPlanRequestFactory.enrichWithCurrentTaskContracts(
+                            simulationRunId,
+                            runtime.lowBatteryPlanRequest()
+                    )
                     : withUserCommand(
                             generated.planRequest(),
                             runtime.cycleUserCommand()
@@ -474,7 +470,7 @@ public class SimulationCommandCycleService {
                     : replan ? "REPLAN" : "INITIAL_PLAN";
             runtime.begin(replan ? CycleState.REPLANNING : CycleState.PLANNING, planningMode);
 
-            LaroPlanResponse response = lowBatteryReplan
+            response = lowBatteryReplan
                     ? laroPlanService.replan(
                             simulationRunId,
                             runtime.executionVersion(),
@@ -509,16 +505,114 @@ public class SimulationCommandCycleService {
                             ? planRequest.structuredInput().requestId()
                             : generated.frontView().requestId()
             );
+        } catch (StaleSimulationExecutionException exception) {
+            // Reset/restart replaced this execution while the remote AI call
+            // was still in flight.  The candidate plan is already released by
+            runtime.stop();
+            log.info(
+                    "[command-cycle] stale response discarded: runId={}, executionVersion={}, reason={}",
+                    simulationRunId,
+                    runtime.executionVersion(),
+                    exception.getMessage()
+            );
         } catch (RuntimeException exception) {
+            if (!runtime.snapshot().active()) {
+                // stop/reset removes and deactivates the runtime before an
+                // in-flight AI response can be installed.  Some lower layers
+                // report the terminal run state as a BusinessException rather
+                // than StaleSimulationExecutionException, but it is still an
+                log.info(
+                        "[command-cycle] response discarded after stop/reset: runId={}, executionVersion={}, reason={}",
+                        simulationRunId,
+                        runtime.executionVersion(),
+                        exception.getMessage()
+                );
+                return;
+            }
+            Map<String, Object> failureDiagnostic = failureDiagnostic(
+                    runtime,
+                    cycleMinute,
+                    response,
+                    exception
+            );
             runtime.failForHumanReview(exception.getMessage());
             holdForHumanReviewQuietly(runtime);
             log.warn(
-                    "[command-cycle] runId={}, minute={} failed: {}",
-                    simulationRunId,
-                    cycleMinute,
-                    exception.getMessage()
+                    "[command-cycle] failure diagnostic {}",
+                    failureDiagnostic,
+                    exception
             );
         }
+    }
+
+    private Map<String, Object> failureDiagnostic(
+            CycleRuntime runtime,
+            long cycleMinute,
+            LaroPlanResponse response,
+            RuntimeException exception
+    ) {
+        SimulationCommandCycleStatusResponse snapshot = runtime.snapshot();
+        LaroPlanRequest request = runtime.activePlanRequestOrNull();
+        LaroLowBatteryContext battery = runtime.lowBatteryContext();
+        LaroPlanResponse.Result result = response == null ? null : response.result();
+        LaroPlanResponse.SimulationPlan plan = result == null ? null : result.plan();
+        Throwable root = rootCause(exception);
+        SimulationPlaybackService.ActiveAiPlan activePlan = null;
+        try {
+            activePlan = playbackService.activeAiPlan(runtime.simulationRunId());
+        } catch (RuntimeException ignored) {
+        }
+
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("simulationRunId", runtime.simulationRunId());
+        values.put("executionVersion", runtime.executionVersion());
+        values.put("cycleMinute", cycleMinute);
+        values.put("failedState", snapshot.state());
+        values.put("planningMode", snapshot.planningMode());
+        values.put("simulatedTimeMs", snapshot.simulatedTimeMs());
+        values.put("replanReason", runtime.replanReason());
+        values.put("lowBatteryContext", battery);
+        values.put("requestId", request == null || request.structuredInput() == null
+                ? null : request.structuredInput().requestId());
+        values.put("requestOperationCount", request == null
+                || request.structuredInput() == null
+                || request.structuredInput().operations() == null
+                ? 0 : request.structuredInput().operations().size());
+        values.put("activePlanId", activePlan == null ? null : activePlan.planId());
+        values.put("activePlanVersion", activePlan == null
+                ? null : activePlan.planVersion());
+        values.put("activePlanClockMs", activePlan == null
+                ? null : activePlan.clockMillis());
+        values.put("responseRequestId", response == null ? null : response.requestId());
+        values.put("resultStatus", result == null ? null : result.status());
+        values.put("finalRoute", result == null ? null : result.finalRoute());
+        values.put("effectivePlanningMode", result == null
+                ? null : result.effectivePlanningMode());
+        values.put("planId", plan == null ? null : plan.planId());
+        values.put("planVersion", plan == null ? null : plan.planVersion());
+        values.put("basePlanId", plan == null ? null : plan.basePlanId());
+        values.put("planStatus", plan == null ? null : plan.status());
+        values.put("planKind", plan == null ? null : plan.planKind());
+        values.put("planRobotCount", plan == null || plan.robots() == null
+                ? 0 : plan.robots().size());
+        values.put("logicalOperationCount", plan == null
+                || plan.logicalOperations() == null
+                ? 0 : plan.logicalOperations().size());
+        values.put("handoverPoints", plan == null || plan.handoverPoints() == null
+                ? List.of() : plan.handoverPoints());
+        values.put("exceptionType", exception.getClass().getName());
+        values.put("exceptionMessage", exception.getMessage());
+        values.put("rootCauseType", root.getClass().getName());
+        values.put("rootCauseMessage", root.getMessage());
+        return values;
+    }
+
+    private Throwable rootCause(Throwable exception) {
+        Throwable current = exception;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private void holdForHumanReviewQuietly(CycleRuntime runtime) {
@@ -672,7 +766,6 @@ public class SimulationCommandCycleService {
                     : request;
             if (generationRequest.generationIntervalSeconds() != null) {
                 intervalMs = generationRequest.generationIntervalSeconds() * 1_000L;
-                // 변경 시점 다음의 새 주기 경계에서 재계획하도록 버킷을 다시 맞춘다.
                 lastTriggeredMinute = simulatedTimeMs / intervalMs;
             }
             updatedAt = Instant.now();
@@ -826,7 +919,6 @@ public class SimulationCommandCycleService {
                 humanReviewResponse = null;
                 state = CycleState.REVIEW_REQUIRED;
                 error = null;
-                // Keep inFlight true so another automatic cycle cannot overtake review.
                 inFlight = true;
                 updatedAt = Instant.now();
                 return;
@@ -845,7 +937,34 @@ public class SimulationCommandCycleService {
                 failForHumanReview(code + ": " + message);
                 return;
             }
+            if (value != null && value.result() != null
+                    && "human_review".equalsIgnoreCase(value.result().status())) {
+                planResponse = value;
+                Map<String, Object> summary = value.result().frontendSummary();
+                String detail = firstNonBlankSummary(summary);
+                failForHumanReview(
+                        "HUMAN_REVIEW_REQUIRED: " + (
+                                detail == null
+                                        ? "AI 계획이 실행 가능한 경로를 만들지 못해 운영자 검토가 필요합니다."
+                                        : detail
+                        )
+                );
+                return;
+            }
             complete(value);
+        }
+
+        private static String firstNonBlankSummary(Map<String, Object> summary) {
+            if (summary == null || summary.isEmpty()) {
+                return null;
+            }
+            for (String key : List.of("summary_text", "headline", "next_action")) {
+                Object value = summary.get(key);
+                if (value != null && !value.toString().isBlank()) {
+                    return value.toString().trim();
+                }
+            }
+            return null;
         }
 
         synchronized void beginHumanReview(
@@ -948,6 +1067,10 @@ public class SimulationCommandCycleService {
             return activePlanRequest;
         }
 
+        synchronized LaroPlanRequest activePlanRequestOrNull() {
+            return activePlanRequest;
+        }
+
         synchronized long activeCycleMinute() {
             return activeCycleMinute;
         }
@@ -1020,7 +1143,6 @@ public class SimulationCommandCycleService {
             operationalFailureReview = true;
             state = CycleState.REVIEW_REQUIRED;
             error = normalizedMessage;
-            // 검토가 끝나기 전에는 다음 자동 계획 주기가 현재 오류를 추월할 수 없다.
             inFlight = true;
             updatedAt = Instant.now();
         }

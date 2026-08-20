@@ -36,12 +36,6 @@ public class WarehouseEdge {
     @Column(name = "edge_id")
     private Long id;
 
-    /**
-     * 창고 그래프상의 간선 코드. (예: H0_0, V5_1, RA_K0_1_A)
-     *
-     * 프론트 warehouse_graph.json 및 AI(cuOpt/MAPF) 응답의 edge_id 와 대응한다.
-     * 외부와 주고받을 때는 숫자 PK 대신 이 코드를 쓴다.
-     */
     @Column(name = "edge_code", length = 50)
     private String edgeCode;
 
@@ -80,7 +74,6 @@ public class WarehouseEdge {
     @Column(name = "mobile_robot_traversable")
     private Boolean mobileRobotTraversable;
 
-    /** Optional edge metadata that is not part of the typed routing contract. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "route_attributes", columnDefinition = "jsonb")
     private Map<String, Object> routeAttributes = new LinkedHashMap<>();
@@ -160,9 +153,6 @@ public class WarehouseEdge {
         }
     }
 
-    /**
-     * 간선 코드를 지정한다. (그래프 동기화·마이그레이션용)
-     */
     public void assignEdgeCode(String edgeCode) {
         this.edgeCode = edgeCode;
     }

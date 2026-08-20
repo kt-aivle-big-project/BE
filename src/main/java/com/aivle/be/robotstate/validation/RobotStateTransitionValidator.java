@@ -41,7 +41,6 @@ public class RobotStateTransitionValidator {
         fromMoving.addAll(WORKING_STATUSES);
         ALLOWED_TRANSITIONS.put(RobotStatus.MOVING, fromMoving);
 
-        // 작업 계열 상태 → 이동/대기로 복귀, 작업 유형 간 전환도 허용
         for (RobotStatus working : WORKING_STATUSES) {
             EnumSet<RobotStatus> next = EnumSet.of(
                     RobotStatus.MOVING, RobotStatus.IDLE, RobotStatus.ERROR, RobotStatus.OFFLINE);
@@ -65,7 +64,6 @@ public class RobotStateTransitionValidator {
             return;
         }
 
-        // 고장/오프라인은 어느 상태에서든 발생할 수 있다
         if (TERMINAL_STATUSES.contains(nextStatus)) {
             return;
         }

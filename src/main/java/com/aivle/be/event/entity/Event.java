@@ -40,7 +40,6 @@ public class Event {
     @Lob
     private String description;
 
-    // 장애물/차단이 발생한 노드 위치. COLLISION_RISK, PATH_BLOCKED류에서 경로 겹침 판단에 사용. 그 외 이벤트는 null 가능
     @Column(name = "node_id")
     private Long nodeId;
 

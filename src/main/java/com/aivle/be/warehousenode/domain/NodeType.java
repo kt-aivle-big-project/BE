@@ -5,10 +5,6 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 import java.util.Locale;
 
-/**
- * 창고 그래프 노드의 역할 구분.
- * 프론트 warehouse_graph.json의 node.type 값과 1:1 대응한다.
- */
 public enum NodeType {
 
     // 이동 통로

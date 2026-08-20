@@ -9,10 +9,6 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/**
- * Phase 2-1에서 확정한 요청 snapshot과 AI 계획 사이의 기본 계약 검증기.
- * 경로 탐색이나 Runtime/DB 계획 적용은 수행하지 않는다.
- */
 public final class ReoptimizationPlanContractValidator {
 
     private ReoptimizationPlanContractValidator() {

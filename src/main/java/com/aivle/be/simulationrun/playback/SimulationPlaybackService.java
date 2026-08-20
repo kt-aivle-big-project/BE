@@ -6,6 +6,7 @@ import com.aivle.be.global.exception.BusinessException;
 import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.service.LaroInventoryReservationService;
+import com.aivle.be.laro.service.LaroPlanMappingException;
 import com.aivle.be.laro.service.LaroTaskId;
 import com.aivle.be.optimization.entity.ReoptimizationPlanStage;
 import com.aivle.be.optimization.staging.ReoptimizationActivationPlan;
@@ -47,22 +48,12 @@ import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.HashSet;
 import java.util.Locale;
-import java.util.Optional;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
-/**
- * 시뮬레이션 재생 엔진 (시간 기반).
- *
- * 내부 시계를 두고, 작업은 지정된 발생 시각(releaseAtMillis)에 투입된다.
- * 유휴 로봇이 대기 중인 작업을 집어가고, 이동/집품/적재에 각각 소요 시간이 걸린다.
- *
- * 지금은 백엔드가 BFS로 경로를 계산하지만,
- * cuOpt 연동 후에는 AI가 만든 경로를 그대로 사용하도록 교체하면 된다.
- */
 @Service
 @RequiredArgsConstructor
 public class SimulationPlaybackService {
@@ -72,14 +63,13 @@ public class SimulationPlaybackService {
     private static final String RUN_TOPIC = "/topic/simulation-runs";
     private static final String TASK_TOPIC = "/topic/tasks";
 
-    // 한 tick 에서 로봇 한 대가 처리할 수 있는 최대 동작 수.
-    // 배속이 높거나 동작 시간이 짧을 때 밀리지 않게 하되,
-    // 예기치 못한 무한 루프는 막는다.
     private static final int MAX_STEPS_PER_TICK = 50;
 
     // Battery specs describe the real-device rate. Accelerate consumption in the
-    // simulator so that movement and work consumption remain visible to users.
     static final double SIMULATION_BATTERY_RATE_MULTIPLIER = 10.0;
+
+    // Redis projection publication and playback ticks can briefly cross at the
+    private static final int MAX_PLAN_ACTIVATION_ATTEMPTS = 3;
 
     // 계획 대상 작업 상태
     private static final List<TaskStatus> PLANNABLE_STATUSES =
@@ -98,49 +88,26 @@ public class SimulationPlaybackService {
     private final JdbcTemplate jdbcTemplate;
     private final LaroInventoryReservationService inventoryReservationService;
 
-    // 진행 중인 재생 (simulationRunId -> 상태)
     private final Map<Long, PlaybackContext> contexts = new ConcurrentHashMap<>();
 
-    // AI의 MOVE/WAIT/SERVICE 절대 시간표. 같은 run에서는 BFS context와 동시에 존재하지 않는다.
     private final Map<Long, AiPlaybackContext> aiContexts = new ConcurrentHashMap<>();
 
     // A replan is built and validated first, then activated only after every
-    // robot reaches the handover barrier declared by the AI plan.
     private final Map<Long, PendingAiPlan> pendingAiPlans = new ConcurrentHashMap<>();
 
-    // One system replan is enough to cover every low-battery robot in the same run.
-    // Keep the request pending until the command cycle explicitly accepts it.
     private final Map<Long, LowBatteryReplanRequest> lowBatteryReplanRequests =
             new ConcurrentHashMap<>();
 
-    // UI 이벤트 연타로 한 실행에서 여러 로봇의 배터리가 동시에 바뀌지 않게 한다.
-    // 새 계획이 설치·활성화되거나 실행이 정리되면 해제한다.
     private final Set<Long> lowBatteryInjectionRunIds = ConcurrentHashMap.newKeySet();
 
-    // A broken playback run must not abort every other run on the shared scheduler.
-    // Freeze it after the first failure to prevent partial in-memory progress and log storms.
     private final Set<Long> suspendedAiRunIds = ConcurrentHashMap.newKeySet();
 
-    // 노드 코드 캐시 (nodeId -> nodeCode)
     private final Map<Long, String> nodeCodeCache = new ConcurrentHashMap<>();
 
     /* =========================================================
        계획 수립
     ========================================================= */
 
-    /**
-     * 시뮬레이션 시작 시 호출.
-     * 작업을 발생 시각 순으로 예약하고 로봇 실행 상태를 초기화한다.
-     */
-    /**
-     * 재생을 시작할 때 쓸 배터리를 정한다.
-     *
-     * <p>우선순위는 <b>Redis 실시간 상태 → 시나리오 초기 배터리 → 로봇 등록값</b> 이다.
-     *
-     * <p>{@code robot.getBattery()} 는 로봇을 등록할 때 넣은 값이라 실행 중에 바뀌지 않는다.
-     * 그것만 쓰면 시나리오에서 초기 배터리를 80% 로 잡아도 계획이 적용되는 순간
-     * 100% 로 되돌아가고, 재계획 때마다 배터리가 다시 차오른다.
-     */
     private Integer currentBattery(Long simulationRunId, SimulationRun run, Robot robot) {
         Integer live = simulationRunStateStore
                 .findByRobotId(simulationRunId, robot.getId())
@@ -249,15 +216,6 @@ public class SimulationPlaybackService {
        재생 진행
     ========================================================= */
 
-    /**
-     * 스케줄러가 주기적으로 호출한다.
-     *
-     * @param tickMillis 실제 경과 시간(ms)
-     */
-    /**
-     * READY LARO 계획을 현재 실행 계획으로 설치한다.
-     * 설치가 끝난 시점부터 기존 BFS context는 제거되고 AI 시간표가 유일한 이동 권위가 된다.
-     */
     @Transactional
     public void installAiPlan(
             Long simulationRunId,
@@ -283,7 +241,13 @@ public class SimulationPlaybackService {
         AiPlaybackContext active = aiContexts.get(simulationRunId);
         if (active == null || plan.basePlanId() == null
                 || !plan.basePlanId().equals(active.getPlanId())) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "BASE_PLAN_ID_MISMATCH",
+                    "simulationRunId", simulationRunId,
+                    "planId", plan.planId(),
+                    "basePlanId", plan.basePlanId(),
+                    "activePlanId", active == null ? null : active.getPlanId()
+            );
         }
         PreparedAiPlan prepared = prepareAiPlan(simulationRunId, plan, aiTaskToBeTask);
         Map<String, Long> robotIds = prepared.robotIdsByAiCode();
@@ -299,14 +263,25 @@ public class SimulationPlaybackService {
                 }
                 Long nodeId = prepared.nodeIdsByCode().get(point.nodeId());
                 if (robotId == null || nodeId == null || point.handoverAtMs() == null) {
-                    throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                    throw mappingFailure(
+                            "HANDOVER_POINT_UNRESOLVED",
+                            "simulationRunId", simulationRunId,
+                            "planId", plan.planId(),
+                            "handoverRobotId", point.robotId(),
+                            "handoverNodeId", point.nodeId(),
+                            "handoverAtMs", point.handoverAtMs(),
+                            "resolvedRobotId", robotId,
+                            "resolvedNodeId", nodeId
+                    );
                 }
                 active.applyHandover(robotId, point.handoverAtMs(), nodeId);
             }
         }
         pendingAiPlans.put(simulationRunId, new PendingAiPlan(
                 prepared.context(),
-                prepared.assignedRobotByTask()
+                prepared.assignedRobotByTask(),
+                prepared.registeredNodeByRobot(),
+                0
         ));
         logPreparedPlan("staged", prepared);
     }
@@ -333,7 +308,14 @@ public class SimulationPlaybackService {
                 .toList();
         if (participants.isEmpty() || plan.robots() == null
                 || plan.robots().size() > participants.size()) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "PLAN_ROBOT_COUNT_INVALID",
+                    "simulationRunId", simulationRunId,
+                    "planId", plan.planId(),
+                    "participantCount", participants.size(),
+                    "planRobotCount", plan.robots() == null ? null : plan.robots().size(),
+                    "participantRobotIds", participants.stream().map(Robot::getId).toList()
+            );
         }
 
         Map<String, WarehouseNode> nodesByCode = warehouseNodeRepository
@@ -352,13 +334,23 @@ public class SimulationPlaybackService {
         List<AiPlaybackContext.RobotTimeline> timelines = new ArrayList<>();
         Map<Long, Robot> assignedRobotByTask = new HashMap<>();
         Map<String, Long> robotIdsByAiCode = new HashMap<>();
+        Map<Long, Long> registeredNodeByRobot = new HashMap<>();
 
         for (LaroPlanResponse.RobotPlan robotPlan : plan.robots()) {
             Robot robot = resolvePlanRobot(robotPlan.robotId(), participants, usedRobotIds);
             usedRobotIds.add(robot.getId());
             robotIdsByAiCode.put(robotPlan.robotId(), robot.getId());
+            if (robot.getNodeId() != null) {
+                registeredNodeByRobot.put(robot.getId(), robot.getNodeId());
+            }
             List<AiPlaybackContext.TimedStep> steps = convertSteps(
-                    robotPlan, nodesByCode, adjacency, aiTaskToBeTask);
+                    simulationRunId,
+                    plan.planId(),
+                    robotPlan,
+                    nodesByCode,
+                    adjacency,
+                    aiTaskToBeTask
+            );
             if (steps.isEmpty()) {
                 continue;
             }
@@ -414,7 +406,8 @@ public class SimulationPlaybackService {
                 context,
                 Map.copyOf(assignedRobotByTask),
                 Map.copyOf(robotIdsByAiCode),
-                Map.copyOf(nodeIdsByCode)
+                Map.copyOf(nodeIdsByCode),
+                Map.copyOf(registeredNodeByRobot)
         );
     }
 
@@ -430,6 +423,8 @@ public class SimulationPlaybackService {
     }
 
     private List<AiPlaybackContext.TimedStep> convertSteps(
+            Long simulationRunId,
+            String planId,
             LaroPlanResponse.RobotPlan robotPlan,
             Map<String, WarehouseNode> nodesByCode,
             Map<Long, Set<Long>> adjacency,
@@ -450,21 +445,60 @@ public class SimulationPlaybackService {
         for (LaroPlanResponse.PlanStep step : ordered) {
             if (step.stepType() == null || step.startAtMs() == null || step.endAtMs() == null
                     || step.endAtMs() < step.startAtMs() || step.startAtMs() < previousEnd) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                throw mappingFailure(
+                        "STEP_TIMELINE_INVALID",
+                        "simulationRunId", simulationRunId,
+                        "planId", planId,
+                        "robotId", robotPlan.robotId(),
+                        "stepId", step.stepId(),
+                        "stepType", step.stepType(),
+                        "startAtMs", step.startAtMs(),
+                        "endAtMs", step.endAtMs(),
+                        "previousEndAtMs", previousEnd
+                );
             }
             AiPlaybackContext.StepType type;
             try {
                 type = AiPlaybackContext.StepType.valueOf(step.stepType().toUpperCase(Locale.ROOT));
             } catch (IllegalArgumentException exception) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                throw mappingFailure(
+                        "STEP_TYPE_UNSUPPORTED",
+                        "simulationRunId", simulationRunId,
+                        "planId", planId,
+                        "robotId", robotPlan.robotId(),
+                        "stepId", step.stepId(),
+                        "stepType", step.stepType()
+                );
             }
 
-            Long nodeId = nodeId(nodesByCode, step.nodeId(), type != AiPlaybackContext.StepType.MOVE);
-            Long fromNodeId = nodeId(nodesByCode, step.fromNode(), type == AiPlaybackContext.StepType.MOVE);
-            Long toNodeId = nodeId(nodesByCode, step.toNode(), type == AiPlaybackContext.StepType.MOVE);
+            Long nodeId = stepNodeId(
+                    simulationRunId, planId, robotPlan.robotId(), step,
+                    nodesByCode, step.nodeId(), "nodeId",
+                    type != AiPlaybackContext.StepType.MOVE
+            );
+            Long fromNodeId = stepNodeId(
+                    simulationRunId, planId, robotPlan.robotId(), step,
+                    nodesByCode, step.fromNode(), "fromNode",
+                    type == AiPlaybackContext.StepType.MOVE
+            );
+            Long toNodeId = stepNodeId(
+                    simulationRunId, planId, robotPlan.robotId(), step,
+                    nodesByCode, step.toNode(), "toNode",
+                    type == AiPlaybackContext.StepType.MOVE
+            );
             if (type == AiPlaybackContext.StepType.MOVE
                     && !adjacency.getOrDefault(fromNodeId, Set.of()).contains(toNodeId)) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                throw mappingFailure(
+                        "MOVE_EDGE_NOT_TRAVERSABLE",
+                        "simulationRunId", simulationRunId,
+                        "planId", planId,
+                        "robotId", robotPlan.robotId(),
+                        "stepId", step.stepId(),
+                        "fromNode", step.fromNode(),
+                        "fromNodeId", fromNodeId,
+                        "toNode", step.toNode(),
+                        "toNodeId", toNodeId
+                );
             }
 
             Long beTaskId = null;
@@ -524,20 +558,42 @@ public class SimulationPlaybackService {
         return null;
     }
 
-    private Long nodeId(
+    private Long stepNodeId(
+            Long simulationRunId,
+            String planId,
+            String robotId,
+            LaroPlanResponse.PlanStep step,
             Map<String, WarehouseNode> nodesByCode,
             String nodeCode,
+            String field,
             boolean required
     ) {
         if (nodeCode == null) {
             if (required) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+                throw mappingFailure(
+                        "STEP_NODE_MISSING",
+                        "simulationRunId", simulationRunId,
+                        "planId", planId,
+                        "robotId", robotId,
+                        "stepId", step.stepId(),
+                        "stepType", step.stepType(),
+                        "field", field
+                );
             }
             return null;
         }
         WarehouseNode node = nodesByCode.get(nodeCode);
         if (node == null && required) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw mappingFailure(
+                    "STEP_NODE_UNKNOWN",
+                    "simulationRunId", simulationRunId,
+                    "planId", planId,
+                    "robotId", robotId,
+                    "stepId", step.stepId(),
+                    "stepType", step.stepType(),
+                    "field", field,
+                    "nodeCode", nodeCode
+            );
         }
         return node == null ? null : node.getId();
     }
@@ -558,13 +614,29 @@ public class SimulationPlaybackService {
     ) {
         Long numeric = canonicalRobotDatabaseId(planRobotId);
         if (numeric == null) {
-            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+            throw new LaroPlanMappingException(
+                    "ROBOT_ID_INVALID",
+                    "planRobotId", planRobotId,
+                    "participantRobotIds", participants.stream().map(Robot::getId).toList()
+            );
         }
         return participants.stream()
                 .filter(robot -> numeric.equals(robot.getId()))
                 .filter(robot -> !usedRobotIds.contains(robot.getId()))
                 .findFirst()
-                .orElseThrow(() -> new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED));
+                .orElseThrow(() -> new LaroPlanMappingException(
+                        "ROBOT_NOT_PARTICIPATING_OR_DUPLICATED",
+                        "planRobotId", planRobotId,
+                        "resolvedRobotId", numeric,
+                        "participantRobotIds", participants.stream().map(Robot::getId).toList(),
+                        "usedRobotIds", usedRobotIds
+                ));
+    }
+
+    private LaroPlanMappingException mappingFailure(String reason, Object... context) {
+        LaroPlanMappingException exception = new LaroPlanMappingException(reason, context);
+        log.warn("[AI playback] {}", exception.getMessage());
+        return exception;
     }
 
     static Long canonicalRobotDatabaseId(String value) {
@@ -629,7 +701,6 @@ public class SimulationPlaybackService {
                 continue;
             }
 
-            // 일시정지 중에는 시계도 멈춘다
             if (run.getStatus() != SimulationRunStatus.RUNNING) {
                 continue;
             }
@@ -663,6 +734,9 @@ public class SimulationPlaybackService {
             if (suspendedAiRunIds.contains(runId)) {
                 continue;
             }
+            if (context.isHandoverPlanning()) {
+                continue;
+            }
 
             try {
                 context.advanceClock(tickMillis);
@@ -675,7 +749,8 @@ public class SimulationPlaybackService {
                     try {
                         activatePendingPlan(run, context, pending);
                     } catch (RuntimeException exception) {
-                        recoverFromActivationFailure(run, context, pending, exception);
+                        retryOrRecoverFromActivationFailure(
+                                run, context, pending, exception);
                     }
                     continue;
                 }
@@ -731,7 +806,7 @@ public class SimulationPlaybackService {
         int guard = 0;
         while (!robot.isFinished() && guard++ < MAX_STEPS_PER_TICK) {
             if (context.isQuiescing() && robot.shouldHold(context.getClockMillis())) {
-                robot.hold();
+                robot.hold(context.getClockMillis());
                 publishAi(context, robot, null);
                 return;
             }
@@ -783,11 +858,13 @@ public class SimulationPlaybackService {
                 publishAi(context, robot, step);
                 return;
             }
-            completeAiStep(robot, step);
+            if (!completeAiStep(context, robot, step)) {
+                return;
+            }
             robot.advanceStep();
         }
         if (context.isQuiescing() && robot.shouldHold(context.getClockMillis())) {
-            robot.hold();
+            robot.hold(context.getClockMillis());
             publishAi(context, robot, null);
             return;
         }
@@ -796,7 +873,7 @@ public class SimulationPlaybackService {
             if (!context.isQuiescing()) {
                 robot.setCurrentTaskId(null);
             } else {
-                robot.hold();
+                robot.hold(context.getClockMillis());
             }
             publishAi(context, robot, null);
         }
@@ -818,33 +895,122 @@ public class SimulationPlaybackService {
         if (oldContext.getClockMillis() < next.getClockMillis()) {
             return;
         }
-        validateActivationState(oldContext.getSimulationRunId(), next);
-        finalizeSupersededTasks(oldContext, next);
+        validateActivationState(oldContext.getSimulationRunId(), oldContext, pending);
+        AiPlaybackContext activated = next.rebaseForActivation(
+                oldContext.getClockMillis(), oldContext);
+        finalizeSupersededTasks(oldContext, activated);
         assignPlannedTasks(pending.assignedRobotByTask());
         pendingAiPlans.remove(oldContext.getSimulationRunId());
         lowBatteryReplanRequests.remove(oldContext.getSimulationRunId());
         lowBatteryInjectionRunIds.remove(oldContext.getSimulationRunId());
-        aiContexts.put(oldContext.getSimulationRunId(), next);
+        aiContexts.put(oldContext.getSimulationRunId(), activated);
         run.finishReplanning();
-        markPlanActivated(next.getSimulationRunId(), next.getPlanId());
+        markPlanActivated(activated.getSimulationRunId(), activated.getPlanId());
         inventoryReservationService.releaseSupersededPlan(
-                next.getSimulationRunId(), next.getPlanId());
+                activated.getSimulationRunId(), activated.getPlanId());
         messagingTemplate.convertAndSend(RUN_TOPIC, SimulationRunResponse.from(run));
         log.info("[AI playback] activated replan runId={}, oldPlanId={}, newPlanId={}, simTimeMs={}",
-                oldContext.getSimulationRunId(), oldContext.getPlanId(), next.getPlanId(), next.getClockMillis());
+                oldContext.getSimulationRunId(), oldContext.getPlanId(),
+                activated.getPlanId(), activated.getClockMillis());
     }
 
-    private void validateActivationState(Long simulationRunId, AiPlaybackContext next) {
+    private void validateActivationState(
+            Long simulationRunId,
+            AiPlaybackContext oldContext,
+            PendingAiPlan pending
+    ) {
         Map<Long, RobotState> actualByRobot = simulationRunStateStore.findAll(simulationRunId)
                 .stream()
                 .collect(Collectors.toMap(RobotState::robotId, value -> value));
-        for (AiPlaybackContext.RobotTimeline robot : next.getRobots()) {
-            RobotState actual = actualByRobot.get(robot.getRobotId());
-            if (actual == null || actual.nextNodeId() != null
-                    || !Objects.equals(robot.getCurrentNodeId(), actual.currentNodeId())) {
-                throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        ActivationStateMismatch mismatch = findActivationStateMismatch(
+                oldContext,
+                pending.context(),
+                actualByRobot,
+                pending.registeredNodeByRobot()
+        );
+        if (mismatch != null) {
+            log.warn(
+                    "[AI playback] activation state mismatch: runId={}, oldPlanId={}, "
+                            + "newPlanId={}, robotId={}, reason={}, expectedNodeId={}, "
+                            + "runtimeNodeId={}, publishedNodeId={}, publishedNextNodeId={}, "
+                            + "runtimeHeld={}, attempt={}/{}",
+                    simulationRunId,
+                    oldContext.getPlanId(),
+                    pending.context().getPlanId(),
+                    mismatch.robotId(),
+                    mismatch.reason(),
+                    mismatch.expectedNodeId(),
+                    mismatch.runtimeNodeId(),
+                    mismatch.publishedNodeId(),
+                    mismatch.publishedNextNodeId(),
+                    mismatch.runtimeHeld(),
+                    pending.activationAttempts() + 1,
+                    MAX_PLAN_ACTIVATION_ATTEMPTS
+            );
+            throw new BusinessException(ErrorCode.LARO_PLAN_MAPPING_FAILED);
+        }
+    }
+
+    static ActivationStateMismatch findActivationStateMismatch(
+            AiPlaybackContext oldContext,
+            AiPlaybackContext nextContext,
+            Map<Long, RobotState> actualByRobot,
+            Map<Long, Long> registeredNodeByRobot
+    ) {
+        Map<Long, AiPlaybackContext.RobotTimeline> oldByRobot = oldContext.getRobots()
+                .stream()
+                .collect(Collectors.toMap(
+                        AiPlaybackContext.RobotTimeline::getRobotId,
+                        value -> value
+                ));
+        for (AiPlaybackContext.RobotTimeline nextRobot : nextContext.getRobots()) {
+            Long robotId = nextRobot.getRobotId();
+            Long expectedNodeId = nextRobot.getCurrentNodeId();
+            AiPlaybackContext.RobotTimeline runtime = oldByRobot.get(robotId);
+            RobotState published = actualByRobot.get(robotId);
+
+            if (runtime != null) {
+                if (!runtime.isHeld()) {
+                    return ActivationStateMismatch.of(
+                            robotId, "ACTIVE_ROBOT_NOT_HELD", expectedNodeId,
+                            runtime, published);
+                }
+                if (!Objects.equals(expectedNodeId, runtime.getCurrentNodeId())) {
+                    return ActivationStateMismatch.of(
+                            robotId, "HANDOVER_NODE_MISMATCH", expectedNodeId,
+                            runtime, published);
+                }
+                continue;
+            }
+
+            if (published != null) {
+                if (published.nextNodeId() != null) {
+                    return ActivationStateMismatch.of(
+                            robotId, "NEW_ROBOT_STILL_MOVING", expectedNodeId,
+                            null, published);
+                }
+                if (!Objects.equals(expectedNodeId, published.currentNodeId())) {
+                    return ActivationStateMismatch.of(
+                            robotId, "NEW_ROBOT_NODE_MISMATCH", expectedNodeId,
+                            null, published);
+                }
+                continue;
+            }
+
+            Long registeredNodeId = registeredNodeByRobot.get(robotId);
+            if (!Objects.equals(expectedNodeId, registeredNodeId)) {
+                return new ActivationStateMismatch(
+                        robotId,
+                        "NEW_ROBOT_STATE_MISSING",
+                        expectedNodeId,
+                        registeredNodeId,
+                        null,
+                        null,
+                        false
+                );
             }
         }
+        return null;
     }
 
     private void finalizeSupersededTasks(
@@ -897,6 +1063,31 @@ public class SimulationPlaybackService {
         }
     }
 
+    private void retryOrRecoverFromActivationFailure(
+            SimulationRun run,
+            AiPlaybackContext oldContext,
+            PendingAiPlan pending,
+            RuntimeException exception
+    ) {
+        int attempts = pending.activationAttempts() + 1;
+        if (attempts < MAX_PLAN_ACTIVATION_ATTEMPTS) {
+            PendingAiPlan retry = pending.withActivationAttempts(attempts);
+            if (pendingAiPlans.replace(oldContext.getSimulationRunId(), pending, retry)) {
+                log.warn(
+                        "[AI playback] replan activation retry scheduled: "
+                                + "runId={}, planId={}, attempt={}/{}, reason={}",
+                        oldContext.getSimulationRunId(),
+                        pending.context().getPlanId(),
+                        attempts,
+                        MAX_PLAN_ACTIVATION_ATTEMPTS,
+                        exception.getMessage()
+                );
+                return;
+            }
+        }
+        recoverFromActivationFailure(run, oldContext, pending, exception);
+    }
+
     private void recoverFromActivationFailure(
             SimulationRun run,
             AiPlaybackContext oldContext,
@@ -904,11 +1095,11 @@ public class SimulationPlaybackService {
             RuntimeException exception
     ) {
         pendingAiPlans.remove(oldContext.getSimulationRunId());
-        oldContext.cancelQuiesce();
+        suspendedAiRunIds.add(oldContext.getSimulationRunId());
         if (run.getStatus() == SimulationRunStatus.PENDING_ACTIVATION
                 || run.getStatus() == SimulationRunStatus.REPLANNING
                 || run.getStatus() == SimulationRunStatus.QUIESCING) {
-            run.finishReplanning();
+            run.pauseForHumanReview(LocalDateTime.now());
             messagingTemplate.convertAndSend(RUN_TOPIC, SimulationRunResponse.from(run));
         }
         try {
@@ -924,8 +1115,13 @@ public class SimulationPlaybackService {
         }
         inventoryReservationService.releaseActiveForPlan(
                 oldContext.getSimulationRunId(), pending.context().getPlanId());
-        log.error("[AI playback] pending plan discarded; old plan resumed: runId={}, planId={}",
-                oldContext.getSimulationRunId(), pending.context().getPlanId(), exception);
+        log.error("[AI playback] pending plan discarded; run paused with old plan held: "
+                        + "runId={}, oldPlanId={}, failedPlanId={}, attempts={}",
+                oldContext.getSimulationRunId(),
+                oldContext.getPlanId(),
+                pending.context().getPlanId(),
+                pending.activationAttempts() + 1,
+                exception);
     }
 
     private void startAiStep(
@@ -957,7 +1153,8 @@ public class SimulationPlaybackService {
         }
     }
 
-    private void completeAiStep(
+    private boolean completeAiStep(
+            AiPlaybackContext context,
             AiPlaybackContext.RobotTimeline robot,
             AiPlaybackContext.TimedStep step
     ) {
@@ -974,9 +1171,22 @@ public class SimulationPlaybackService {
                 try {
                     taskService.applyInventoryAtServiceCompletion(step.taskId(), kind);
                 } catch (RuntimeException exception) {
-                    log.warn("[AI playback] rack inventory update failed: taskId={}, serviceKind={}, reason={}",
-                            step.taskId(), kind, exception.getMessage());
-                    throw exception;
+                    log.error(
+                            "[AI playback] task isolated after rack inventory update failure: "
+                                    + "runId={}, planId={}, robotId={}, taskId={}, serviceKind={}, reason={}",
+                            context.getSimulationRunId(),
+                            context.getPlanId(),
+                            robot.getRobotId(),
+                            step.taskId(),
+                            kind,
+                            exception.getMessage(),
+                            exception
+                    );
+                    robot.setFailed(true);
+                    robot.setStatus(RobotStatus.ERROR);
+                    publishAi(context, robot, null);
+                    failAiRobotTasks(context, robot.getRobotId());
+                    return false;
                 }
             }
             if (isChargeService(step)) {
@@ -986,6 +1196,62 @@ public class SimulationPlaybackService {
                     robot.isCarryingLoad(),
                     kind
             ));
+            if (robot.completesBeTaskAt(step)) {
+                completeAiTaskAtPhysicalBoundary(
+                        context,
+                        robot,
+                        step.taskId(),
+                        kind
+                );
+            }
+        }
+        return true;
+    }
+
+    private void completeAiTaskAtPhysicalBoundary(
+            AiPlaybackContext context,
+            AiPlaybackContext.RobotTimeline robot,
+            Long taskId,
+            String serviceKind
+    ) {
+        if (taskId == null) {
+            return;
+        }
+        Task task = taskRepository.findById(taskId).orElse(null);
+        if (task == null || task.getStatus() == TaskStatus.DONE
+                || task.getStatus() == TaskStatus.FAILED
+                || task.getStatus() == TaskStatus.CANCELLED) {
+            return;
+        }
+        try {
+            if (task.getStatus() == TaskStatus.ASSIGNED) {
+                task.start();
+                broadcastTask(task);
+            }
+            if (task.getStatus() == TaskStatus.IN_PROGRESS) {
+                taskService.completeTask(taskId);
+                log.info(
+                        "[AI playback] task completed at physical boundary: "
+                                + "runId={}, planId={}, robotId={}, taskId={}, serviceKind={}",
+                        context.getSimulationRunId(),
+                        context.getPlanId(),
+                        robot.getRobotId(),
+                        taskId,
+                        serviceKind
+                );
+            }
+        } catch (RuntimeException exception) {
+            log.warn(
+                    "[AI playback] task completion at physical boundary failed: "
+                            + "runId={}, planId={}, robotId={}, taskId={}, serviceKind={}, reason={}",
+                    context.getSimulationRunId(),
+                    context.getPlanId(),
+                    robot.getRobotId(),
+                    taskId,
+                    serviceKind,
+                    exception.getMessage(),
+                    exception
+            );
         }
     }
 
@@ -1092,23 +1358,42 @@ public class SimulationPlaybackService {
             );
         }
         boolean lowBatteryWaiting = robot.isLowBatteryHold();
-        boolean waiting = lowBatteryWaiting || activeStep != null
+        boolean quiesceHeld = context.isQuiescing() && robot.isHeld();
+        boolean returningToCharge = robot.isReturningToCharge(
+                context.getChargingThreshold()
+        );
+        boolean waiting = lowBatteryWaiting || quiesceHeld || activeStep != null
                 && activeStep.type() == AiPlaybackContext.StepType.WAIT;
-        RobotStatus activity = waiting
-                ? RobotStatus.WAITING
-                : visualActivity(robot, activeStep, taskType);
+        RobotStatus visualActivity = visualActivity(robot, activeStep, taskType);
+        RobotStatus activity = visualActivity == RobotStatus.CHARGING
+                ? RobotStatus.CHARGING
+                : lowBatteryWaiting
+                        ? RobotStatus.LOW_BATTERY
+                        : returningToCharge
+                                ? RobotStatus.RETURNING_TO_CHARGE
+                                : robot.hasLowBatteryAlert()
+                                        ? RobotStatus.LOW_BATTERY
+                                        : waiting
+                                                ? RobotStatus.WAITING
+                                                : visualActivity;
         Long waitingNodeId = lowBatteryWaiting
                 ? currentNodeId
+                : quiesceHeld ? currentNodeId
                 : waiting ? robot.nextMovementTargetNodeId() : null;
         String waitingReason = lowBatteryWaiting
                 ? "배터리 " + robot.getBatteryLevel()
                         + "% · 충전 기준 " + context.getChargingThreshold()
                         + "% 도달 · Rule 재계획 요청 중"
+                : quiesceHeld ? "재계획 안전 노드에서 대기 중"
                 : waiting ? userFacingWaitReason(activeStep.reason()) : null;
         Long waitStartedAtMillis = null;
         Long estimatedResumeAtMillis = null;
         if (lowBatteryWaiting) {
-            waitStartedAtMillis = robot.getLowBatteryWaitStartedAtMillis();
+            waitStartedAtMillis = robot.getHeldAtMillis() == null
+                    ? robot.getLowBatteryWaitStartedAtMillis()
+                    : robot.getHeldAtMillis();
+        } else if (quiesceHeld) {
+            waitStartedAtMillis = robot.getHeldAtMillis();
         } else if (waiting) {
             waitStartedAtMillis = activeStep.startAtMillis();
             estimatedResumeAtMillis = activeStep.endAtMillis();
@@ -1201,8 +1486,6 @@ public class SimulationPlaybackService {
     }
 
     private void advance(PlaybackContext context, long tickMillis) {
-        // 모든 로봇의 안전 정지가 완료되면 DB 상태 전환 전이라도
-        // 시뮬레이션 시계와 작업 발생을 즉시 멈춘다.
         if (context.isReplanRequested()
                 && context.areAllRobotsStoppedForReplanning()) {
             return;
@@ -1229,13 +1512,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 로봇 한 대를 현재 시각까지 진행시킨다.
-     *
-     * 한 tick 사이에 여러 동작이 끝날 수 있으므로
-     * (예: tick 500ms 인데 이동 1칸이 200ms) 시계가 지난 동작은 모두 소진한다.
-     * 그렇지 않으면 tick 마다 동작 하나씩만 처리되어 계획보다 점점 뒤처진다.
-     */
     private void step(
             PlaybackContext context,
             RobotRuntime robot,
@@ -1254,7 +1530,6 @@ public class SimulationPlaybackService {
             return;
         }
 
-        // 무한 루프 방지 (동작이 시간을 전혀 소비하지 않는 경우 대비)
         int guard = 0;
 
         while (context.getClockMillis() >= robot.getBusyUntilMillis()
@@ -1283,7 +1558,6 @@ public class SimulationPlaybackService {
                 return;
             }
 
-            // 아무 진전이 없으면(대기 중인 작업이 없는 유휴 상태 등) 이번 tick 은 종료
             if (robot.getBusyUntilMillis() == busyBefore
                     && robot.getPhase() == phaseBefore) {
                 return;
@@ -1291,9 +1565,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 재계획 요청 시 로봇을 현재 동작의 안전한 종료 지점에서 멈춘다.
-     */
     private boolean pauseIfReadyForReplanning(
             PlaybackContext context,
             RobotRuntime robot
@@ -1334,7 +1605,6 @@ public class SimulationPlaybackService {
         return false;
     }
 
-    /** 유휴 로봇이 대기 중인 작업을 집어간다. */
     private void tryStartNextTask(PlaybackContext context, RobotRuntime robot) {
         if (robot.getStatus() == RobotStatus.ERROR) {
             return;
@@ -1385,7 +1655,6 @@ public class SimulationPlaybackService {
             broadcastTask(task);
         }
 
-        // 출발지가 랙이면 랙 앞 통로까지만 이동한다
         List<Long> path = pathToWorkPosition(
                 context, robot, task.getStartNode().getId());
 
@@ -1426,7 +1695,6 @@ public class SimulationPlaybackService {
         publish(context, robot);
     }
 
-    /** 경로를 한 칸 이동하거나, 도착했으면 다음 단계로 넘어간다. */
     private void moveOrArrive(PlaybackContext context, RobotRuntime robot, boolean towardStart) {
         if (robot.hasRemainingPath()) {
             if (!robot.canMove()) {
@@ -1447,7 +1715,6 @@ public class SimulationPlaybackService {
             return;
         }
 
-        // 도착 - 더 이상 이동하지 않으므로 보간 정보를 지운다
         robot.stopMoving();
 
         if (towardStart) {
@@ -1513,7 +1780,6 @@ public class SimulationPlaybackService {
                 robot.getRobotId(), taskId);
     }
 
-    /** 집품이 끝나면 도착지로 향한다. */
     private void beginMoveToEnd(PlaybackContext context, RobotRuntime robot) {
         Task task = taskRepository.findById(robot.getCurrentTaskId()).orElse(null);
         if (task == null) {
@@ -1524,7 +1790,6 @@ public class SimulationPlaybackService {
 
         taskService.applyInventoryAtServiceCompletion(task.getId(), "PICKUP");
 
-        // 도착지가 랙이면 랙 앞 통로까지만 이동한다
         List<Long> path = pathToWorkPosition(
                 context, robot, task.getEndNode().getId());
 
@@ -1534,7 +1799,6 @@ public class SimulationPlaybackService {
         moveOrArrive(context, robot, false);
     }
 
-    /** 적재가 끝나면 작업을 완료 처리하고 대기 상태로 돌아간다. */
     private void finishTask(PlaybackContext context, RobotRuntime robot) {
         Long taskId = robot.getCurrentTaskId();
 
@@ -1573,12 +1837,6 @@ public class SimulationPlaybackService {
        상태 전송
     ========================================================= */
 
-    /**
-     * 로봇 상태를 Redis에 저장하고 WebSocket으로 브로드캐스트한다.
-     *
-     * 이동 중이면 다음 노드와 도착까지 남은 시간을 함께 보낸다.
-     * 프론트는 이 값으로 두 노드 사이를 보간해 부드럽게 그린다.
-     */
     private void publish(PlaybackContext context, RobotRuntime robot) {
         Long nextNodeId = null;
         String nextNodeCode = null;
@@ -1593,8 +1851,6 @@ public class SimulationPlaybackService {
             long remainingMillis = robot.getBusyUntilMillis() - context.getClockMillis();
 
             if (remainingMillis > 0) {
-                // 지금 향하고 있는 노드는 방금 진입한 currentNode 이므로,
-                // 화면에서는 "직전 노드 -> 현재 노드" 구간을 보간한다.
                 nextNodeId = robot.getCurrentNodeId();
                 nextNodeCode = nodeCodeCache.get(nextNodeId);
                 // 배속을 반영한 실제 경과 시간(초)으로 환산
@@ -1658,13 +1914,6 @@ public class SimulationPlaybackService {
        정리 / 유틸
     ========================================================= */
 
-    /**
-     * 실행 중인 모든 정상 로봇에 재계획 안전 정지를 요청한다.
-     *
-     * 로봇은 현재 이동 한 칸 또는 진행 중인 짧은 작업을 마친 뒤 정지한다.
-     *
-     * @return 재생 중인 실행에 요청을 등록했으면 true
-     */
     public boolean requestReplanningStop(Long simulationRunId) {
         PlaybackContext context = contexts.get(simulationRunId);
 
@@ -1686,9 +1935,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 모든 정상 로봇이 재계획을 위한 안전 정지를 완료했는지 확인한다.
-     */
     public boolean areAllRobotsStoppedForReplanning(Long simulationRunId) {
         PlaybackContext context = contexts.get(simulationRunId);
 
@@ -1916,9 +2162,6 @@ public class SimulationPlaybackService {
         return true;
     }
 
-    /**
-     * 모든 로봇이 안전 정지한 동일 context lock 안에서 AI 요청 snapshot을 만든다.
-     */
     public ReplanningSnapshot captureReplanningSnapshot(
             Long simulationRunId
     ) {
@@ -1949,11 +2192,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * Installs a DB-applied AI plan without repository I/O, publishing, or
-     * changing any legacy execution field. Robots and the simulation clock
-     * remain frozen after this method succeeds.
-     */
     public RuntimeReoptimizationPlan installReoptimizationPlan(
             Long simulationRunId,
             ReoptimizationActivationPlan activationPlan
@@ -1987,9 +2225,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 재계획 완료 후 정상 로봇들의 정지를 해제한다.
-     */
     public boolean activateInstalledReoptimizationPlan(
             Long simulationRunId,
             String replanId
@@ -2024,7 +2259,6 @@ public class SimulationPlaybackService {
         );
     }
 
-    /** Kept as a compatibility alias for existing callers. */
     public boolean finishReplanning(Long simulationRunId, String replanId) {
         return activateInstalledReoptimizationPlan(simulationRunId, replanId);
     }
@@ -2038,17 +2272,6 @@ public class SimulationPlaybackService {
         suspendedAiRunIds.remove(simulationRunId);
     }
 
-    /**
-     * 로봇을 고장(ERROR) 상태로 만든다.
-     *
-     * 재생 엔진이 로봇 상태의 주인이므로, 외부에서 Redis를 직접 고치면
-     * 다음 tick 에 덮어써져 화면이 한 번 튄다. 반드시 이 메서드를 통해야 한다.
-     *
-     * ERROR 로봇은 tick 에서 건너뛰므로 더 이상 움직이지 않는다.
-     * 현재 task/phase/path는 AI 입력 및 향후 복구를 위해 보존한다.
-     *
-     * @return 재생 중이어서 실제로 반영했으면 true
-     */
     public boolean markRobotError(Long simulationRunId, Long robotId) {
         AiPlaybackContext aiContext = aiContexts.get(simulationRunId);
         if (aiContext != null && robotId != null) {
@@ -2093,14 +2316,6 @@ public class SimulationPlaybackService {
         }
     }
 
-    /**
-     * 재생 중인 시뮬레이션의 배속을 즉시 변경한다.
-     *
-     * 배속이 바뀌면 화면 보간에 쓰이는 "도착까지 남은 시간"도 달라지므로,
-     * 이동 중인 로봇의 상태를 다시 내보내 화면이 바로 반응하게 한다.
-     *
-     * @return 재생 중이어서 실제로 반영했으면 true
-     */
     public boolean changeSpeed(Long simulationRunId, double newSpeed) {
         AiPlaybackContext aiContext = aiContexts.get(simulationRunId);
         if (aiContext != null) {
@@ -2135,12 +2350,6 @@ public class SimulationPlaybackService {
         return aiContexts.containsKey(simulationRunId);
     }
 
-    /**
-     * 작업 중인 AI 로봇 한 대의 in-memory 배터리를 낮춘 뒤 Redis/WebSocket에 발행한다.
-     *
-     * 현재 MOVE/SERVICE를 강제로 중단하지 않는다. 기존 playback 감지기는
-     * step 경계에서 LOW_BATTERY 요청을 만들고 command cycle이 안전 재계획을 수행한다.
-     */
     public LowBatteryInjection injectRandomActiveRobotLowBattery(
             Long simulationRunId,
             int requestedBatteryLevel
@@ -2169,6 +2378,7 @@ public class SimulationPlaybackService {
                 }
                 int previousBatteryLevel = robot.getBatteryLevel();
                 robot.setBatteryLevel(batteryLevel);
+                robot.markLowBatteryAlert();
                 try {
                     publishAi(
                             context,
@@ -2177,6 +2387,7 @@ public class SimulationPlaybackService {
                     );
                 } catch (RuntimeException exception) {
                     robot.setBatteryLevel(previousBatteryLevel);
+                    robot.clearLowBatteryAlert();
                     lowBatteryInjectionRunIds.remove(simulationRunId);
                     throw exception;
                 }
@@ -2274,17 +2485,72 @@ public class SimulationPlaybackService {
             long simulationClockMillis
     ) {}
 
+    public record ReplanBarrierRobotStatus(
+            Long robotId,
+            boolean held,
+            Long currentNodeId,
+            Long currentTaskId,
+            String currentStepId,
+            String currentStepType,
+            Long handoverAtMillis,
+            Long handoverNodeId,
+            Long heldAtMillis,
+            boolean carryingLoad
+    ) {}
+
     public void beginQuiescing(Long simulationRunId) {
         AiPlaybackContext context = aiContexts.get(simulationRunId);
         if (context == null || pendingAiPlans.containsKey(simulationRunId)) {
             throw new BusinessException(ErrorCode.LARO_PLAN_NOT_EXECUTABLE);
         }
         context.requestQuiesce();
+        // requestQuiesce can hold robots that are already between steps. Push
+        // those exact nodes/timestamps to Redis before the command thread sees
+        // the barrier as ready and calls AI.
+        for (AiPlaybackContext.RobotTimeline robot : context.getRobots()) {
+            synchronized (robot) {
+                if (robot.isHeld()) {
+                    publishAi(context, robot, null);
+                }
+            }
+        }
+        log.info(
+                "[AI playback] replan barrier requested: runId={}, simTimeMs={}, robots={}",
+                simulationRunId,
+                context.getClockMillis(),
+                replanBarrierStatus(simulationRunId)
+        );
     }
 
     public boolean isReadyForReplanRequest(Long simulationRunId) {
         AiPlaybackContext context = aiContexts.get(simulationRunId);
         return context != null && context.readyForReplanRequest();
+    }
+
+    public List<ReplanBarrierRobotStatus> replanBarrierStatus(Long simulationRunId) {
+        AiPlaybackContext context = aiContexts.get(simulationRunId);
+        if (context == null) {
+            return List.of();
+        }
+        return context.getRobots().stream()
+                .map(robot -> {
+                    synchronized (robot) {
+                        AiPlaybackContext.TimedStep step = robot.currentStep();
+                        return new ReplanBarrierRobotStatus(
+                                robot.getRobotId(),
+                                robot.isHeld(),
+                                robot.getCurrentNodeId(),
+                                robot.getCurrentTaskId(),
+                                step == null ? null : step.stepId(),
+                                step == null ? null : step.type().name(),
+                                robot.getHandoverAtMillis(),
+                                robot.getHandoverNodeId(),
+                                robot.getHeldAtMillis(),
+                                robot.isCarryingLoad()
+                        );
+                    }
+                })
+                .toList();
     }
 
     public void cancelQuiescing(Long simulationRunId) {
@@ -2352,20 +2618,50 @@ public class SimulationPlaybackService {
             AiPlaybackContext context,
             Map<Long, Robot> assignedRobotByTask,
             Map<String, Long> robotIdsByAiCode,
-            Map<String, Long> nodeIdsByCode
+            Map<String, Long> nodeIdsByCode,
+            Map<Long, Long> registeredNodeByRobot
     ) {}
 
-    private record PendingAiPlan(
+    record PendingAiPlan(
             AiPlaybackContext context,
-            Map<Long, Robot> assignedRobotByTask
-    ) {}
+            Map<Long, Robot> assignedRobotByTask,
+            Map<Long, Long> registeredNodeByRobot,
+            int activationAttempts
+    ) {
+        PendingAiPlan withActivationAttempts(int attempts) {
+            return new PendingAiPlan(
+                    context, assignedRobotByTask, registeredNodeByRobot, attempts);
+        }
+    }
 
-    /**
-     * 랙 노드마다 "앞에 설 수 있는 통로 노드"를 찾아둔다.
-     *
-     * 로봇은 랙 안으로 들어가지 않고 인접한 통로에 서서 집품·적재한다.
-     * 랙 하나에 통로가 여러 개 붙어 있으면(위/아래 통로) 모두 후보로 둔다.
-     */
+    record ActivationStateMismatch(
+            Long robotId,
+            String reason,
+            Long expectedNodeId,
+            Long runtimeNodeId,
+            Long publishedNodeId,
+            Long publishedNextNodeId,
+            boolean runtimeHeld
+    ) {
+        static ActivationStateMismatch of(
+                Long robotId,
+                String reason,
+                Long expectedNodeId,
+                AiPlaybackContext.RobotTimeline runtime,
+                RobotState published
+        ) {
+            return new ActivationStateMismatch(
+                    robotId,
+                    reason,
+                    expectedNodeId,
+                    runtime == null ? null : runtime.getCurrentNodeId(),
+                    published == null ? null : published.currentNodeId(),
+                    published == null ? null : published.nextNodeId(),
+                    runtime != null && runtime.isHeld()
+            );
+        }
+    }
+
     private Map<Long, List<Long>> buildAccessNodes(
             Long warehouseId,
             Map<Long, Set<Long>> adjacency
@@ -2381,8 +2677,6 @@ public class SimulationPlaybackService {
 
         Map<Long, List<Long>> accessNodes = new HashMap<>();
 
-        // 엣지는 방향이 있을 수 있으므로 양쪽 방향을 모두 훑어
-        // "랙과 맞닿은 통로 노드"를 모은다.
         for (Map.Entry<Long, Set<Long>> entry : adjacency.entrySet()) {
             Long from = entry.getKey();
 
@@ -2399,12 +2693,6 @@ public class SimulationPlaybackService {
         return accessNodes;
     }
 
-    /**
-     * 목적지까지의 경로를 만든다.
-     *
-     * 목적지가 랙이면 랙 안이 아니라 "앞 통로"까지만 간다.
-     * 통로가 여러 개면 더 가까운 쪽을 고른다.
-     */
     private List<Long> pathToWorkPosition(
             PlaybackContext context,
             RobotRuntime robot,
@@ -2412,13 +2700,11 @@ public class SimulationPlaybackService {
     ) {
         List<Long> candidates = context.getAccessNodes().get(targetNodeId);
 
-        // 랙이 아니면(입고구역·출고구역 등) 그 노드까지 그대로 간다
         if (candidates == null || candidates.isEmpty()) {
             return pathFinder.findPath(
                     context.getAdjacency(), robot.getCurrentNodeId(), targetNodeId);
         }
 
-        // 이미 작업 가능한 통로에 서 있으면 이동하지 않는다
         if (candidates.contains(robot.getCurrentNodeId())) {
             return List.of();
         }

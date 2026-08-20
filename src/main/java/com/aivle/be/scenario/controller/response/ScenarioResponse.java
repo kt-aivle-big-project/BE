@@ -8,7 +8,6 @@ import java.time.LocalDateTime;
 public record ScenarioResponse(
         Long id,
         Long warehouseId,
-        // 목록·상세에서 창고 이름을 그대로 보여주므로 같이 내려준다.
         String warehouseName,
         String scenarioCode,
         String scenarioName,

@@ -6,14 +6,6 @@ import com.aivle.be.fulfillmentcommand.controller.response.FulfillmentCommandGen
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-/**
- * Selects a fresh random BOX batch in Java, then delegates contract compilation
- * and optional LLM expression generation to the LARO AI service.
- *
- * <p>The AI service still validates against shared PostgreSQL/Redis facts and
- * returns the existing front-end and /plan-compatible response contract. It
- * does not reselect Java's product or warehouse-item IDs.</p>
- */
 @Service
 @RequiredArgsConstructor
 public class FulfillmentCommandGenerationService {

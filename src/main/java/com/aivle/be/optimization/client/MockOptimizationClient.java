@@ -17,10 +17,6 @@ import tools.jackson.databind.ObjectMapper;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/**
- * fixture에 명시된 계획만 반환하는 개발용 AI client.
- * 경로 계산이나 BFS fallback은 수행하지 않는다.
- */
 @Component
 @Profile("mock-ai")
 public class MockOptimizationClient implements OptimizationClient {
@@ -77,7 +73,6 @@ public class MockOptimizationClient implements OptimizationClient {
             );
         }
 
-        // 상관키는 현재 요청을 그대로 echo하고 계획 내용은 fixture만 사용한다.
         return response;
     }
 

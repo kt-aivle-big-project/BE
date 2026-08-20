@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-/** Repository-free, immutable runtime representation of a DB-applied plan. */
 public record RuntimeReoptimizationPlan(
         Long simulationRunId,
         String replanId,

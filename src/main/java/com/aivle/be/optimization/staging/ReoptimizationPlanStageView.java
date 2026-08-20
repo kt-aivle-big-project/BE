@@ -10,9 +10,6 @@ import com.aivle.be.optimization.entity.ReoptimizationStagedTaskPlan;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/**
- * Phase 2-3B가 lazy JPA entity에 의존하지 않고 읽을 수 있는 staging 조회 값.
- */
 public record ReoptimizationPlanStageView(
         Long id,
         Long simulationRunId,

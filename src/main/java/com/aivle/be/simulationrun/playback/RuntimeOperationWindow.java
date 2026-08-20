@@ -2,7 +2,6 @@ package com.aivle.be.simulationrun.playback;
 
 import java.util.Objects;
 
-/** Immutable operation interval on the absolute simulation clock. */
 public record RuntimeOperationWindow(
         Long nodeId,
         Long startTimeMillis,

@@ -36,7 +36,6 @@ public class Warehouse {
 
     private Integer height;
 
-    /** 소재지. 화면 목록에서 보여준다. */
     @Column(length = 200)
     private String location;
 
@@ -44,23 +43,10 @@ public class Warehouse {
     @Column(length = 500)
     private String description;
 
-    /**
-     * 운영 상태.
-     *
-     * 점검 중이거나 비활성인 창고는 시뮬레이션 대상에서 제외할 수 있다.
-     */
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private WarehouseStatus status = WarehouseStatus.ACTIVE;
 
-    /**
-     * 공용 창고 여부.
-     *
-     * <p>시드로 넣는 기본 창고 3개는 모두에게 보이고 수정·삭제할 수 없다.
-     * 사용자가 만든 창고는 만든 사람에게만 보인다.
-     *
-     * <p>기존 행에는 값이 없을 수 있어 null 을 허용하고, null 은 개인 창고로 본다.
-     */
     @Column(name = "is_shared")
     private Boolean shared = false;
 
@@ -71,7 +57,6 @@ public class Warehouse {
     @Column(name = "guest_session_id", length = 36)
     private String guestSessionId;
 
-    /** Shared warehouse used as the immutable source of a personal sample copy. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "source_template_id")
     private Warehouse sourceTemplate;
@@ -159,12 +144,6 @@ public class Warehouse {
         update(name, width, height, null, null, null);
     }
 
-    /**
-     * 창고 정보를 고친다.
-     *
-     * null 로 들어온 항목은 기존 값을 유지한다.
-     * 화면에서 일부만 수정하는 경우가 있기 때문이다.
-     */
     public void update(
             String name,
             Integer width,
@@ -195,17 +174,10 @@ public class Warehouse {
         this.updatedAt = LocalDateTime.now();
     }
 
-    /** 공용 창고인가. 값이 없으면 개인 창고로 본다. */
     public boolean isShared() {
         return Boolean.TRUE.equals(shared);
     }
 
-    /**
-     * 공용 창고로 표시한다.
-     *
-     * <p>앱을 처음 켤 때 넣는 기본 창고에만 쓴다.
-     * 화면에서 만든 창고는 항상 개인 창고다.
-     */
     public void markShared() {
         this.shared = true;
     }
@@ -226,14 +198,6 @@ public class Warehouse {
                 && guestSessionId.equals(this.guestSessionId);
     }
 
-    /**
-     * 창고 운영 상태.
-     *
-     * 화면 표기
-     *   ACTIVE       운영 중
-     *   MAINTENANCE  점검 중
-     *   INACTIVE     비활성
-     */
     public enum WarehouseStatus {
         ACTIVE,
         MAINTENANCE,

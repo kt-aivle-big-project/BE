@@ -2,7 +2,6 @@ package com.aivle.be.simulationrun.playback;
 
 import java.util.Objects;
 
-/** Immutable simulation-time path occupancy installed from an AI plan. */
 public record RuntimePathStep(
         Long nodeId,
         Long arrivalTimeMillis,

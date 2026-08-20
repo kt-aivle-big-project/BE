@@ -9,7 +9,6 @@ public record ReoptimizationRequest(
         ReoptimizationReason reason,
 
         // 재최적화를 유발한 로봇 ID
-        // 수동 요청이나 신규 작업 추가일 때는 null 가능
         Long triggerRobotId,
 
         // 장애물로 차단된 엣지 ID 목록

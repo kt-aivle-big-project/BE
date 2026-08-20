@@ -43,7 +43,6 @@ public class TaskInventoryService {
         return true;
     }
 
-    /** Fallback for manual/legacy completion paths that do not expose SERVICE steps. */
     public boolean applyCompletion(Task task) {
         if (task == null || task.isInventoryApplied()) {
             return false;

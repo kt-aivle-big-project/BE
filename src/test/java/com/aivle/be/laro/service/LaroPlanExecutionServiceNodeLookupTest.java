@@ -1,7 +1,11 @@
 package com.aivle.be.laro.service;
 
+import com.aivle.be.global.exception.BusinessException;
+import com.aivle.be.global.exception.ErrorCode;
 import com.aivle.be.laro.dto.LaroPlanResponse;
 import com.aivle.be.laro.dto.LaroPlanRequest;
+import com.aivle.be.task.entity.Task;
+import com.aivle.be.task.entity.TaskStatus;
 import com.aivle.be.simulationrun.playback.SimulationPlaybackService;
 import com.aivle.be.simulationrun.repository.SimulationRunRepository;
 import com.aivle.be.task.repository.TaskRepository;
@@ -16,9 +20,12 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class LaroPlanExecutionServiceNodeLookupTest {
@@ -145,6 +152,208 @@ class LaroPlanExecutionServiceNodeLookupTest {
         assertThat(resolved).isEqualTo(3);
     }
 
+    @Test
+    void inboundPhysicalContractFailureContainsAllConflictingValues() {
+        WarehouseNode rackNode = mock(WarehouseNode.class);
+        when(rackNode.getId()).thenReturn(401L);
+        when(rackNode.getNodeCode()).thenReturn("K4_1");
+        when(rackNode.getNodeType()).thenReturn(NodeType.RACK_STORAGE);
+        when(warehouseNodeRepository
+                .findByWarehouse_IdAndNodeCodeAndActiveTrue(1L, "K4_1"))
+                .thenReturn(Optional.of(rackNode));
+
+        Task task = mock(Task.class);
+        when(task.getId()).thenReturn(3178L);
+        when(task.getTaskType()).thenReturn(com.aivle.be.task.entity.TaskType.INBOUND);
+        when(task.getStatus()).thenReturn(TaskStatus.IN_PROGRESS);
+        when(task.isInventoryApplied()).thenReturn(false);
+        when(task.getEndNode()).thenReturn(rackNode);
+        when(task.getTargetRackLevel()).thenReturn(2);
+        doThrow(new BusinessException(ErrorCode.INVALID_INPUT))
+                .when(task).replanInboundDestination(rackNode, 3);
+
+        LaroPlanResponse.LogicalOperation logical = logicalOperation("K4_1", 3);
+        LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
+                "PLAN-2",
+                2,
+                "PLAN-1",
+                "WH-1",
+                "BE-RUN-1",
+                "READY",
+                "REPLAN",
+                "map-v1",
+                100,
+                0L,
+                0L,
+                1000L,
+                1000L,
+                java.util.List.of(),
+                java.util.List.of(),
+                java.util.List.of(logical),
+                java.util.List.of(),
+                "PLAN-1"
+        );
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(
+                service,
+                "applyPhysicalStorageContract",
+                task,
+                1L,
+                operation(LaroPlanRequest.OperationType.INBOUND, null),
+                logical,
+                plan,
+                3
+        ))
+                .isInstanceOf(LaroPlanMappingException.class)
+                .hasMessageContaining("reason=INBOUND_PHYSICAL_CONTRACT_REJECTED")
+                .hasMessageContaining("taskId=3178")
+                .hasMessageContaining("taskStatus=IN_PROGRESS")
+                .hasMessageContaining("inventoryApplied=false")
+                .hasMessageContaining("existingRackCode=K4_1")
+                .hasMessageContaining("existingRackLevel=2")
+                .hasMessageContaining("requestedRackCode=K4_1")
+                .hasMessageContaining("requestedRackLevel=3")
+                .hasMessageContaining("causeType=BusinessException");
+    }
+
+    @Test
+    void replanUsesReplaceableInboundDestinationContract() {
+        WarehouseNode rackNode = mock(WarehouseNode.class);
+        when(rackNode.getNodeType()).thenReturn(NodeType.RACK_STORAGE);
+        when(warehouseNodeRepository
+                .findByWarehouse_IdAndNodeCodeAndActiveTrue(1L, "K4_1"))
+                .thenReturn(Optional.of(rackNode));
+
+        Task task = mock(Task.class);
+        when(task.getTaskType()).thenReturn(com.aivle.be.task.entity.TaskType.INBOUND);
+        LaroPlanResponse.LogicalOperation logical = logicalOperation("K4_1", 3);
+        LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
+                "PLAN-2", 2, "PLAN-1", "WH-1", "BE-RUN-1", "READY",
+                "REPLAN", "map-v1", 100, 0L, 0L, 1000L, 1000L,
+                java.util.List.of(), java.util.List.of(), java.util.List.of(logical),
+                java.util.List.of(), "PLAN-1"
+        );
+
+        ReflectionTestUtils.invokeMethod(
+                service,
+                "applyPhysicalStorageContract",
+                task,
+                1L,
+                operation(LaroPlanRequest.OperationType.INBOUND, null),
+                logical,
+                plan,
+                3
+        );
+
+        verify(task).replanInboundDestination(rackNode, 3);
+        verify(task, never()).planInboundDestination(rackNode, 3);
+    }
+
+    @Test
+    void replanPreservesExistingInboundDestinationWhenReducedPlanOmitsIt() {
+        WarehouseNode persistedRack = mock(WarehouseNode.class);
+        when(persistedRack.getNodeType()).thenReturn(NodeType.RACK_STORAGE);
+
+        Task task = mock(Task.class);
+        when(task.getTaskType()).thenReturn(com.aivle.be.task.entity.TaskType.INBOUND);
+        when(task.getEndNode()).thenReturn(persistedRack);
+        when(task.getTargetRackLevel()).thenReturn(3);
+
+        LaroPlanResponse.SimulationPlan plan = new LaroPlanResponse.SimulationPlan(
+                "PLAN-2", 2, "PLAN-1", "WH-1", "BE-RUN-1", "READY",
+                "REPLAN", "map-v1", 100, 0L, 37_435L, 1000L, 38_435L,
+                java.util.List.of(), java.util.List.of(), java.util.List.of(),
+                java.util.List.of(), "PLAN-1"
+        );
+
+        ReflectionTestUtils.invokeMethod(
+                service,
+                "applyPhysicalStorageContract",
+                task,
+                1L,
+                operation(LaroPlanRequest.OperationType.INBOUND, null),
+                null,
+                plan,
+                null
+        );
+
+        verify(task, never()).replanInboundDestination(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
+        );
+        verifyNoInteractions(warehouseNodeRepository);
+    }
+
+    @Test
+    void rollingReplanUpdatesExistingInboundTaskFromLogicalOperation() {
+        WarehouseNode previousRack = mock(WarehouseNode.class);
+        when(previousRack.getId()).thenReturn(400L);
+        when(previousRack.getNodeCode()).thenReturn("K4_0");
+        WarehouseNode replannedRack = mock(WarehouseNode.class);
+        when(replannedRack.getId()).thenReturn(401L);
+        when(replannedRack.getNodeCode()).thenReturn("K4_1");
+        when(replannedRack.getNodeType()).thenReturn(NodeType.RACK_STORAGE);
+        when(warehouseNodeRepository
+                .findByWarehouse_IdAndNodeCodeAndActiveTrue(1L, "K4_1"))
+                .thenReturn(Optional.of(replannedRack));
+
+        Task task = mock(Task.class);
+        when(task.getId()).thenReturn(3178L);
+        when(task.getTaskType()).thenReturn(com.aivle.be.task.entity.TaskType.INBOUND);
+        when(task.getStatus()).thenReturn(TaskStatus.ASSIGNED);
+        when(task.isInventoryApplied()).thenReturn(false);
+        when(task.getEndNode()).thenReturn(previousRack);
+        when(task.getTargetRackLevel()).thenReturn(2);
+
+        LaroPlanResponse.LogicalOperation logical = logicalOperation("K4_1", 3);
+        LaroPlanResponse.SimulationPlan plan = replan(logical);
+
+        ReflectionTestUtils.invokeMethod(
+                service,
+                "applyExistingLogicalPhysicalStorageContract",
+                task,
+                1L,
+                logical,
+                plan
+        );
+
+        verify(task).replanInboundDestination(replannedRack, 3);
+    }
+
+    @Test
+    void rollingReplanDoesNotRewriteCommittedInboundTaskWhenTargetIsUnchanged() {
+        WarehouseNode rackNode = mock(WarehouseNode.class);
+        when(rackNode.getId()).thenReturn(401L);
+        when(rackNode.getNodeCode()).thenReturn("K4_1");
+        when(rackNode.getNodeType()).thenReturn(NodeType.RACK_STORAGE);
+        when(warehouseNodeRepository
+                .findByWarehouse_IdAndNodeCodeAndActiveTrue(1L, "K4_1"))
+                .thenReturn(Optional.of(rackNode));
+
+        Task task = mock(Task.class);
+        when(task.getTaskType()).thenReturn(com.aivle.be.task.entity.TaskType.INBOUND);
+        when(task.getStatus()).thenReturn(TaskStatus.IN_PROGRESS);
+        when(task.isInventoryApplied()).thenReturn(false);
+        when(task.getEndNode()).thenReturn(rackNode);
+        when(task.getTargetRackLevel()).thenReturn(3);
+
+        LaroPlanResponse.LogicalOperation logical = logicalOperation("K4_1", 3);
+
+        ReflectionTestUtils.invokeMethod(
+                service,
+                "applyExistingLogicalPhysicalStorageContract",
+                task,
+                1L,
+                logical,
+                replan(logical)
+        );
+
+        verify(task, never()).replanInboundDestination(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
+        );
+    }
+
     private LaroPlanRequest.StructuredOperation operation(
             LaroPlanRequest.OperationType type,
             Integer targetRackLevel
@@ -190,6 +399,17 @@ class LaroPlanExecutionServiceNodeLookupTest {
                 "HU-IN-001",
                 "R10001",
                 java.util.List.of("TASK-001")
+        );
+    }
+
+    private LaroPlanResponse.SimulationPlan replan(
+            LaroPlanResponse.LogicalOperation logical
+    ) {
+        return new LaroPlanResponse.SimulationPlan(
+                "PLAN-2", 2, "PLAN-1", "WH-1", "BE-RUN-1", "READY",
+                "REPLAN", "map-v1", 100, 0L, 0L, 1000L, 1000L,
+                java.util.List.of(), java.util.List.of(), java.util.List.of(logical),
+                java.util.List.of(), "PLAN-1"
         );
     }
 }

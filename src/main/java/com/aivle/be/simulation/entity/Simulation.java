@@ -42,8 +42,6 @@ public class Simulation {
     @Column(name = "task_code")
     private String taskCode;
 
-    // 로봇이 실제로 거쳐가는 노드 순서 전체. 경로 겹침(재계산 필요 여부) 판단에 사용.
-    // Postgres JSONB로 저장 - 배열 그대로 [1,5,8,12,20] 형태
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "path_nodes", columnDefinition = "jsonb")
     private List<Long> pathNodes;
@@ -77,7 +75,6 @@ public class Simulation {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
-    // 시뮬레이션 시작 시점에 필요한 값만 받음 - executedAt은 생성 시점으로 자동 세팅
     public Simulation(Warehouse warehouse, Long missionId, Long robotId,
                       Long startNode, Long endNode, String taskCode) {
         this.warehouse = warehouse;
@@ -89,7 +86,6 @@ public class Simulation {
         this.executedAt = LocalDateTime.now();
     }
 
-    // 경로 계산/재계산 결과로 받은 전체 노드 순서 저장
     public void updatePath(List<Long> pathNodes) {
         this.pathNodes = pathNodes;
     }
